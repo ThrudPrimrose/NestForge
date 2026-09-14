@@ -14,13 +14,12 @@ Three contracts:
 import numpy as np
 import pytest
 
-pytest.importorskip("dace")
-
 import dace as dc
 
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 
-from nestforge.ir.emit_numpy import (UnsupportedNest, load_emitted, nest_to_numpy, reject_nonexternalizable, sdfg_to_numpy)
+from nestforge.ir.emit_numpy import (UnsupportedNest, load_emitted, nest_to_numpy, reject_nonexternalizable,
+                                     sdfg_to_numpy)
 from nestforge.ir.extract import Boundary
 
 N = dc.symbol("N", dtype=dc.int64)

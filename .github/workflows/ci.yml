@@ -49,7 +49,7 @@ jobs:
         env:
           NESTFORGE_CI_NO_SKIP: '1'
         run: |
-          uv run pytest -m "not integration and not gpu" -n auto --timeout=900 \
+          uv run pytest -m "not integration and not gpu and not vendor" -n auto --timeout=900 \
             --cov=nestforge --cov-report=
       - uses: actions/upload-artifact@v4
         with:
@@ -71,7 +71,7 @@ jobs:
       - run: uv sync --extra dev
       - name: pytest (integration set)
         run: |
-          uv run pytest -m "integration and not gpu" --timeout=900 \
+          uv run pytest -m "integration and not gpu and not vendor" --timeout=900 \
             --cov=nestforge --cov-report=
       - uses: actions/upload-artifact@v4
         with:

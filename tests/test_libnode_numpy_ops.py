@@ -16,8 +16,6 @@ import inspect
 import numpy as np
 import pytest
 
-pytest.importorskip("dace")
-
 import dace as dc
 from dace import Memlet
 

@@ -44,11 +44,11 @@ def test_serves_op_matches_the_binary_op_double_v_mangling():
     assert serves_op(frozenset({"_ZGVdN4vv_pow"}), "libmvec", "pow") is True
 
 
-@pytest.mark.skipif(veclib_library_path(VECTOR_LIBS["libmvec"], "gcc") is None, reason="libmvec not found by gcc")
 def test_nm_symbol_names_strips_the_glibc_version_suffix():
     """Real ``nm -D --defined-only`` on this box's libmvec prints ``_ZGVdN4v_sin@@GLIBC_2.22``; a
     whole-name match against the unstripped string would never equal the bare candidate ``_ZGVdN4v_sin``."""
     path = veclib_library_path(VECTOR_LIBS["libmvec"], "gcc")
+    assert path is not None, "libmvec not found by gcc (glibc libmvec ships in libc6)"
     assert "_ZGVdN4v_sin" in nm_symbol_names(path, dynamic_only=True)
 
 
@@ -76,18 +76,18 @@ def compile_to_object(tmp_path, stem: str, source: str):
     return obj
 
 
-@pytest.mark.skipif(GCC_MISSING, reason="gcc not on PATH")
 def test_packed_ops_called_no_longer_credits_tan_log_exp_to_a_tanh_log10_exp2_caller(tmp_path):
     """The exact regression: this kernel calls tanh, log10 and exp2 -- none of ``VECLIB_PROBE_OPS``
     (sin/cos/pow/log/exp/tan/atan) -- but the old substring test read it as calling tan+log+exp because
     each probed stem prefixes the real symbol gcc emits."""
+    assert not GCC_MISSING, "gcc not on PATH (setup_apt.sh installs it)"
     obj = compile_to_object(tmp_path, "tle", _TANH_LOG10_EXP2)
     assert packed_ops_called("libmvec", str(obj)) == ()
 
 
-@pytest.mark.skipif(GCC_MISSING, reason="gcc not on PATH")
 def test_packed_ops_called_still_finds_a_real_sin_call(tmp_path):
     """Positive control for the test above: without it, a broken probe that always returns empty would
     also pass the negative case for the wrong reason."""
+    assert not GCC_MISSING, "gcc not on PATH (setup_apt.sh installs it)"
     obj = compile_to_object(tmp_path, "s", _SIN)
     assert packed_ops_called("libmvec", str(obj)) == ("sin", )

@@ -28,8 +28,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-pytest.importorskip("hpcagent_bench")
-
 from dace import symbolic
 from dace.transformation.passes.canonicalize import canonicalize
 
@@ -245,10 +243,7 @@ def test_emit_numpy_matches_sdfg(kind, short):
 def test_emit_compiled_matches_sdfg_across_compilers(kind, short, lang, compiler):
     import shutil
     tool = compiler if lang == "c" else "gfortran"
-    if shutil.which(tool) is None:
-        # Skips normally locally; under NESTFORGE_CI_NO_SKIP (the CI unit set) a skip FAILS the session, so
-        # a CI runner missing a compiler is surfaced -- CI must install gcc / clang / gfortran (setup_apt.sh).
-        pytest.skip(f"compiler {tool} not installed")
+    assert shutil.which(tool) is not None, f"compiler {tool} not on PATH (setup_apt.sh installs gcc/clang/gfortran)"
 
     def work():
         import subprocess

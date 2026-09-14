@@ -139,13 +139,11 @@ def test_two_different_nests_from_two_compilers_share_one_runtime(tmp_path):
     """Two UNRELATED nests (elementwise map + reduction), each built by a different compiler, as they would be
     when linked into one program. The union over the pair must still be one runtime."""
     compilers = available_compilers()
-    if len(compilers) < 2:
-        pytest.skip(f"needs two compiler families, found {compilers}")
+    assert len(compilers) >= 2, f"needs two compiler families, found {compilers} (setup_apt.sh installs gcc+clang)"
     union, built = set(), {}
     for cc, src, tag in ((compilers[0], OMP_SRC, "map"), (compilers[1], OMP_SRC_REDUCE, "red")):
         so, reason = build_cell(tmp_path, cc, LIBOMP, src=src, tag=tag)
-        if so is None:
-            pytest.skip(f"{cc} cannot link the global runtime: {reason}")
+        assert so is not None, f"{cc} cannot link the global runtime: {reason}"
         built[f"{cc}:{tag}"] = sorted(linked_openmp_runtimes(so))
         union |= linked_openmp_runtimes(so)
     assert len(union) == 1, f"two node libraries, two compilers, {len(union)} runtimes: {built}"
@@ -224,8 +222,8 @@ def run_both_in_a_clean_process(tmp_path, so_a, so_b, n):
 def test_two_compilers_nests_run_together_on_one_runtime_and_match_numpy(tmp_path):
     """One nest built by gcc and a different nest built by clang, loaded into ONE process and RUN -- sharing
     a single OpenMP runtime, and computing the right answer."""
-    if not (shutil.which("gcc") and shutil.which("clang")):
-        pytest.skip(f"needs gcc AND clang, found {available_compilers()}")
+    assert shutil.which("gcc") and shutil.which("clang"), \
+        f"needs gcc AND clang, found {available_compilers()} (setup_apt.sh installs both)"
     built = {}
     for cc, src, tag in (("gcc", OMP_SRC, "kern"), ("clang", OMP_SRC_REDUCE, "kern2")):
         so, reason = build_cell(tmp_path, cc, LIBOMP, src=src, tag=f"e2e_{tag}")
@@ -247,8 +245,7 @@ def test_a_kmpc_compiler_on_libgomp_would_be_caught_not_silently_serialized(tmp_
     """The trap itself: clang emitting kmpc, linked against gomp-only libgomp, and emits_parallel_region
     SEES the serialization. If this ever emits a fork call, libgomp gained a kmpc layer and the prune can
     be revisited -- deliberately."""
-    if not shutil.which("clang"):
-        pytest.skip("no clang")
+    assert shutil.which("clang"), "no clang on PATH (setup_apt.sh installs it)"
     csrc = tmp_path / "mismatch.c"
     csrc.write_text(OMP_SRC)
     so = tmp_path / "mismatch.so"
@@ -257,8 +254,7 @@ def test_a_kmpc_compiler_on_libgomp_would_be_caught_not_silently_serialized(tmp_
          str(csrc), "-o", str(so)],
         capture_output=True,
         text=True)
-    if proc.returncode != 0:
-        pytest.skip("this clang refuses -fopenmp=libgomp outright (also acceptable -- no silent serial cell)")
+    assert proc.returncode == 0, f"clang -fopenmp=libgomp failed to link:\n{proc.stderr[-1500:]}"
     assert "libgomp" in linked_openmp_runtimes(so), "expected the mismatch to link libgomp"
     assert not emits_parallel_region(so), ("clang -fopenmp=libgomp emitted a fork call -- libgomp now has a kmpc "
                                            "layer, so the single-runtime prune for kmpc families can be revisited")

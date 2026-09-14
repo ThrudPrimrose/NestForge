@@ -7,9 +7,6 @@ blocker (a nested map, loop-shaped scratch), so these minimal single-op programs
 node emitters in isolation -- the "just emit the np / np.linalg op" path.
 """
 import numpy as np
-import pytest
-
-pytest.importorskip("dace")
 
 import dace as dc
 

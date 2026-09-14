@@ -33,9 +33,9 @@ SUM_KERNEL = f"""extern "C" void {SYMBOL}(double *__restrict__ a, const double *
 }}
 """
 
-needs_gcc = pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not on PATH")
-needs_clang = pytest.mark.skipif(shutil.which("clang++") is None, reason="clang++ not on PATH")
-needs_objdump = pytest.mark.skipif(shutil.which("objdump") is None, reason="objdump not on PATH")
+assert shutil.which("g++") is not None, "g++ not on PATH (setup_apt.sh installs it)"
+assert shutil.which("clang++") is not None, "clang++ not on PATH (setup_apt.sh installs it)"
+assert shutil.which("objdump") is not None, "objdump not on PATH (setup_apt.sh: binutils)"
 
 
 def build(tmp_path: Path,
@@ -58,8 +58,6 @@ def build(tmp_path: Path,
 # ---------------------------------------------------------------- the C++ key and its blind spot
 
 
-@needs_gcc
-@needs_objdump
 def test_the_cpp_key_cannot_see_compile_flags_and_the_asm_key_can(tmp_path):
     """The whole reason there are two keys, stated as the grouping a sweep would actually do. One source,
     two fp rungs: the source key puts them in ONE group (it never sees the command line), the object key
@@ -103,8 +101,6 @@ def test_function_bodies_keeps_an_escaped_quote_inside_a_literal():
 # ---------------------------------------------------------------- the assembly key
 
 
-@needs_gcc
-@needs_objdump
 def test_the_asm_key_separates_fp_rungs_the_cpp_key_cannot(tmp_path):
     """The complement of the blind spot above, on the same source: identical C++, different objects."""
     strict = build(tmp_path, SUM_KERNEL, "strict-ieee", tag="strict")
@@ -112,8 +108,6 @@ def test_the_asm_key_separates_fp_rungs_the_cpp_key_cannot(tmp_path):
     assert asm_body_key(strict, SYMBOL) != asm_body_key(fast, SYMBOL), "reassociation must change the code"
 
 
-@needs_gcc
-@needs_objdump
 def test_the_asm_key_collapses_a_veclib_cell_that_emits_no_packed_call(tmp_path):
     """This is the rule ``ExternalOptimizer`` currently hardcodes, DERIVED instead: gcc emits no packed
     math call without -ffast-math, so a veclib cell at a strict rung is the same object as veclib=none.
@@ -123,8 +117,6 @@ def test_the_asm_key_collapses_a_veclib_cell_that_emits_no_packed_call(tmp_path)
     assert asm_body_key(plain, SYMBOL) == asm_body_key(veclib, SYMBOL)
 
 
-@needs_clang
-@needs_objdump
 def test_the_asm_key_keeps_a_veclib_cell_that_does_emit_one(tmp_path):
     """The other direction, so the test above cannot pass by collapsing everything. clang, because there
     the veclib IS a compile flag (-fveclib=): at the rung where the packed call is emitted the two
@@ -134,8 +126,6 @@ def test_the_asm_key_keeps_a_veclib_cell_that_does_emit_one(tmp_path):
     assert asm_body_key(plain, SYMBOL) != asm_body_key(veclib, SYMBOL)
 
 
-@needs_gcc
-@needs_objdump
 def test_on_gnu_the_veclib_is_a_LINK_axis_the_object_key_cannot_see(tmp_path):
     """Not a defect in the key -- a fact about gcc, and the reason :func:`needed_libraries` exists. gcc
     takes no veclib compile flag (``-ffast-math`` alone emits ``_ZGV*``); which library resolves the call
@@ -180,8 +170,6 @@ def test_parsing_keeps_a_rip_offset_that_only_differs_in_value():
     assert a != b
 
 
-@needs_gcc
-@needs_objdump
 def test_asm_bodies_strips_addresses_but_keeps_the_instructions(tmp_path):
     """Addresses shift with layout and would defeat the match; the mnemonics are the content."""
     obj = build(tmp_path, SUM_KERNEL, "strict-ieee", tag="body")
@@ -190,8 +178,6 @@ def test_asm_bodies_strips_addresses_but_keeps_the_instructions(tmp_path):
     assert not any(line.strip().startswith(("0x", "00000")) for line in body.splitlines())
 
 
-@needs_gcc
-@needs_objdump
 def test_naming_an_absent_symbol_is_an_error_not_a_silent_whole_object_key(tmp_path):
     """Falling back to the whole object would key on init/exit boilerplate and quietly answer a different
     question than the caller asked."""
@@ -208,8 +194,6 @@ def test_an_object_with_no_disassembly_raises_rather_than_hashing_nothing(tmp_pa
         asm_body_key(empty, SYMBOL)
 
 
-@needs_gcc
-@needs_objdump
 def test_needed_libraries_reads_the_link_axis_the_object_key_misses(tmp_path):
     """The other half of a gnu veclib cell: one object, two links. Keying a ``.so`` means composing the
     two -- same code plus a different resolver is still a different variant to measure."""
@@ -233,8 +217,6 @@ ADD_KERNEL = f"""extern "C" void {SYMBOL}(double *__restrict__ c, const double *
 """
 
 
-@needs_gcc
-@needs_objdump
 def test_the_pruner_collapses_fp_rungs_a_kernel_cannot_tell_apart(tmp_path):
     """The point of the module, on the arena's own axis. Every rung of the ladder compiles this kernel to
     the same object, so a sweep that measures all four is timing one binary four times. Paired with

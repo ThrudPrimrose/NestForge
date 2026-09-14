@@ -24,8 +24,7 @@ import dace
 import nestforge.build.sdfg as build_mod
 import nestforge.build.toolchain as toolchain_mod
 
-pytest.importorskip("hpcagent_bench")
-pytestmark = pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not on PATH")
+assert shutil.which("g++") is not None, "g++ not on PATH (setup_apt.sh installs it)"
 
 from nestforge.corpus.bench import iter_dace_kernels
 from nestforge.phases.scopes import get_strategy
@@ -228,10 +227,10 @@ def test_openmp_abi_compatibility_is_enforced():
         assert rt.compatible("g++")
 
 
-@pytest.mark.skipif(ctypes.util.find_library("omp") is None, reason="libomp not installed")
 def test_gcc_compiled_kernel_links_against_libomp():
     """A g++-compiled kernel (GOMP_* calls under -fopenmp) links + runs against libomp via its GOMP-compat
     ABI -- proof a GCC node library can share the same libomp a clang/flang node library uses."""
+    assert ctypes.util.find_library("omp") is not None, "libomp not installed (setup_apt.sh: libomp-dev)"
     boundary = first_nest("scientific_computing/dense_linear_algebra/gemm/gemm")
     shape_syms = {
         s
@@ -329,22 +328,21 @@ def test_parallel_map_emits_omp_pragma():
 
 
 # Each compiler builds the SAME parallel nest, linking the ONE runtime it can (libomp for gcc/clang/icx,
-# libnvomp for nvc++) -- the mixed-compiler / single-runtime sanity matrix. Missing toolchains skip.
+# libnvomp for nvc++) -- the mixed-compiler / single-runtime sanity matrix. nvc++/icpx are vendor
+# compilers, only ever present in a vendor-configured environment (setup_apt.sh --nvhpc/--oneapi).
 @pytest.mark.parametrize(
     "compiler",
     [
         "g++",
         "clang++",
-        pytest.param("nvc++", marks=pytest.mark.integration),  # vendor compiler: absent on the CI runner
-        pytest.param("icpx", marks=pytest.mark.integration),  # vendor compiler: absent on the CI runner
+        pytest.param("nvc++", marks=pytest.mark.vendor),  # vendor compiler: absent on the CI runner
+        pytest.param("icpx", marks=pytest.mark.vendor),  # vendor compiler: absent on the CI runner
     ])
 def test_parallel_loop_links_openmp_across_compilers(compiler):
-    if shutil.which(compiler) is None:
-        pytest.skip(f"{compiler} not on PATH")
+    assert shutil.which(compiler) is not None, f"{compiler} not on PATH"
     # nvc++ links only libnvomp (its -mp native runtime); everyone else uses the mandated libomp.
     rt = LIBNVOMP if compiler_family(compiler) == "nvidia" else LIBOMP
-    if not runtime_installed(rt):
-        pytest.skip(f"{rt.name} not installed here (no OpenMP runtime on PATH/LD_LIBRARY_PATH/ldconfig)")
+    assert runtime_installed(rt), f"{rt.name} not installed here (no OpenMP runtime on PATH/LD_LIBRARY_PATH/ldconfig)"
     assert rt.compatible(compiler), f"{compiler} must be able to link {rt.name}"
     n = 256
     x, y = np.random.default_rng(0).random(n), np.random.default_rng(1).random(n)
@@ -385,8 +383,7 @@ def test_compare_link_modes_tracks_compile_time_with_and_without_external_linkin
 def test_external_linking_with_lto_is_correct():
     """External linking + ``-flto`` (LTO-aware ``ar``) still matches the oracle -- recovers the cross-TU
     inlining external linking otherwise costs."""
-    if shutil.which("gcc-ar") is None:
-        pytest.skip("gcc-ar (LTO-aware archiver) not on PATH")
+    assert shutil.which("gcc-ar") is not None, "gcc-ar (LTO-aware archiver) not on PATH (ships with gcc)"
     owned_build_matches_oracle("scientific_computing/dense_linear_algebra/gemm/gemm",
                                opts=BuildOptions(link_external=True, lto=True))
 
@@ -481,9 +478,9 @@ def test_parse_params_refuses_an_unmapped_by_value_scalar_type():
         parse_params("k_state_t *__state, uint64_t n")
 
 
-@pytest.mark.skipif(not vectorlib_installed(LIBMVEC), reason="glibc libmvec not found")
 def test_veclib_libmvec_build_is_correct():
     """Building against glibc's libmvec (g++: -lmvec, no compile flag) links + runs correctly."""
+    assert vectorlib_installed(LIBMVEC), "glibc libmvec not found (ships in libc6)"
     n = 128
     x, y = np.random.default_rng(2).random(n), np.random.default_rng(3).random(n)
     buf = {"X": x.copy(), "Y": y.copy(), "Z": np.zeros(n)}
@@ -565,7 +562,8 @@ def test_codegen_config_degrades_gracefully_without_the_key(monkeypatch):
 def test_both_codegen_impls_build_and_match_oracle(impl):
     """Every toggleable codegen impl builds the same nest to a working kernel matching the oracle -- the
     axis is genuinely selectable, not just a stamped label."""
-    owned_build_matches_oracle("scientific_computing/structured_grids/jacobi_1d/jacobi_1d", opts=BuildOptions(codegen_impl=impl))
+    owned_build_matches_oracle("scientific_computing/structured_grids/jacobi_1d/jacobi_1d",
+                               opts=BuildOptions(codegen_impl=impl))
 
 
 def test_vectorized_owned_build_matches_oracle():

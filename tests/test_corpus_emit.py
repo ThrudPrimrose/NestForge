@@ -11,8 +11,6 @@ import inspect
 import numpy as np
 import pytest
 
-pytest.importorskip("hpcagent_bench")
-
 from dace import symbolic
 
 from nestforge.corpus.bench import dace_kernel_names, iter_dace_kernels
@@ -195,7 +193,6 @@ def test_mandelbrot_nested_sdfg_in_map_emits_and_computes():
     """mandelbrot's per-pixel escape is a ``np.where`` -> a nested SDFG with inner control flow inside
     a 2-D map. It emits only after ``ExpandNestedSDFGInputs`` widens the nest to full arrays, so the
     masked ``if I[j,k]: Z[j,k] = Z[j,k]**2 + C[j,k]`` writes the outer buffer in place."""
-    pytest.importorskip("dace.transformation.interstate.expand_nested_sdfg_inputs")
     XN, YN = 20, 16
     scal = dict(xmin=-2.0, xmax=0.5, ymin=-1.25, ymax=1.25, maxiter=25, horizon=2.0)
     sdfg = kernels()["hpc/map_reduce/mandelbrot1/mandelbrot1"].to_sdfg(simplify=True)
@@ -235,7 +232,6 @@ def test_mandelbrot_nested_sdfg_in_map_emits_and_computes():
 def test_emission_does_not_mutate_caller_sdfg():
     """``sdfg_to_numpy`` must be read-only: widening nested SDFGs runs on a copy, so a caller that
     inspects or compiles the same SDFG afterwards (e.g. the DaCe-reference competitor) is unaffected."""
-    pytest.importorskip("dace.transformation.interstate.expand_nested_sdfg_inputs")
     from dace.sdfg import nodes
     sdfg = kernels()["hpc/map_reduce/mandelbrot1/mandelbrot1"].to_sdfg(simplify=True)
 
@@ -254,7 +250,6 @@ def test_emission_does_not_mutate_caller_sdfg():
 def test_nbody_nested_where_emits_and_computes():
     """nbody's ``np.power(inv_r3, -1.5, out=inv_r3, where=I)`` is a masked nested SDFG in a 2-D map;
     it emits correctly once ExpandNestedSDFGInputs offsets the multi-dim mask condition fully."""
-    pytest.importorskip("dace.transformation.interstate.expand_nested_sdfg_inputs")
     from nestforge.ir.emit_numpy import UnsupportedNest
     from dace.frontend.python.common import DaceSyntaxError
     N, Nt = 6, 4
@@ -332,7 +327,6 @@ def test_nbody_xfail_covers_the_dace_build_only_not_an_emitter_indexerror(monkey
     """The nbody xfail must stay pinned to the stock-DaCe FRONTEND gap (an IndexError out of ``to_sdfg``).
     An IndexError raised once the SDFG is built comes from the emitter -- a nest-forge regression that has
     to fail the suite, since an xfail attributed to DaCe would hide it from CI entirely."""
-    pytest.importorskip("dace.transformation.interstate.expand_nested_sdfg_inputs")  # match the nbody test
 
     class BuiltSdfg:
         """A build that SUCCEEDS -- so the DaCe-frontend gap is out of the picture and anything raised
@@ -359,7 +353,6 @@ def test_azimint_hist_three_level_nested_return_and_computes():
     """azimint_hist nests get_bin_edges / compute_bin / histogram three deep; the innermost returns a
     size-1 array read as ``compute_bin_ret_0[0]`` in an inter-state assignment but written as a scalar
     local -- the emitter reconciles the two by stripping the scalar-local ``[0]``. Returns histw/histu."""
-    pytest.importorskip("dace.transformation.interstate.expand_nested_sdfg_inputs")
     from nestforge.ir.emit_numpy import UnsupportedNest
     N, npt = 200, 8
     rng = np.random.default_rng(0)
@@ -368,7 +361,9 @@ def test_azimint_hist_three_level_nested_return_and_computes():
         call, _ = alloc_run("hpc/map_reduce/azimint_hist/azimint_hist", "azimint_hist", dict(N=N, npt=npt, bins=npt),
                             dict(data=data, radius=radius))
     except UnsupportedNest:
-        pytest.skip("nested-SDFG emission unavailable in this DaCe")
+        # Genuine upstream gap, not a missing tool -- xfail (see the nbody test above for why xfail,
+        # never skip: CI's zero-skip unit set must stay green while a real fix still shows up as PASS.
+        pytest.xfail("nested-SDFG emission unavailable in this DaCe")
 
     def hist(a, weights=None):
         edges = np.array([a.min() + i * (a.max() - a.min()) / npt for i in range(npt)] + [a.max()])
@@ -387,7 +382,6 @@ def test_azimint_naive_wcr_reduction_emits_and_computes():
     """azimint_naive is a masked mean per radial bin: ``if r1<=radius<r2: tmp += data[j]`` -- a WCR
     accumulation inside a nested SDFG. Exercises WCR augmented-assignment plus the inner/outer size-1
     descriptor reconciliation (a nested scalar accumulator read back as a size-1 array)."""
-    pytest.importorskip("dace.transformation.interstate.expand_nested_sdfg_inputs")
     from nestforge.ir.emit_numpy import UnsupportedNest
     N, npt = 150, 8
     rng = np.random.default_rng(0)
@@ -396,7 +390,7 @@ def test_azimint_naive_wcr_reduction_emits_and_computes():
         call, _ = alloc_run("hpc/map_reduce/azimint_naive/azimint_naive", "azimint_naive", dict(N=N, npt=npt),
                             dict(data=data, radius=radius))
     except UnsupportedNest:
-        pytest.skip("nested-SDFG emission unavailable in this DaCe")
+        pytest.xfail("nested-SDFG emission unavailable in this DaCe")
 
     rmax = radius.max()
     res = np.zeros(npt)

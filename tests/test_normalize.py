@@ -12,8 +12,6 @@ import re
 import numpy as np
 import pytest
 
-pytest.importorskip("dace")
-
 import dace as dc
 
 from dace.sdfg import nodes
@@ -21,8 +19,8 @@ from dace.sdfg.state import LoopRegion
 
 from nestforge.build.isolation import run_isolated
 from nestforge.ir.names import (WRAP_PARAM, block_kind, free_tasklets, in_order, inline_top_level_nsdfgs,
-                                 normalize_for_tree, rename_map_params, rename_transient_data, top_level_nsdfgs,
-                                 wrap_free_tasklets, wrap_groups)
+                                normalize_for_tree, rename_map_params, rename_transient_data, top_level_nsdfgs,
+                                wrap_free_tasklets, wrap_groups)
 
 LABEL = re.compile(r"^(state|for|while|if|block|continue|break|return)(\d+)_(\d+)$")
 KERNEL = re.compile(r"^kernel(\d+)_(\d+)$")

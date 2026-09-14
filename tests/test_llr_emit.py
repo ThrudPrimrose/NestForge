@@ -12,9 +12,6 @@ reference. These pin two emitter/extraction fixes:
 import inspect
 
 import numpy as np
-import pytest
-
-pytest.importorskip("hpcagent_bench")
 
 from dace.transformation.passes.canonicalize import canonicalize
 

@@ -12,8 +12,6 @@ import inspect
 import numpy as np
 import pytest
 
-pytest.importorskip("dace")
-
 import dace as dc
 
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion

@@ -38,10 +38,9 @@ def test_script_rejects_unknown_flag(name):
     assert r.returncode != 0, f"{name} accepted an unknown flag"
 
 
-@pytest.mark.skipif(shutil.which("clang-format") is None, reason="clang-format not installed")
 def test_repo_python_and_cpp_are_formatted():
     """``scripts/format.sh --check`` passes on the committed tree: yapf (python, 120) + clang-format
     (C/C++, 160) both clean. This is the format regression guard the CI gate also runs."""
-    pytest.importorskip("yapf")
+    assert shutil.which("clang-format"), "clang-format not on PATH (pyproject dev extra installs it)"
     r = subprocess.run(["bash", str(SCRIPTS / "format.sh"), "--check"], capture_output=True, text=True)
     assert r.returncode == 0, f"tree not formatted -- run scripts/format.sh\n{r.stdout}\n{r.stderr}"

@@ -16,7 +16,6 @@ N = dace.symbol('N')
 
 # ----- corpus: pick the kernel's entry @dace.program, not the first helper (Finder B#1) ----------
 def test_corpus_program_is_the_entry_not_a_helper():
-    pytest.importorskip("hpcagent_bench")
     from nestforge.corpus.bench import iter_dace_kernels
     ks = {k.short_name: k for k in iter_dace_kernels()}
     # mlp_dace defines relu, softmax, then mlp; resnet has resnet_basicblock + a _gpu variant after it.
@@ -25,7 +24,6 @@ def test_corpus_program_is_the_entry_not_a_helper():
 
 
 def test_corpus_module_path_independent_of_namespace_path():
-    pytest.importorskip("hpcagent_bench")
     from nestforge.corpus.bench import module_path
     # Derived from the registry key, not hpcagent_bench.benchmarks.__path__ (which can be stale/multi-root).
     assert module_path("hpc/dense_linear_algebra/gemm/gemm") == \

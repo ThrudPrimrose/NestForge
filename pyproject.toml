@@ -60,6 +60,7 @@ markers = [
     "integration: compiles and runs kernels; slow, its own CI job",
     "e2e: end-to-end -- compiles and runs, but only with g++/clang++, so it DOES run on the CI runner",
     "gpu: needs a CUDA device -- never on CI",
+    "vendor: needs a vendor compiler or library not installed on CI",
 ]
 
 [tool.yapf]

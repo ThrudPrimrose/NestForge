@@ -22,11 +22,9 @@ import shutil
 import subprocess
 
 import numpy as np
-import pytest
 
-pytest.importorskip("hpcagent_bench")
 gcc = shutil.which("gcc")
-pytestmark = pytest.mark.skipif(gcc is None, reason="gcc not on PATH")
+assert gcc is not None, "gcc not on PATH (setup_apt.sh installs it)"
 
 from dace import symbolic
 
