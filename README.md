@@ -30,7 +30,31 @@ python examples/quickstart.py --device gpu --out quickstart_out
 
 The script runs the default optimizer on HPCAgent-Bench's `fuse_diamond` at preset S (`LEN_1D=512`):
 four loops where `t = a*a` feeds `u = t + 1` and `v = t - 1`, then `out = u*v`. `--device gpu`
-stops after phase 3 for now, since GPU kernels wait for CPF's CUDA form. On `fuse_diamond`:
+stops after phase 3 for now, since GPU kernels wait for CPF's CUDA form. The script prints the
+program's structure tree before phase 0:
+
+```
+SDFG 'hpcagent_bench_benchmarks_loop_level_reasoning_fuse_diamond_fuse_diamond_dace_fuse_diamond'
+|- for_19  i=0:LEN_1D
+|  `- slice_a_20
+|- for_21  i=0:LEN_1D
+|  `- slice_t_22
+|- for_23  i=0:LEN_1D
+|  `- slice_t_24
+`- for_25  i=0:LEN_1D
+   `- slice_u_26
+```
+
+and after phase 0, in canonical parallel form:
+
+```
+SDFG 'hpcagent_bench_benchmarks_loop_level_reasoning_fuse_diamond_fuse_diamond_dace_fuse_diamond'
+`- single_state_body
+   `- single_state_body_0_map  [_loop_it_0=0:LEN_1D]  reads=['a'] writes=['out']
+```
+
+Normalization turns the four sequential loops, each in its own state, into one parallel map over
+`LEN_1D` that reads only `a` and writes only `out`. On `fuse_diamond`:
 
 0. Normalize: canonicalization already fuses the 4 loop nests into 1 parallel map.
 1. Shape Kernels: nothing is left to fuse, so the program stays at 1 map.
@@ -44,6 +68,7 @@ quickstart_out/
   0-normalize.sdfg ... 3-offload.sdfg   one program SDFG per phase (3 only with --device gpu)
   4-optimize-kernels.sdfg               the program, extcall_0 bound to libextcall_0.a
   5-sweep-configurations.json           per nest: compiler, FP mode, cost model, flags, time
+  trees/                                0-input.txt, 1-cpf.txt, 2-shaped.txt: structure before and after phases 0 and 1
   kernels/extcall_0/                    extcall_0.cpp (CPF unit) and libextcall_0.a
   program/                              the program's generated C++
   work/                                 build tree

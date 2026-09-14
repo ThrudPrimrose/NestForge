@@ -15,6 +15,7 @@ import dace
 from nestforge.build.sdfg import generate_program
 from nestforge.build.toolchain import DEFAULT_COMPILER
 from nestforge.corpus.bench import CorpusKernel, iter_dace_kernels, preset_sizes
+from nestforge.ir.introspect import describe_graph
 from nestforge.phases.kernel import build_kernel_library
 from nestforge.phases.normalize import Targets
 from nestforge.session import Session
@@ -40,6 +41,15 @@ def save(session: Session, out: Path, label: str) -> None:
     session.sdfg.save(str(out / f"{label}.sdfg"))
 
 
+def show_tree(session: Session, out: Path, label: str) -> None:
+    """Print the program's structure tree and save it as ``<out>/trees/<label>.txt``."""
+    tree = describe_graph(session.sdfg)
+    trees = out / "trees"
+    trees.mkdir(parents=True, exist_ok=True)
+    (trees / f"{label}.txt").write_text(tree + "\n")
+    print(tree)
+
+
 def copy_sources(folder: Path, dest: Path) -> None:
     """Every generated source of a DaCe program folder (C++ frame, CUDA), flattened into ``dest``."""
     dest.mkdir(parents=True, exist_ok=True)
@@ -48,14 +58,17 @@ def copy_sources(folder: Path, dest: Path) -> None:
 
 
 def run_phases_0_to_3(session: Session, out: Path) -> List[dict]:
+    show_tree(session, out, "0-input")
     before = nest_count(session)
     session.normalize()
     save(session, out, "0-normalize")
     print(f"0 normalize         {before} -> {nest_count(session)}")
+    show_tree(session, out, "1-cpf")
     before = nest_count(session)
     session.full_fusion()
     save(session, out, "1-shape-kernels")
     print(f"1 shape kernels     {before} -> {nest_count(session)}")
+    show_tree(session, out, "2-shaped")
     scopes = session.define_scopes()
     save(session, out, "2-define-scopes")
     described = ", ".join(
