@@ -82,7 +82,7 @@ def test_owned_build_gemm_matches_oracle():
 
 def test_owned_build_jacobi_matches_oracle():
     """jacobi_1d: an ``int`` (not int64_t) size symbol -- guards the per-parameter ctype marshaling."""
-    owned_build_matches_oracle("hpc/structured_grids/jacobi_1d/jacobi_1d")
+    owned_build_matches_oracle("scientific_computing/structured_grids/jacobi_1d/jacobi_1d")
 
 
 def without_search_paths(flags):
@@ -551,7 +551,7 @@ def test_codegen_impls_available_default_first_and_consistent():
 def test_codegen_config_degrades_gracefully_without_the_key(monkeypatch):
     """Without compiler.cpu.implementation (simulated), the default is legacy, a legacy scope is a no-op,
     and an explicit experimental request RAISES rather than silently mislabelling itself as legacy."""
-    monkeypatch.setattr("nestforge.build.config_has", lambda *path: False)
+    monkeypatch.setattr("nestforge.build.sdfg.config_has", lambda *path: False)
     assert default_codegen_impl() == "legacy"
     assert codegen_impls_available() == ("legacy", )
     with codegen_config("legacy"):
@@ -565,14 +565,14 @@ def test_codegen_config_degrades_gracefully_without_the_key(monkeypatch):
 def test_both_codegen_impls_build_and_match_oracle(impl):
     """Every toggleable codegen impl builds the same nest to a working kernel matching the oracle -- the
     axis is genuinely selectable, not just a stamped label."""
-    owned_build_matches_oracle("hpc/structured_grids/jacobi_1d/jacobi_1d", opts=BuildOptions(codegen_impl=impl))
+    owned_build_matches_oracle("scientific_computing/structured_grids/jacobi_1d/jacobi_1d", opts=BuildOptions(codegen_impl=impl))
 
 
 def test_vectorized_owned_build_matches_oracle():
     """The DaCe multi-dim tile-op vectorizer plugs into the owned build: a VectorizeConfig on BuildOptions
     still matches the numpy oracle (AUTO resolves to the host ISA, so this stays host-agnostic)."""
     from dace.transformation.passes.vectorization.config import VectorizeConfig
-    owned_build_matches_oracle("hpc/structured_grids/jacobi_1d/jacobi_1d",
+    owned_build_matches_oracle("scientific_computing/structured_grids/jacobi_1d/jacobi_1d",
                                size=256,
                                opts=BuildOptions(vectorize=VectorizeConfig(widths=(8, ), target_isa="AUTO")))
 
@@ -585,7 +585,7 @@ def test_toolchain_is_importable_without_dace():
     # A SUBPROCESS, not this interpreter: the test module imports dace at line 18, and every other test in
     # the suite has too, so an in-process check could only ever assert `had_dace or ...` -- true before the
     # module is even loaded. The isolation being tested only exists in a fresh interpreter.
-    path = Path(__file__).resolve().parents[1] / "nestforge" / "toolchain.py"
+    path = Path(__file__).resolve().parents[1] / "nestforge" / "build" / "toolchain.py"
     probe = textwrap.dedent(f"""
         import importlib.util, sys
         spec = importlib.util.spec_from_file_location("nf_toolchain_isolated", {str(path)!r})
