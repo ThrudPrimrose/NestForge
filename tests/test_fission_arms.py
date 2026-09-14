@@ -1,6 +1,6 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Phase-2 fission lever (:mod:`nestforge.fission_arms`): explode a program to statement granularity by
+"""The Phase-2 fission lever (:mod:`nestforge.phases.schedule`): explode a program to statement granularity by
 reusing the existing DaCe canon passes (SplitStatements + LoopFission + MapFission), and the agent's real
 Phase-2 flow -- fission then fuse back up. Value-preservation (bit-exact vs the un-fissioned reference) is
 the invariant on every case.
@@ -15,8 +15,8 @@ from dace.sdfg import nodes
 from dace.transformation.dataflow.map_fission import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 
-from nestforge.fission_arms import fission_to_statements, map_fission_moves
-from nestforge.fusion_arms import apply_fusion, enumerate_fusions
+from nestforge.phases.schedule import fission_to_statements, map_fission_moves
+from nestforge.phases.schedule import apply_fusion, enumerate_fusions
 
 N = dace.symbol("N")
 f64 = dace.float64

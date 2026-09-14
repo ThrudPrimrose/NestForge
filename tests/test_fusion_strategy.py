@@ -1,6 +1,6 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Phase-1 fusion-strategy API (:mod:`nestforge.fusion`): the named/registered granularity strategy that
+"""Phase-1 fusion-strategy API (:mod:`nestforge.phases.schedule`): the named/registered granularity strategy that
 Phase 1 applies, and the guarantee that ``maximal-fusion`` reaches the same fixed point as draining the
 per-move arm surface -- so the deterministic default and the agent's move-by-move policy agree.
 """
@@ -11,8 +11,8 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.interstate.state_fusion import StateFusion
 
-from nestforge import fusion
-from nestforge.fusion import (enumerate_fusions, fusion_strategy_names, get_fusion_strategy, maximal_fusion,
+from nestforge.phases import schedule as fusion
+from nestforge.phases.schedule import (enumerate_fusions, fusion_strategy_names, get_fusion_strategy, maximal_fusion,
                               register_fusion_strategy)
 
 N = dace.symbol("N")

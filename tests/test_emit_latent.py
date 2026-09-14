@@ -18,9 +18,9 @@ import sympy
 import dace
 from dace import symbolic
 
-from nestforge.emit_libnode import UnsupportedLibraryNode, data_edge
-from nestforge.emit_numpy import EMITTED_BUILTINS, UnsupportedNest, int_floor, normalize_casts, sdfg_to_numpy
-from nestforge.libnode import ExternalCall, proto_and_call
+from nestforge.ir.emit_libnode import UnsupportedLibraryNode, data_edge
+from nestforge.ir.emit_numpy import EMITTED_BUILTINS, UnsupportedNest, int_floor, normalize_casts, sdfg_to_numpy
+from nestforge.ir.libnode import ExternalCall, proto_and_call
 
 I = sympy.Symbol('i')
 N = sympy.Symbol('N')
@@ -170,7 +170,7 @@ def test_a_subscript_comma_does_not_split_an_argument(expr, want):
     separator: the rewrite got the wrong arity and the pieces spliced back with unmatched brackets.
     That emitted C which would not parse (TSVC s1111/s1113), and where the arity raised, the call was
     left unrewritten and leaked into C as an unresolved function (s111's ``int_ceil``)."""
-    from nestforge.emit_numpy import apply_call
+    from nestforge.ir.emit_numpy import apply_call
     assert apply_call(expr, "int_floor", lambda a, b: f"(({a}) // ({b}))") == want
 
 
@@ -178,7 +178,7 @@ def test_multidim_subscript_survives_the_userfunc_fixpoint():
     """End to end through rewrite_userfuncs, where the real emitter routes it. ``int_floor``/``int_ceil``
     are NOT in the rewrite table -- they stay calls for both back ends -- so a rewritten function
     (variadic ``Max``) carries the subscript-comma case here."""
-    from nestforge.emit_numpy import rewrite_userfuncs
+    from nestforge.ir.emit_numpy import rewrite_userfuncs
     out = rewrite_userfuncs("d[Max(aa[i, j], 2)] = b[int_ceil(Min(c[k, l], 4), 4)]")
     assert out.count("[") == out.count("]"), out
     assert out.count("(") == out.count(")"), out
@@ -220,7 +220,7 @@ def test_sizable_rejects_a_data_read_however_it_is_spelled(expr, want):
     """``free_symbols`` is structurally blind to an indexed read: DaCe renders ``A_indptr[i]`` as
     ``Subscript(A_indptr, i)``, so the ARRAY NAME is the Function head and never appears among the free
     symbols. The predicate must walk the tree."""
-    from nestforge.emit_numpy import sizable
+    from nestforge.ir.emit_numpy import sizable
     arrays = {"A_indptr": None, "A_vals": None}
     assert sizable(symbolic.pystr_to_symbolic(expr), {"M", "N"}, arrays) is want
 
@@ -233,7 +233,7 @@ def test_data_dependent_scratch_extent_is_refused_not_emitted():
     ``free_symbols - known`` check then accepted it -- the residual was ``{M} - {M} = set()`` -- and the
     caller was handed a signature whose buffer size only the data knows. Refuse, with a reason.
     """
-    from nestforge.emit_numpy import UnsupportedNest, sdfg_to_numpy
+    from nestforge.ir.emit_numpy import UnsupportedNest, sdfg_to_numpy
     sdfg = spmv_row_scratch.to_sdfg(simplify=True)
     assert "row" in sdfg.arrays and sdfg.arrays["row"].transient, "fixture no longer has the scratch buffer"
     with pytest.raises(UnsupportedNest, match="row"):
@@ -243,7 +243,7 @@ def test_data_dependent_scratch_extent_is_refused_not_emitted():
 def test_a_data_read_never_becomes_a_size_bound():
     """The narrow half: ``symbol_ranges`` must not ingest an interstate assignment that reads array data,
     or every shape it reaches widens to an extent the caller cannot evaluate."""
-    from nestforge.emit_numpy import maxsize_loop_scratch, reads_array_data
+    from nestforge.ir.emit_numpy import maxsize_loop_scratch, reads_array_data
     sdfg = spmv_row_scratch.to_sdfg(simplify=True)
     widened = maxsize_loop_scratch(sdfg, ["M", "NNZ"])
     for dim in widened.arrays["row"].shape:
@@ -277,7 +277,7 @@ def test_copy_direction_agrees_with_dace_on_every_real_copy_edge(prog):
     Checked against DaCe rather than against a hand-built expectation, so the two cannot drift apart.
     """
     from dace.sdfg import nodes as dnodes
-    from nestforge.emit_numpy import copy_direction
+    from nestforge.ir.emit_numpy import copy_direction
 
     sdfg = prog.to_sdfg(simplify=True)
     checked = 0
@@ -301,7 +301,7 @@ def test_copy_direction_reads_subset_as_the_source_when_both_ends_are_one_array(
     ``copy_direction`` must return ``memlet.subset`` as the SOURCE range here. Getting it backwards
     turns ``A[i] = A[j]`` into ``A[j] = A[i]`` -- a wrong answer with no error.
     """
-    from nestforge.emit_numpy import copy_direction
+    from nestforge.ir.emit_numpy import copy_direction
 
     sdfg = dace.SDFG("inplace_copy")
     sdfg.add_array("A", [M_SYM], dace.float64)
@@ -328,7 +328,7 @@ def test_two_kernels_of_equal_length_do_not_share_bytecode():
     first = "def k():\n    return 'AAAA'\n"
     second = "def k():\n    return 'BBBB'\n"
     assert len(first) == len(second), "the fixture only reproduces the bug at equal byte length"
-    from nestforge.emit_numpy import load_emitted
+    from nestforge.ir.emit_numpy import load_emitted
     assert load_emitted(first, "k").k() == "AAAA"
     assert load_emitted(second, "k").k() == "BBBB"
 
@@ -343,14 +343,14 @@ def test_range_stop_follows_the_step_sign(end, step, want_stop):
     """A DaCe range end is INCLUSIVE, so python's exclusive stop is one past the last element IN THE
     DIRECTION OF TRAVEL. The emitter added 1 unconditionally, so a descending map lost its final
     iteration: ``range(N-1, 0, -1)`` for a DaCe range ending at 0 never yields 0."""
-    from nestforge.emit_numpy import range_stop
+    from nestforge.ir.emit_numpy import range_stop
     got = range_stop(symbolic.pystr_to_symbolic(end), symbolic.pystr_to_symbolic(step), "map parameter 'i'")
     assert sympy.simplify(got - symbolic.pystr_to_symbolic(want_stop)) == 0, f"{got} != {want_stop}"
 
 
 def test_a_descending_range_covers_its_last_element():
     """The behaviour the sign fix buys, checked by ENUMERATING rather than by re-deriving the formula."""
-    from nestforge.emit_numpy import range_stop
+    from nestforge.ir.emit_numpy import range_stop
     stop = int(range_stop(symbolic.pystr_to_symbolic("0"), symbolic.pystr_to_symbolic("-1"), "x"))
     assert list(range(7, stop, -1)) == [7, 6, 5, 4, 3, 2, 1, 0], "element 0 must not be dropped"
 
@@ -368,7 +368,7 @@ def test_index_str_slices_a_descending_range_to_its_last_element(rng, want):
     numpy ORACLE that every bit-exactness verdict is compared against.
 
     Enumerated against real numpy rather than by re-deriving the formula: the formula was the bug."""
-    from nestforge.emit_libnode import index_str
+    from nestforge.ir.emit_libnode import index_str
     a = np.arange(8)
     got = eval(f"a[{index_str(dace.subsets.Range([rng]))}]", {"a": a})
     assert list(np.atleast_1d(got)) == want
@@ -376,7 +376,7 @@ def test_index_str_slices_a_descending_range_to_its_last_element(rng, want):
 
 def test_range_stop_refuses_a_step_of_unknown_sign():
     """No sound stop exists without a direction; guessing one silently drops or over-runs elements."""
-    from nestforge.emit_numpy import UnsupportedNest, range_stop
+    from nestforge.ir.emit_numpy import UnsupportedNest, range_stop
     with pytest.raises(UnsupportedNest, match="undecidable sign"):
         range_stop(symbolic.pystr_to_symbolic("N"), symbolic.pystr_to_symbolic("s"), "map parameter 'i'")
 
@@ -385,7 +385,7 @@ def test_range_stop_refuses_a_step_of_unknown_sign():
 def test_symbol_mapping_binds_simultaneously_when_the_bindings_interfere():
     """``symbol_mapping`` is a substitution applied all at once. Emitted as ordered assignments, a swap
     ``{i: j, j: i}`` runs ``i = j`` then ``j = i`` and both end up holding the old ``j``."""
-    from nestforge.emit_numpy import symbol_mapping_lines
+    from nestforge.ir.emit_numpy import symbol_mapping_lines
     namespace = {"i": 1, "j": 2}
     for line in symbol_mapping_lines({"i": "j", "j": "i"}, 7):
         exec(line, {}, namespace)
@@ -394,7 +394,7 @@ def test_symbol_mapping_binds_simultaneously_when_the_bindings_interfere():
 
 def test_symbol_mapping_stays_plain_when_nothing_interferes():
     """Temps only where they are needed -- the plain form is what the reader and the C translator see."""
-    from nestforge.emit_numpy import symbol_mapping_lines
+    from nestforge.ir.emit_numpy import symbol_mapping_lines
     assert symbol_mapping_lines({"a": "N", "b": "M + 1"}, 3) == ["a = N", "b = M + 1"]
     assert symbol_mapping_lines({"i": "i"}, 3) == [], "an identity binding emits nothing"
 
@@ -410,7 +410,7 @@ def test_a_non_final_unconditional_branch_is_refused():
     """
     from dace.properties import CodeBlock
     from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-    from nestforge.emit_numpy import UnsupportedNest, emit_conditional
+    from nestforge.ir.emit_numpy import UnsupportedNest, emit_conditional
 
     sdfg = dace.SDFG("branch_order")
     sdfg.add_array("out", [2], dace.float64)

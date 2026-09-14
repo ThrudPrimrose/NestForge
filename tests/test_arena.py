@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import dace
 
-from nestforge.strategies import outer
-from nestforge.extract import extract_nest_to_sdfg
-from nestforge.translate import prepare, emit_sources
-from nestforge.arena import run_arena, discover_compilers
-from nestforge.perf import flags
+from nestforge.phases.scopes import outer
+from nestforge.ir.extract import extract_nest_to_sdfg
+from nestforge.corpus.translate import prepare, emit_sources
+from nestforge.build.arena import run_arena, discover_compilers
+from nestforge.build import flags
 
 N = dace.symbol('N')
 

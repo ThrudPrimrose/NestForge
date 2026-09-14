@@ -7,9 +7,9 @@ move apply_fusion would accept and a reason marks a pair that never appears in e
 import numpy as np
 import dace
 
-from nestforge.introspect import describe_graph, nest_reads_writes
-from nestforge.fusion import can_fuse, enumerate_fusions
-from nestforge.strategies import top_level_map_entries
+from nestforge.ir.introspect import describe_graph, nest_reads_writes
+from nestforge.phases.schedule import can_fuse, enumerate_fusions
+from nestforge.phases.scopes import top_level_map_entries
 
 N = dace.symbol('N')
 

@@ -13,7 +13,7 @@ pytest.importorskip("dace")
 
 import dace as dc
 
-from nestforge.emit_numpy import load_emitted, sdfg_to_numpy
+from nestforge.ir.emit_numpy import load_emitted, sdfg_to_numpy
 
 N = dc.symbol("N", dtype=dc.int64)
 

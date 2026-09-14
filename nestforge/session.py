@@ -34,17 +34,17 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 
-from nestforge.arena import Cell, run_arena
-from nestforge.extract import Boundary, detach, extract_map_nest, find_state_of_node
-from nestforge.feedback import run_feedback_loop
+from nestforge.build.arena import Cell, run_arena
+from nestforge.ir.extract import Boundary, detach, extract_map_nest, find_state_of_node
+from nestforge.phases.feedback import run_feedback_loop
 from dace.sdfg.state import ConditionalBlock
 
-from nestforge.fusion import FusionMove, apply_fusion, can_fuse, enumerate_fusions, fission_to_statements
-from nestforge.introspect import describe_graph, kernel_body, kernel_source, nest_reads_writes
-from nestforge.offload import DEFAULT_GRANULARITY, label_nest, lower_nests_to_external_call, offload_candidates
-from nestforge.region_arms import RegionMove, apply_region_fusion, enumerate_region_fusions
-from nestforge.strategies import is_parallel_nest, top_level_map_entries
-from nestforge.translate import Prepared, emit_sources, prepare
+from nestforge.phases.schedule import FusionMove, apply_fusion, can_fuse, enumerate_fusions, fission_to_statements
+from nestforge.ir.introspect import describe_graph, kernel_body, kernel_source, nest_reads_writes
+from nestforge.phases.scopes import DEFAULT_GRANULARITY, label_nest, lower_nests_to_external_call, offload_candidates
+from nestforge.phases.schedule import RegionMove, apply_region_fusion, enumerate_region_fusions
+from nestforge.phases.scopes import is_parallel_nest, top_level_map_entries
+from nestforge.corpus.translate import Prepared, emit_sources, prepare
 
 #: kernel_source(lang=...) -> (numpyto --target, generated-source extension). The C backend emits the
 #: WHOLE C-family from ONE ``--target c`` run -- a ``.c`` AND a ``.cpp`` -- so bare C++ is the ``.cpp`` of

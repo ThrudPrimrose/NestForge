@@ -17,8 +17,8 @@ import numpy as np
 
 import dace
 
-from nestforge.emit_numpy import scratch_arrays, sdfg_to_numpy
-from nestforge.emit_yaml import manifest_dict
+from nestforge.ir.emit_numpy import scratch_arrays, sdfg_to_numpy
+from nestforge.ir.emit_yaml import manifest_dict
 from nestforge.whole_program import whole_program_boundary
 
 N = dace.symbol("N")

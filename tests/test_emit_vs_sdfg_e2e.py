@@ -8,7 +8,7 @@ SDFG, on the hardest TSVC + level-3 corpus kernels (control flow, reductions, re
 linear algebra).
 
 The oracle is the SDFG built through nest-forge's OWN build (``dace.codegen`` -> our compiler, NEVER
-``dace.compile()`` -- see :mod:`nestforge.build`), so this is literally "the emitted code vs the DaCe
+``dace.compile()`` -- see :mod:`nestforge.build.sdfg`), so this is literally "the emitted code vs the DaCe
 SDFG", compiled the way nest-forge ships it. Inputs are random; sizes are tiny (compile+run stays cheap)
 but distinct per dimension so an index / transpose bug is caught by the value comparison.
 
@@ -32,11 +32,11 @@ pytest.importorskip("hpcagent_bench")
 
 from dace import symbolic
 
-from nestforge import tsvc
-from nestforge.build import BuildOptions, build_sdfg
-from nestforge.corpus import iter_dace_kernels
-from nestforge.emit_numpy import load_emitted, maxsize_loop_scratch, sdfg_to_numpy
-from nestforge.isolation import run_isolated
+from nestforge.corpus import tsvc
+from nestforge.build.sdfg import BuildOptions, build_sdfg
+from nestforge.corpus.bench import iter_dace_kernels
+from nestforge.ir.emit_numpy import load_emitted, maxsize_loop_scratch, sdfg_to_numpy
+from nestforge.build.isolation import run_isolated
 
 ATOL = 1e-8
 
@@ -255,10 +255,10 @@ def test_emit_compiled_matches_sdfg_across_compilers(kind, short, lang, compiler
 
     def work():
         import subprocess
-        from nestforge.pass_lower import lower_nests_to_external_call
-        from nestforge.translate import prepare, emit_sources
-        from nestforge.arena import make_inputs
-        from nestforge.perf.harness import c_argtypes, call_c, signature_order
+        from nestforge.phases.scopes import lower_nests_to_external_call
+        from nestforge.corpus.translate import prepare, emit_sources
+        from nestforge.build.arena import make_inputs
+        from nestforge.build.harness import c_argtypes, call_c, signature_order
         make_sdfg, sizes, _ = builder_for(kind, short)
         nests = lower_nests_to_external_call(make_sdfg(), strategy="outer")
         suffix = {"c": ".c", "cpp": ".c", "fortran": ".f90"}[lang]

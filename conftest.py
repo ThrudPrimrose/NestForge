@@ -17,7 +17,7 @@ def pytest_configure(config):
     if vars(config).get("workerinput") is not None:
         return  # xdist worker: the controller already materialised the corpus
     try:
-        from nestforge.corpus import materialize_dace_corpus
+        from nestforge.corpus.bench import materialize_dace_corpus
         materialize_dace_corpus()
     except Exception:
         pass
@@ -47,7 +47,7 @@ def reset_extern_lib_env():
     CI's ordering happened to be a safe one -- luck, not a guarantee, and any reordering or shuffle
     would have broken it.
     """
-    from nestforge.libnode import ExternLibEnv
+    from nestforge.ir.libnode import ExternLibEnv
     ExternLibEnv.reset()
     yield
     ExternLibEnv.reset()

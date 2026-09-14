@@ -16,9 +16,9 @@ pytest.importorskip("dace")
 
 import dace as dc
 
-from nestforge import introspect
-from nestforge.introspect import describe_graph, interstate_definitions, kernel_body, resolve_scalars
-from nestforge.normalize import normalize_for_tree
+from nestforge.ir import introspect
+from nestforge.ir.introspect import describe_graph, interstate_definitions, kernel_body, resolve_scalars
+from nestforge.ir.names import normalize_for_tree
 from nestforge.session import Session
 
 

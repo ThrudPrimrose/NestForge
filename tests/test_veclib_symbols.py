@@ -12,7 +12,7 @@ import subprocess
 
 import pytest
 
-from nestforge.toolchain import VECTOR_LIBS, nm_symbol_names, packed_ops_called, serves_op, veclib_library_path
+from nestforge.build.toolchain import VECTOR_LIBS, nm_symbol_names, packed_ops_called, serves_op, veclib_library_path
 
 GCC_MISSING = shutil.which("gcc") is None
 

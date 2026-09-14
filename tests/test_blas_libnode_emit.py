@@ -1,6 +1,6 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Numpy emission for the symmetric-BLAS + LAPACK library nodes added to :mod:`nestforge.emit_libnode`
+"""Numpy emission for the symmetric-BLAS + LAPACK library nodes added to :mod:`nestforge.ir.emit_libnode`
 (Symm / Syrk / Syr2k / Potrf), plus the explicit refusal of nodes with no faithful single-process numpy
 form (MPI/pblas communication, sparse, FPGA-stream, LAPACK factorizations that output pivots).
 
@@ -18,9 +18,9 @@ from dace.libraries.blas.nodes.syrk import Syrk
 from dace.libraries.blas.nodes.syr2k import Syr2k
 from dace.libraries.lapack.nodes.potrf import Potrf
 
-from nestforge.emit_libnode import LIBNODE_EMITTERS, REFUSED_LIBRARY_NODES, UnsupportedLibraryNode, emit_library_node
-from nestforge.emit_numpy import load_emitted, sdfg_to_numpy
-from nestforge.isolation import run_isolated
+from nestforge.ir.emit_libnode import LIBNODE_EMITTERS, REFUSED_LIBRARY_NODES, UnsupportedLibraryNode, emit_library_node
+from nestforge.ir.emit_numpy import load_emitted, sdfg_to_numpy
+from nestforge.build.isolation import run_isolated
 
 DT = dace.float64
 

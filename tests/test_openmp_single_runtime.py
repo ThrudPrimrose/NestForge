@@ -28,8 +28,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from nestforge.toolchain import OPENMP_RUNTIMES, compiler_family
-from nestforge.perf import flags
+from nestforge.build.toolchain import OPENMP_RUNTIMES, compiler_family
+from nestforge.build import flags
 
 #: A minimal nest with an OpenMP region: enough to make the compiler link a runtime, which is all that
 #: is under test. ``omp-emit`` compiles the pragma as written; ``auto-par`` re-derives it.

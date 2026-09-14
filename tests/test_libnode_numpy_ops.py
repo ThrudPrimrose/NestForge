@@ -21,7 +21,7 @@ pytest.importorskip("dace")
 import dace as dc
 from dace import Memlet
 
-from nestforge.emit_numpy import UnsupportedNest, load_emitted, sdfg_to_numpy
+from nestforge.ir.emit_numpy import UnsupportedNest, load_emitted, sdfg_to_numpy
 
 N, M, K = (dc.symbol(s, dtype=dc.int64) for s in "NMK")
 F = dc.float64

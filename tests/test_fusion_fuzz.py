@@ -22,8 +22,8 @@ import pytest
 
 from dace.transformation.interstate.state_fusion import StateFusion
 
-from nestforge.fission_arms import fission_to_statements
-from nestforge.fusion_arms import apply_fusion, enumerate_fusions
+from nestforge.phases.schedule import fission_to_statements
+from nestforge.phases.schedule import apply_fusion, enumerate_fusions
 
 ARRAYS = ("a", "b", "c", "d")
 NCASES_FUSE = 12

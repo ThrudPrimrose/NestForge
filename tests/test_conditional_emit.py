@@ -18,7 +18,7 @@ import dace as dc
 
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
-from nestforge.emit_numpy import load_emitted, sdfg_to_numpy
+from nestforge.ir.emit_numpy import load_emitted, sdfg_to_numpy
 
 N = dc.symbol("N", dtype=dc.int64)
 
@@ -144,7 +144,7 @@ def test_a_non_final_unconditional_branch_is_refused():
     the unconditional one live (DaCe takes the first matching branch, and an unconditional one always
     matches), and two unconditional branches emitted two ``else:`` clauses -- a SyntaxError.
     """
-    from nestforge.emit_numpy import UnsupportedNest
+    from nestforge.ir.emit_numpy import UnsupportedNest
     sdfg = build_switch("else_first", [(None, 20.0), ("sel == 0", 10.0)])
     with pytest.raises(UnsupportedNest, match="unconditional branch"):
         sdfg_to_numpy(sdfg, "else_first")

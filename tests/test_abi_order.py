@@ -17,10 +17,10 @@ import pytest
 
 import dace
 
-from nestforge.extract import extract_nest_to_sdfg
-from nestforge.perf.harness import signature_order
-from nestforge.strategies import get_strategy
-from nestforge.translate import emit_sources, prepare
+from nestforge.ir.extract import extract_nest_to_sdfg
+from nestforge.build.harness import signature_order
+from nestforge.phases.scopes import get_strategy
+from nestforge.corpus.translate import emit_sources, prepare
 
 N = dace.symbol("N")
 
@@ -68,7 +68,7 @@ def test_arena_binds_by_the_emitted_signature_not_the_manifest(tmp_path):
     allocated for it (and `b`, which the test does not read, silently holds the answer). Both are double*,
     so ctypes raises nothing -- only the value is wrong.
     """
-    from nestforge.arena import run_arena
+    from nestforge.build.arena import run_arena
 
     prep, boundary = prepared_nest(tmp_path)
     csrc = next(s for s in emit_sources(prep, tmp_path, target="c") if s.suffix == ".c" and "pluto" not in s.name)
@@ -83,7 +83,7 @@ def test_a_prototype_above_the_definition_does_not_widen_the_capture():
     preceding PROTOTYPE, capturing from the declaration's `(` to the definition's `)`. The caller then
     binds a garbage parameter list -- or, since both drivers now catch ValueError, silently drops the
     native column. `[^)]*` cannot cross a closing paren at all."""
-    from nestforge.toolchain import raw_signature
+    from nestforge.build.toolchain import raw_signature
 
     declared_then_defined = ('void s000_fp64(double *restrict a, const double *restrict b, int64_t LEN_1D);\n'
                              '\n'

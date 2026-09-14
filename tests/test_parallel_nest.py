@@ -11,10 +11,10 @@ import numpy as np
 import dace
 from dace.sdfg.state import LoopRegion
 
-from nestforge import tsvc
-from nestforge.extract import extract_nest_to_sdfg
-from nestforge.emit_numpy import load_emitted, sdfg_to_numpy
-from nestforge.strategies import get_strategy, is_parallel_nest
+from nestforge.corpus import tsvc
+from nestforge.ir.extract import extract_nest_to_sdfg
+from nestforge.ir.emit_numpy import load_emitted, sdfg_to_numpy
+from nestforge.phases.scopes import get_strategy, is_parallel_nest
 
 
 def nest_refs(key, opt_mode="simplify-parallel", strategy="skip-taskloops"):

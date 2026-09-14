@@ -10,7 +10,7 @@ import numpy as np
 
 import dace
 
-from nestforge.fusion_arms import apply_fusion, enumerate_fusions
+from nestforge.phases.schedule import apply_fusion, enumerate_fusions
 
 N = dace.symbol("N")
 f64 = dace.float64

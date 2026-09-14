@@ -86,8 +86,8 @@ def test_skills_quote_the_real_strategy_names():
 
     `strategy_names()` silently grew the three offload units; the phase-2 skill kept showing three.
     """
-    from nestforge.fusion import fusion_strategy_names
-    from nestforge.offload import strategy_names
+    from nestforge.phases.schedule import fusion_strategy_names
+    from nestforge.phases.scopes import strategy_names
 
     quoted = {
         "phase1-fusion": (fusion_strategy_names(), r"fusion_strategy_names\(\)\s*#\s*(\[[^\]]*\])"),

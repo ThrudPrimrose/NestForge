@@ -3,7 +3,7 @@ __pycache__/
 .pytest_cache/
 .dacecache/
 *.egg-info/
-build/
+/build/
 dist/
 *.so
 *.o
@@ -27,3 +27,9 @@ id_ecdsa*
 
 # Winner dataset (nestforge/dataset.py): append-only JSONL a sweep leaves behind. Job output, not source.
 .results/
+
+# coverage (CI phase 5 writes these; the report is an artifact, not a tracked file)
+.coverage
+coverage.txt
+coverage.xml
+htmlcov/

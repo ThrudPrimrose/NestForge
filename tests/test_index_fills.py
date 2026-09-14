@@ -12,9 +12,9 @@ degenerate ``ip`` -- so only an explicit test pins the property.
 import numpy as np
 import pytest
 
-from nestforge.arena import make_inputs
+from nestforge.build.arena import make_inputs
 from nestforge.multinest import extract_all_nests
-from nestforge.tsvc import index_fills, iter_tsvc_kernels, sample_sizes
+from nestforge.corpus.tsvc import index_fills, iter_tsvc_kernels, sample_sizes
 
 #: (corpus, key, index array). The two corpora name their manifests differently -- ``tsvc_2_vag.yaml`` vs a
 #: bare ``reroll_gather.yaml`` -- so both are covered: a tsvc2_5 kernel only reaches its declared index

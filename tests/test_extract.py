@@ -3,8 +3,8 @@
 import numpy as np
 import dace
 
-from nestforge.strategies import outer
-from nestforge.extract import extract_nest_to_sdfg, trip_count_symbols
+from nestforge.phases.scopes import outer
+from nestforge.ir.extract import extract_nest_to_sdfg, trip_count_symbols
 
 N = dace.symbol('N')
 B_SYM = dace.symbol('B')

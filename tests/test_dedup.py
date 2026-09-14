@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from nestforge.arena import compile_object
-from nestforge.perf.flags import FP_LEVELS
-from nestforge.dedup import (asm_bodies, asm_body_key, collapse, cpp_body_key, function_bodies, needed_libraries,
+from nestforge.build.arena import compile_object
+from nestforge.build.flags import FP_LEVELS
+from nestforge.build.dedup import (asm_bodies, asm_body_key, collapse, cpp_body_key, function_bodies, needed_libraries,
                              parse_disassembly, representatives, variant_key)
 
 SYMBOL = "k_fp64"
@@ -271,10 +271,10 @@ def test_the_codegen_screen_separates_inert_nests_from_tiling_ones(kernel, disti
     check that ``function_bodies`` keeps those OUT of the key -- otherwise no two configs would ever match
     and the screen would be dead weight that still costs a codegen."""
     pytest.importorskip("hpcagent_bench")
-    from nestforge import tsvc
+    from nestforge.corpus import tsvc
     from nestforge import vectorize_variants as vv
-    from nestforge.build import BuildOptions, generate_program
-    from nestforge.pass_lower import lower_nests_to_external_call
+    from nestforge.build.sdfg import BuildOptions, generate_program
+    from nestforge.phases.scopes import lower_nests_to_external_call
 
     sdfg = tsvc.build_sdfg(tsvc.iter_tsvc_kernels(only=[kernel], corpus="tsvc2")[0], "simplify-parallel")
     nests = lower_nests_to_external_call(sdfg, strategy="skip-taskloops")

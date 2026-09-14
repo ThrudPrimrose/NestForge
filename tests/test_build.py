@@ -3,7 +3,7 @@
 """nest-forge owns the DaCe build (BUILD.md): generate DaCe's C++, compile+link it ourselves, call it via
 ctypes with manual init/program/exit -- not ``dace.compile``.
 
-Tests build real corpus nests through :mod:`nestforge.build` and check the owned-built kernel matches the
+Tests build real corpus nests through :mod:`nestforge.build.sdfg` and check the owned-built kernel matches the
 numpy oracle: source-tree layout, the init/program/exit call sequence, and per-parameter ctype marshaling.
 """
 import ctypes.util
@@ -21,22 +21,22 @@ import pytest
 
 import dace
 
-import nestforge.build as build_mod
-import nestforge.toolchain as toolchain_mod
+import nestforge.build.sdfg as build_mod
+import nestforge.build.toolchain as toolchain_mod
 
 pytest.importorskip("hpcagent_bench")
 pytestmark = pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not on PATH")
 
-from nestforge.corpus import iter_dace_kernels
-from nestforge.strategies import get_strategy
-from nestforge.extract import extract_nest_to_sdfg
-from nestforge.translate import prepare
-from nestforge.arena import make_inputs, run_oracle
+from nestforge.corpus.bench import iter_dace_kernels
+from nestforge.phases.scopes import get_strategy
+from nestforge.ir.extract import extract_nest_to_sdfg
+from nestforge.corpus.translate import prepare
+from nestforge.build.arena import make_inputs, run_oracle
 from dace.sdfg import nodes
-from nestforge.build import (CODEGEN_IMPLS, BuildOptions, LinkTimings, build_sdfg, codegen_config,
+from nestforge.build.sdfg import (CODEGEN_IMPLS, BuildOptions, LinkTimings, build_sdfg, codegen_config,
                              codegen_impls_available, compare_link_modes, config_has, dace_runtime_include,
                              default_codegen_impl, set_fast_libnodes)
-from nestforge.toolchain import (LIBMVEC, LIBNVOMP, LIBOMP, SLEEF, SVML, VECTOR_LIBS, OpenMPRuntime, available_linkers,
+from nestforge.build.toolchain import (LIBMVEC, LIBNVOMP, LIBOMP, SLEEF, SVML, VECTOR_LIBS, OpenMPRuntime, available_linkers,
                                  compiler_family, driver_lib_path, driver_search_dirs, fastest_linker, hint_dirs,
                                  ldconfig_dirs, linkable_lib_dir, linker_supported, llvm_version, parse_params,
                                  runtime_installed, vectorlib_installed)
@@ -184,7 +184,7 @@ def test_openmp_runtime_is_a_separate_per_compiler_flag_axis():
     # gnu emits GOMP calls at compile and links the mandated runtime explicitly (not -fopenmp -> libgomp).
     assert rt.compile_flags("g++") == ["-fopenmp"] and without_search_paths(rt.link_flags("g++")) == ["-lomp"]
     # intel-classic and nvidia link ONLY their native runtimes (icc->libiomp5, nvc->libnvomp), not libomp.
-    from nestforge.toolchain import LIBIOMP5
+    from nestforge.build.toolchain import LIBIOMP5
     assert LIBIOMP5.compile_flags("icc") == ["-qopenmp"]
     assert without_search_paths(LIBIOMP5.link_flags("icc")) == ["-qopenmp"]
     assert LIBNVOMP.compile_flags("nvc") == ["-mp"]
@@ -199,7 +199,7 @@ def test_openmp_runtime_is_a_separate_per_compiler_flag_axis():
 def test_openmp_runtime_registry_covers_the_popular_runtimes():
     """The four popular runtimes are ready knobs: libgomp (GNU), libomp (LLVM), libiomp5 (Intel, ABI-compat
     with libomp), libnvomp (NVIDIA, nvc -mp only)."""
-    from nestforge.toolchain import LIBGOMP, LIBIOMP5, OPENMP_RUNTIMES
+    from nestforge.build.toolchain import LIBGOMP, LIBIOMP5, OPENMP_RUNTIMES
     assert set(OPENMP_RUNTIMES) == {"libomp", "libgomp", "libiomp5", "libnvomp"}
     # gcc on Intel's runtime (GOMP-compat); search paths filtered (see without_search_paths).
     assert without_search_paths(LIBIOMP5.link_flags("g++")) == ["-liomp5"]
@@ -210,7 +210,7 @@ def test_openmp_abi_compatibility_is_enforced():
     """A runtime is usable only if the compiler can actually LINK it, which depends on HOW the family
     selects a runtime, not ABI alone: gcc links any gomp-capable runtime by soname; LLVM name-selects only
     libomp/libiomp5 (kmpc ABI); icc/nvc++ hard-link their native runtime alone. Mismatches raise."""
-    from nestforge.toolchain import LIBGOMP, LIBIOMP5, LIBNVOMP, LIBOMP
+    from nestforge.build.toolchain import LIBGOMP, LIBIOMP5, LIBNVOMP, LIBOMP
     # nvc++ / icc link ONLY their native runtimes.
     assert LIBNVOMP.compatible("nvc++") and not LIBOMP.compatible("nvc++") and not LIBIOMP5.compatible("nvc++")
     assert LIBIOMP5.compatible("icc") and not LIBOMP.compatible("icc") and not LIBGOMP.compatible("icc")
@@ -323,7 +323,7 @@ def test_an_explicitly_pinned_lib_dir_beats_discovery(monkeypatch):
 def test_parallel_map_emits_omp_pragma():
     """The sanity nest is actually parallel: DaCe lowers ``CPU_Multicore`` to an OpenMP pragma in the
     generated C++ (so the cross-compiler tests below really exercise the runtime link)."""
-    from nestforge.build import generate_program_folder
+    from nestforge.build.sdfg import generate_program_folder
     frame, _ = generate_program_folder(parallel_axpy_sdfg(), Path(tempfile.mkdtemp(prefix="nf_omp_src_")))
     assert "#pragma omp parallel for" in frame.read_text()
 
@@ -590,7 +590,7 @@ def test_toolchain_is_importable_without_dace():
         module = importlib.util.module_from_spec(spec)
         sys.modules["nf_toolchain_isolated"] = module
         spec.loader.exec_module(module)
-        assert "dace" not in sys.modules, "importing nestforge.toolchain pulled in dace"
+        assert "dace" not in sys.modules, "importing nestforge.build.toolchain pulled in dace"
         assert module.compiler_family("icx") == "llvm"          # a real probe, not just an import
         assert module.lib_findable("m", None) in (True, False)  # reaches ctypes.util, a SUBMODULE import
     """)

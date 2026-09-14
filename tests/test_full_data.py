@@ -4,8 +4,8 @@
 import numpy as np
 import dace
 
-from nestforge.pass_lower import lower_nests_to_external_call
-from nestforge.libnode import ExternalCall
+from nestforge.phases.scopes import lower_nests_to_external_call
+from nestforge.ir.libnode import ExternalCall
 
 N = dace.symbol('N')
 

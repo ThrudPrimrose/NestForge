@@ -13,7 +13,7 @@ import pytest
 import sympy
 from dace.subsets import Indices, Range
 
-from nestforge import tsvc
+from nestforge.corpus import tsvc
 from nestforge.granularity import granularity_ladder
 
 

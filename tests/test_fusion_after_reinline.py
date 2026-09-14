@@ -11,8 +11,8 @@ import numpy as np
 
 import dace
 
-from nestforge.fusion import maximal_fusion
-from nestforge.pass_lower import lower_nests_to_external_call
+from nestforge.phases.schedule import maximal_fusion
+from nestforge.phases.scopes import lower_nests_to_external_call
 
 N = dace.symbol("N")
 f64 = dace.float64

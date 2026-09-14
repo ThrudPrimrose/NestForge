@@ -9,12 +9,12 @@ import numpy as np
 import dace
 from dace import symbolic
 
-from nestforge.emit_numpy import load_emitted, nest_to_numpy, scratch_arrays
-from nestforge.offload import (OFFLOAD_UNITS, offload_candidates, offload_coarseness, offload_unit_axis)
-from nestforge.extract import extract_state_nest
-from nestforge.pass_lower import lower_nests_to_external_call
+from nestforge.ir.emit_numpy import load_emitted, nest_to_numpy, scratch_arrays
+from nestforge.phases.scopes import (OFFLOAD_UNITS, offload_candidates, offload_coarseness, offload_unit_axis)
+from nestforge.ir.extract import extract_state_nest
+from nestforge.phases.scopes import lower_nests_to_external_call
 from nestforge.granularity import fuse_first_k
-from nestforge.strategies import top_level_map_entries
+from nestforge.phases.scopes import top_level_map_entries
 
 N = dace.symbol('N')
 
@@ -162,7 +162,7 @@ def test_a_precondition_guard_state_is_not_an_offload_unit():
     no data, which emits ``void extcall_N_fp64(void)`` -- an extern call that computes nothing yet
     still links and gets timed, so it would have entered the tables as a measurement."""
     from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import insert_assumption_guards
-    from nestforge.offload import state_has_compute, unit_refs
+    from nestforge.phases.scopes import state_has_compute, unit_refs
 
     @dace.program
     def scaled(a: dace.float64[N], b: dace.float64[N]):
@@ -181,7 +181,7 @@ def test_a_precondition_guard_state_is_not_an_offload_unit():
 
 def test_a_tasklet_with_connectors_still_counts_as_compute():
     """The narrowing must not swallow ordinary single-tasklet states."""
-    from nestforge.offload import state_has_compute
+    from nestforge.phases.scopes import state_has_compute
 
     sdfg = dace.SDFG("plain")
     sdfg.add_array("a", [N], dace.float64)

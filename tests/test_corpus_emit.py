@@ -15,10 +15,10 @@ pytest.importorskip("hpcagent_bench")
 
 from dace import symbolic
 
-from nestforge.corpus import dace_kernel_names, iter_dace_kernels
-from nestforge.emit_libnode import symbol_scalar
-from nestforge.emit_numpy import load_emitted, maxsize_loop_scratch, sdfg_to_numpy
-from nestforge.isolation import run_isolated
+from nestforge.corpus.bench import dace_kernel_names, iter_dace_kernels
+from nestforge.ir.emit_libnode import symbol_scalar
+from nestforge.ir.emit_numpy import load_emitted, maxsize_loop_scratch, sdfg_to_numpy
+from nestforge.build.isolation import run_isolated
 
 
 def kernels():
@@ -30,7 +30,7 @@ def test_emit_numpy_labels_regions_and_states():
     valid python -- a block that emits only a comment (empty state/loop) must still get a ``pass``."""
     import ast
 
-    from nestforge.emit_numpy import body_or_pass
+    from nestforge.ir.emit_numpy import body_or_pass
     src = sdfg_to_numpy(kernels()["hpc/map_reduce/azimint_hist/azimint_hist"].to_sdfg(simplify=True), "k")
     ast.parse(src)  # valid python despite the interleaved comments
     assert "# loop region (" in src
@@ -255,7 +255,7 @@ def test_nbody_nested_where_emits_and_computes():
     """nbody's ``np.power(inv_r3, -1.5, out=inv_r3, where=I)`` is a masked nested SDFG in a 2-D map;
     it emits correctly once ExpandNestedSDFGInputs offsets the multi-dim mask condition fully."""
     pytest.importorskip("dace.transformation.interstate.expand_nested_sdfg_inputs")
-    from nestforge.emit_numpy import UnsupportedNest
+    from nestforge.ir.emit_numpy import UnsupportedNest
     from dace.frontend.python.common import DaceSyntaxError
     N, Nt = 6, 4
     rng = np.random.default_rng(0)
@@ -360,7 +360,7 @@ def test_azimint_hist_three_level_nested_return_and_computes():
     size-1 array read as ``compute_bin_ret_0[0]`` in an inter-state assignment but written as a scalar
     local -- the emitter reconciles the two by stripping the scalar-local ``[0]``. Returns histw/histu."""
     pytest.importorskip("dace.transformation.interstate.expand_nested_sdfg_inputs")
-    from nestforge.emit_numpy import UnsupportedNest
+    from nestforge.ir.emit_numpy import UnsupportedNest
     N, npt = 200, 8
     rng = np.random.default_rng(0)
     data, radius = rng.random(N), rng.random(N)
@@ -388,7 +388,7 @@ def test_azimint_naive_wcr_reduction_emits_and_computes():
     accumulation inside a nested SDFG. Exercises WCR augmented-assignment plus the inner/outer size-1
     descriptor reconciliation (a nested scalar accumulator read back as a size-1 array)."""
     pytest.importorskip("dace.transformation.interstate.expand_nested_sdfg_inputs")
-    from nestforge.emit_numpy import UnsupportedNest
+    from nestforge.ir.emit_numpy import UnsupportedNest
     N, npt = 150, 8
     rng = np.random.default_rng(0)
     data, radius = rng.random(N), rng.random(N)

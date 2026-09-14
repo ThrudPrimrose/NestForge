@@ -13,10 +13,10 @@ import numpy as np
 import pytest
 import dace
 
-from nestforge.pass_lower import lower_nests_to_external_call
-from nestforge.libnode import ExternLibEnv
-from nestforge.translate import prepare, emit_sources
-from nestforge.arena import run_arena, build_winner_archive
+from nestforge.phases.scopes import lower_nests_to_external_call
+from nestforge.ir.libnode import ExternLibEnv
+from nestforge.corpus.translate import prepare, emit_sources
+from nestforge.build.arena import run_arena, build_winner_archive
 
 N = dace.symbol('N')
 

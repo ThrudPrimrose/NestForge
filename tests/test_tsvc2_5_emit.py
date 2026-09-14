@@ -20,10 +20,10 @@ import pytest
 
 pytest.importorskip("hpcagent_bench")
 
-from nestforge import tsvc
-from nestforge.extract import extract_nest_to_sdfg
-from nestforge.emit_numpy import load_emitted, sdfg_to_numpy
-from nestforge.strategies import get_strategy
+from nestforge.corpus import tsvc
+from nestforge.ir.extract import extract_nest_to_sdfg
+from nestforge.ir.emit_numpy import load_emitted, sdfg_to_numpy
+from nestforge.phases.scopes import get_strategy
 
 
 def load(key: str):
@@ -112,10 +112,10 @@ def test_float_value_scalar_is_double_not_truncated_in_compiled_c(tmp_path):
     import shutil
     import subprocess
 
-    from nestforge.arena import make_inputs, run_oracle, maxdiff, scalar_ctype
-    from nestforge.isolation import run_isolated
-    from nestforge.perf.harness import c_argtypes, call_c, signature_order
-    from nestforge.translate import prepare, emit_sources
+    from nestforge.build.arena import make_inputs, run_oracle, maxdiff, scalar_ctype
+    from nestforge.build.isolation import run_isolated
+    from nestforge.build.harness import c_argtypes, call_c, signature_order
+    from nestforge.corpus.translate import prepare, emit_sources
 
     cc = shutil.which("gcc") or shutil.which("clang")
     if cc is None:

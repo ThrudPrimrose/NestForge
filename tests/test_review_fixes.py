@@ -6,10 +6,10 @@ import pytest
 import dace
 from dace.sdfg.state import LoopRegion
 
-from nestforge.arena import make_inputs, scratch_names
-from nestforge.emit_numpy import load_emitted, maxsize_loop_scratch, nest_to_numpy, sdfg_to_numpy
-from nestforge.extract import Boundary
-from nestforge.pass_lower import lower_nests_to_external_call
+from nestforge.build.arena import make_inputs, scratch_names
+from nestforge.ir.emit_numpy import load_emitted, maxsize_loop_scratch, nest_to_numpy, sdfg_to_numpy
+from nestforge.ir.extract import Boundary
+from nestforge.phases.scopes import lower_nests_to_external_call
 
 N = dace.symbol('N')
 
@@ -17,7 +17,7 @@ N = dace.symbol('N')
 # ----- corpus: pick the kernel's entry @dace.program, not the first helper (Finder B#1) ----------
 def test_corpus_program_is_the_entry_not_a_helper():
     pytest.importorskip("hpcagent_bench")
-    from nestforge.corpus import iter_dace_kernels
+    from nestforge.corpus.bench import iter_dace_kernels
     ks = {k.short_name: k for k in iter_dace_kernels()}
     # mlp_dace defines relu, softmax, then mlp; resnet has resnet_basicblock + a _gpu variant after it.
     assert ks["ml/mlp/mlp"].program().name.endswith("mlp")
@@ -26,7 +26,7 @@ def test_corpus_program_is_the_entry_not_a_helper():
 
 def test_corpus_module_path_independent_of_namespace_path():
     pytest.importorskip("hpcagent_bench")
-    from nestforge.corpus import module_path
+    from nestforge.corpus.bench import module_path
     # Derived from the registry key, not hpcagent_bench.benchmarks.__path__ (which can be stale/multi-root).
     assert module_path("hpc/dense_linear_algebra/gemm/gemm") == \
         "hpcagent_bench.benchmarks.hpc.dense_linear_algebra.gemm.gemm_dace"
@@ -134,9 +134,9 @@ def scaley(A: dace.float64[N]):
 
 
 def test_returning_kernel_survives_arena_oracle_and_manifest_matches(tmp_path):
-    from nestforge.pass_lower import lower_nests_to_external_call
-    from nestforge.translate import prepare
-    from nestforge.arena import make_inputs, run_oracle
+    from nestforge.phases.scopes import lower_nests_to_external_call
+    from nestforge.corpus.translate import prepare
+    from nestforge.build.arena import make_inputs, run_oracle
 
     sdfg = scaley.to_sdfg(simplify=True)
     ext, boundary = lower_nests_to_external_call(sdfg)[0]

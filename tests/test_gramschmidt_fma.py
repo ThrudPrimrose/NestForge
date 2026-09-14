@@ -30,9 +30,9 @@ pytestmark = pytest.mark.skipif(gcc is None, reason="gcc not on PATH")
 
 from dace import symbolic
 
-from nestforge.corpus import iter_dace_kernels
-from nestforge.pass_lower import lower_nests_to_external_call
-from nestforge.translate import prepare, emit_sources
+from nestforge.corpus.bench import iter_dace_kernels
+from nestforge.phases.scopes import lower_nests_to_external_call
+from nestforge.corpus.translate import prepare, emit_sources
 
 _CT = {"float64": ctypes.c_double, "int64": ctypes.c_int64}
 _BASE = ["-O3", "-march=native", "-fPIC", "-shared"]

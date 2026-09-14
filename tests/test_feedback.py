@@ -1,6 +1,6 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Phase-4 feedback loop (:mod:`nestforge.feedback`): the measurement-driven granularity loop and its two
+"""Phase-4 feedback loop (:mod:`nestforge.phases.feedback`): the measurement-driven granularity loop and its two
 rules -- ``best_outcome`` (fastest bit-exact wins) and ``improved`` (a round that does not improve stops
 the loop). Driven with a fake ``measure`` (no compiler), plus one real SDFG proving ``default_fuse_step``
 re-enumerates + fuses to the fixed point.
@@ -9,10 +9,10 @@ import numpy as np
 import pytest
 
 import dace
-from nestforge.build import BuildOptions
-from nestforge.feedback import (FeedbackResult, best_outcome, default_fuse_step, improved, run_feedback_loop)
+from nestforge.build.sdfg import BuildOptions
+from nestforge.phases.feedback import (FeedbackResult, best_outcome, default_fuse_step, improved, run_feedback_loop)
 from nestforge.optimizers import Outcome, Proposal
-from nestforge.strategies import outer
+from nestforge.phases.scopes import outer
 
 N = dace.symbol("N")
 f64 = dace.float64

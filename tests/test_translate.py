@@ -3,10 +3,10 @@
 import numpy as np
 import dace
 
-from nestforge.strategies import outer
-from nestforge.extract import extract_nest_to_sdfg
-from nestforge.emit_numpy import load_emitted, nest_to_numpy
-from nestforge.translate import prepare, emit_sources
+from nestforge.phases.scopes import outer
+from nestforge.ir.extract import extract_nest_to_sdfg
+from nestforge.ir.emit_numpy import load_emitted, nest_to_numpy
+from nestforge.corpus.translate import prepare, emit_sources
 
 N = dace.symbol('N')
 
@@ -78,7 +78,7 @@ def test_a_fused_maps_scalar_transient_is_spelled_the_same_inside_and_out():
     whether the value survives from the write to the read.
     """
     from nestforge.granularity import granularity_ladder
-    from nestforge.pass_lower import lower_nests_to_external_call
+    from nestforge.phases.scopes import lower_nests_to_external_call
 
     sdfg = gather_two_map.to_sdfg(simplify=True)
     granularity_ladder(sdfg, max_points=2)[-1].apply(sdfg)  # the maximal (fused) rung
@@ -99,7 +99,7 @@ def test_the_standalone_preamble_is_the_live_helpers():
     """An emitted standalone kernel must compute what the validated in-process one computes. The preamble
     is generated from int_floor/int_ceil rather than hand-copied, so an edit to either cannot leave the
     emitted text behind -- assert the property, not the generation trick."""
-    from nestforge import emit_numpy
+    from nestforge.ir import emit_numpy
 
     namespace = {}
     exec(emit_numpy.STANDALONE_PREAMBLE, namespace)  # noqa: S102 -- the point is that it is runnable

@@ -1,7 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Compiler + BLAS backend discovery return well-formed link flags."""
-from nestforge.arena import BlasBackend, discover_blas_libraries, discover_compilers
+from nestforge.build.arena import BlasBackend, discover_blas_libraries, discover_compilers
 
 
 def test_discover_compilers_returns_existing_paths():

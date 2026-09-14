@@ -16,14 +16,14 @@ import dace
 
 import nestforge
 
-from nestforge import arena
-from nestforge.toolchain import LIBOMP, OpenMPRuntime
-from nestforge.emit_libnode import scalar_elem
-from nestforge.fusion_arms import can_fuse, enumerate_fusions
-from nestforge.libnode import ExternLibEnv, ExternalCall, proto_and_call
-from nestforge.perf import flags
+from nestforge.build import arena
+from nestforge.build.toolchain import LIBOMP, OpenMPRuntime
+from nestforge.ir.emit_libnode import scalar_elem
+from nestforge.phases.schedule import can_fuse, enumerate_fusions
+from nestforge.ir.libnode import ExternLibEnv, ExternalCall, proto_and_call
+from nestforge.build import flags
 from nestforge.session import Session
-from nestforge.strategies import top_level_map_entries
+from nestforge.phases.scopes import top_level_map_entries
 
 N = dace.symbol('N')
 
@@ -207,14 +207,14 @@ def test_every_link_search_path_is_paired_with_an_rpath():
 def test_ccache_is_auto_detected_but_never_used_where_time_is_measured():
     """The native build pipeline picks up a compiler cache when installed, EXCEPT where compile time is the
     reported measurement -- a cache hit returns in ~0s and would make that number meaningless."""
-    from nestforge.toolchain import ccache_available, ccache_prefix
+    from nestforge.build.toolchain import ccache_available, ccache_prefix
     auto = ccache_prefix(None)
     assert auto == (["ccache"] if ccache_available() else [])  # AUTO follows availability
     assert ccache_prefix(False) == []  # measurement paths opt out unconditionally
 
 
 def test_ccache_can_be_disabled_by_env(monkeypatch):
-    from nestforge import toolchain
+    from nestforge.build import toolchain
     monkeypatch.setenv("NF_NO_CCACHE", "1")
     toolchain.ccache_available.cache_clear()
     assert toolchain.ccache_available() is False
@@ -224,7 +224,7 @@ def test_ccache_can_be_disabled_by_env(monkeypatch):
 def test_compare_link_modes_forces_the_cache_off():
     # the two compile_seconds it returns ARE the comparison, so it must not be served from a cache.
     import inspect
-    from nestforge import build
+    from nestforge.build import sdfg as build
     src = inspect.getsource(build.compare_link_modes)
     assert src.count("use_ccache=False") == 2  # both the monolithic and external compiles
 

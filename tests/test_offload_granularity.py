@@ -1,6 +1,6 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Phase-2 offload-granularity API (:mod:`nestforge.offload`): the named/registered granularity that
+"""Phase-2 offload-granularity API (:mod:`nestforge.phases.scopes`): the named/registered granularity that
 selects which nests leave the SDFG as external calls, the non-mutating candidate inspector the agent
 reads before committing, and the externalize-before-offload commit.
 """
@@ -10,8 +10,8 @@ import pytest
 import dace
 from dace.sdfg import nodes
 
-from nestforge.libnode import ExternalCall
-from nestforge.offload import (DEFAULT_GRANULARITY, OffloadCandidate, get_strategy, lower_nests_to_external_call,
+from nestforge.ir.libnode import ExternalCall
+from nestforge.phases.scopes import (DEFAULT_GRANULARITY, OffloadCandidate, get_strategy, lower_nests_to_external_call,
                                offload_candidates, strategy_names, whole_program_boundary)
 
 N = dace.symbol("N")

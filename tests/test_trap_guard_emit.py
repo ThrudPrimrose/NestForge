@@ -14,7 +14,7 @@ from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (collect_assumptions,
                                                                                 insert_assumption_guards)
 
-from nestforge.emit_numpy import UnsupportedNest, load_emitted, sdfg_to_numpy, trap_guard_lines
+from nestforge.ir.emit_numpy import UnsupportedNest, load_emitted, sdfg_to_numpy, trap_guard_lines
 
 N = dace.symbol("N")
 
@@ -112,7 +112,7 @@ def test_a_connectorless_tasklet_that_is_not_a_guard_emits_no_statement():
     state = dace.SDFG("g").add_state()
     other = state.add_tasklet("bookkeeping", {}, {}, 'printf("hi");', language=dace.dtypes.Language.CPP)
     assert trap_guard_lines(other) is None
-    from nestforge.emit_numpy import tasklet_lines
+    from nestforge.ir.emit_numpy import tasklet_lines
     assert tasklet_lines(state, state.sdfg, other) == ["# no-op tasklet (bookkeeping): no connectors, no data effect"]
 
 

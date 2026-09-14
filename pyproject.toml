@@ -37,6 +37,8 @@ dev = [
     "pytest",
     "pytest-timeout",
     "pytest-xdist",
+    # CI phase 5 reports ONE total over phases 3 and 4; --cov-append is what joins them
+    "pytest-cov",
     # perf/plot_*.py only -- outside the package, so importing nestforge never needs it
     "matplotlib",
     # PINNED: yapf's wrapping changes between releases, so an unpinned one fails the CI format gate
@@ -52,6 +54,16 @@ Repository = "https://github.com/spcl/NestForge"
 
 [tool.setuptools.packages.find]
 include = ["nestforge*"]
+
+[tool.coverage.run]
+# `isolation.run_isolated` forks, and the child leaves via ``os._exit`` -- which skips the atexit hook
+# coverage saves from. Everything a test drives INSIDE that fork (most of the emit-and-validate path)
+# therefore read as untested while its tests passed: emit_libnode measured 36.7% from a file whose 35
+# tests all pass. A metric that lies in the direction of "go write tests for code that already has
+# them" is worse than no metric. ``patch = ["_exit"]`` makes the child save before it exits, and
+# ``parallel`` gives each process its own data file to combine.
+patch = ["_exit"]
+parallel = true
 
 [tool.pytest.ini_options]
 addopts = "-q -p no:cacheprovider"

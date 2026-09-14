@@ -100,7 +100,8 @@ jobs:
         env:
           NESTFORGE_CI_NO_SKIP: '1'
         run: |
-          python -m pytest -q -p no:cacheprovider -m "not integration" -n auto --timeout=900
+          python -m pytest -q -p no:cacheprovider -m "not integration" -n auto --timeout=900 \
+            --cov=nestforge --cov-report=
 
       # The whole integration set, selected by MARKER rather than by a hand-listed set of files -- a list
       # goes stale silently (a new integration test simply never runs), which is the one failure mode CI
@@ -113,4 +114,44 @@ jobs:
       # set NESTFORGE_CI_NO_SKIP (Phase 3 keeps the zero-skip rule for the unit set).
       - name: Phase 4 -- integration set (builds, runs, validates bit-exact)
         run: |
-          python -m pytest -q -p no:cacheprovider -m integration --timeout=900
+          python -m pytest -q -p no:cacheprovider -m integration --timeout=900 \
+            --cov=nestforge --cov-append --cov-report=
+
+      # TOTAL coverage: phases 3 and 4 measure the same package into one data file (Phase 3 starts it,
+      # Phase 4 appends), so this is the whole suite's number rather than either half's -- the split
+      # matters, since the integration lane is the only one that runs the real build/validate paths.
+      # The floor RATCHETS: it is the measured total minus a point of slack for the toolchain-gated
+      # tests that skip themselves on a runner without a vendor compiler. Raise it when the number
+      # rises; never lower it to make a red build green.
+      # Caveat worth knowing when reading the number: `isolation.run_isolated` forks and the child
+      # leaves via os._exit, so lines executed only inside a forked child are not recorded. What runs
+      # there is the compiled kernel, not nestforge python, so the under-count is small -- but it is
+      # an under-count, not a gap in the tests.
+      - name: Phase 5 -- total coverage report
+        run: |
+          python -m coverage report --precision=1 | tee coverage.txt
+          python -m coverage xml -o coverage.xml
+          {
+            echo '### Total coverage (unit + integration)'
+            echo '```'
+            tail -1 coverage.txt
+            echo '```'
+            echo '<details><summary>Per-module</summary>'
+            echo
+            echo '```'
+            cat coverage.txt
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # --precision matters here: without it coverage compares the ROUNDED number, so 89.7 reads
+          # as 90 and a floor of 90 passes on 89.5. Check at the precision the report prints.
+          python -m coverage report --precision=1 --fail-under=88
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.txt
+            coverage.xml

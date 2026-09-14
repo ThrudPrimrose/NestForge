@@ -10,9 +10,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from nestforge import arena, tsvc
-from nestforge.isolation import run_isolated
-from nestforge.perf import flags, harness, tsvc_full
+from nestforge.build import arena
+
+from nestforge.corpus import tsvc
+from nestforge.build.isolation import run_isolated
+from nestforge.build import flags
+from nestforge.build import harness
+from nestforge.perf import tsvc_full
 
 
 # --- native-baseline signature parsing (tsvc.native_signature) ----------------------------------------
@@ -142,7 +146,7 @@ def test_enumerate_cells_gates_veclib_cells_by_nest_math(tmp_path):
     """The veclib axis fans lane-3 cells off the PRECOMPUTED per-lang ``has_math`` flag: a math nest gets
     both none and libmvec timing cells, a plain-arithmetic nest gets none only. Dummy paths -- no source I/O."""
     from nestforge.perf import tsvc_full
-    from nestforge.toolchain import discover_toolchains
+    from nestforge.build.toolchain import discover_toolchains
     tcs = discover_toolchains("gcc")
     axes = {
         "opt_mode": "simplify-parallel",
@@ -395,7 +399,7 @@ def test_native_signature_accepts_a_namespace_qualified_type():
 def test_every_foundation_baseline_signature_parses():
     """The parser's real input is the shipped corpus, and both defects above were invisible to hand-written
     fixtures. Parse all 245 for real: a kernel whose signature will not parse is one no sweep can measure."""
-    from nestforge.perf.harness import native_symbol
+    from nestforge.build.harness import native_symbol
     failed = {}
     kernels = tsvc.iter_tsvc_kernels(corpus="foundation")
     assert kernels, "the foundation corpus came back empty; this test would prove nothing"
@@ -429,7 +433,7 @@ def test_the_two_family_vocabularies_stay_apart():
     """toolchain.compiler_family classifies an EXECUTABLE for its OpenMP ABI; family_of classifies a toolchain
     LABEL for the FP tables. They are not interchangeable, and this pins the exact disagreement that makes
     that true, so a future 'simplification' that collapses them fails here instead of in a sweep."""
-    from nestforge.toolchain import compiler_family
+    from nestforge.build.toolchain import compiler_family
 
     assert compiler_family("icc") == "intel-classic" and compiler_family("icc") not in flags._FP
     assert compiler_family("icx") == "llvm"  # an Intel compiler classified llvm: the ABI, not the FP family

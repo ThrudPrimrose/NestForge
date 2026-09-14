@@ -1,6 +1,6 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Phase-2 fusion tool surface (:mod:`nestforge.fusion_arms`): enumerate legal fusion moves and apply
+"""The Phase-2 fusion tool surface (:mod:`nestforge.phases.schedule`): enumerate legal fusion moves and apply
 them, with the correctness net that any sequence of applied moves preserves the program's value bit-for-bit
 against the un-fused reference. Exercises all three arms -- loop, vertical map, horizontal map -- and the
 agent's real pattern of applying a random legal sequence.
@@ -11,7 +11,7 @@ import pytest
 import dace
 from dace.transformation.interstate.state_fusion import StateFusion
 
-from nestforge.fusion_arms import (FusionMove, apply_fusion, enumerate_fusions, horizontal_map_moves, loop_fusion_moves,
+from nestforge.phases.schedule import (FusionMove, apply_fusion, enumerate_fusions, horizontal_map_moves, loop_fusion_moves,
                                    vertical_map_moves)
 
 N = dace.symbol("N")

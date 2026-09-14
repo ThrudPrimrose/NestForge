@@ -1,6 +1,6 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The normal form the agent's tree is projected from (:mod:`nestforge.normalize`).
+"""The normal form the agent's tree is projected from (:mod:`nestforge.ir.names`).
 
 Every fixture is built by the DaCe Python frontend rather than by hand: the properties under test --
 frontend labels carrying source line numbers, nested SDFGs at the top level, statements landing
@@ -19,8 +19,8 @@ import dace as dc
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 
-from nestforge.isolation import run_isolated
-from nestforge.normalize import (WRAP_PARAM, block_kind, free_tasklets, in_order, inline_top_level_nsdfgs,
+from nestforge.build.isolation import run_isolated
+from nestforge.ir.names import (WRAP_PARAM, block_kind, free_tasklets, in_order, inline_top_level_nsdfgs,
                                  normalize_for_tree, rename_map_params, rename_transient_data, top_level_nsdfgs,
                                  wrap_free_tasklets, wrap_groups)
 

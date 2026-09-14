@@ -22,8 +22,8 @@ import subprocess
 import numpy as np
 import pytest
 
-from nestforge.perf import flags
-from nestforge.isolation import (ERROR_CHARS, OMP_PAUSE_MODES, OMP_PAUSE_SOFT, OMP_RUNTIME_SONAMES, pause_openmp_pools,
+from nestforge.build import flags
+from nestforge.build.isolation import (ERROR_CHARS, OMP_PAUSE_MODES, OMP_PAUSE_SOFT, OMP_RUNTIME_SONAMES, pause_openmp_pools,
                                  run_isolated)
 
 OMP_SRC = """#include <omp.h>

@@ -10,8 +10,8 @@ from dace.sdfg.state import LoopRegion
 
 import dace
 
-from nestforge.corpus import iter_dace_kernels
-from nestforge.strategies import empty_strategy_reason, get_strategy
+from nestforge.corpus.bench import iter_dace_kernels
+from nestforge.phases.scopes import empty_strategy_reason, get_strategy
 
 
 def sdfg_for(short):
