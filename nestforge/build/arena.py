@@ -19,7 +19,7 @@ import dace
 from dace import symbolic
 
 from nestforge.build import flags
-from nestforge.build.toolchain import needed_libraries
+from nestforge.build.toolchain import needed_libraries, parse_params
 from nestforge.ir.emit_numpy import load_emitted, maxsize_loop_scratch, scratch_arrays
 from nestforge.ir.extract import Boundary
 from nestforge.corpus.translate import Prepared
@@ -241,13 +241,18 @@ def device_memory(cudart: ctypes.CDLL, buffers: dict[str, np.ndarray], names: Se
 
 
 def time_device_reps(
-    fn: Any, args: list, memory: DeviceMemory, boundary: Boundary, host: dict[str, np.ndarray], reps: int
+    fn: Any,
+    args: list,
+    memory: DeviceMemory,
+    output_names: Sequence[str],
+    restore: Sequence[str],
+    host: dict[str, np.ndarray],
+    reps: int,
 ) -> tuple[dict[str, np.ndarray], float]:
-    """One correctness call and its outputs, a warm call, then ``reps`` timed calls; an accumulating output is
-    uploaded again from its pristine host copy before every call, outside the timed region."""
-    restore = accumulating_outputs(boundary, host)
+    """One correctness call and its outputs, a warm call, then ``reps`` timed calls; an accumulating output in
+    ``restore`` is uploaded again from its pristine host copy before every call, outside the timed region."""
     fn(*args)  # the CPF entry synchronizes before it returns
-    outputs = {name: host[name].copy() for name in boundary.outputs if name in memory.pointers}
+    outputs = {name: host[name].copy() for name in output_names if name in memory.pointers}
     for name, buffer in outputs.items():
         memory.download(name, buffer)
     total = 0.0
@@ -265,11 +270,12 @@ def call_on_device(
     symbol: str,
     order: list[str],
     argtypes: list,
-    boundary: Boundary,
+    output_names: Sequence[str],
+    restore: Sequence[str],
     inputs: dict[str, np.ndarray],
     sizes: dict[str, int],
     reps: int,
-) -> tuple[dict[str, np.ndarray] | None, float]:
+) -> tuple[dict[str, np.ndarray], float]:
     """:func:`call_native` for a device kernel: every pointer argument is a device buffer, copied down once and
     read back once; scalars and sizes still go by value."""
     fn = ctypes.CDLL(str(so))[symbol]  # ctypes CDLL indexing (not getattr) to bind the kernel symbol
@@ -283,9 +289,42 @@ def call_on_device(
         for arg, ctype in zip(order, argtypes)
     ]
     try:
-        return time_device_reps(fn, args, memory, boundary, host, reps)
+        return time_device_reps(fn, args, memory, output_names, restore, host, reps)
     finally:
         memory.free()
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceCall:
+    """A device kernel call a freshly spawned interpreter can make: every field pickles, and the entry's C
+    parameter list stands in for its ctypes argument types."""
+
+    shared: str
+    symbol: str
+    order: list[str]
+    parameters: str
+    output_names: list[str]
+    restore: list[str]
+    inputs: dict[str, np.ndarray]
+    sizes: dict[str, int]
+    reps: int
+
+
+def call_device(call: DeviceCall) -> dict:
+    """The spawned child's side of a device measurement: the kernel's outputs and its time per call."""
+    argtypes = [param.ctype for param in parse_params(call.parameters)]
+    outputs, time_us = call_on_device(
+        Path(call.shared),
+        call.symbol,
+        call.order,
+        argtypes,
+        call.output_names,
+        call.restore,
+        call.inputs,
+        call.sizes,
+        call.reps,
+    )
+    return {"outputs": outputs, "time_us": time_us}
 
 
 def dtype_floor(arrays: dict[str, np.ndarray]) -> float:

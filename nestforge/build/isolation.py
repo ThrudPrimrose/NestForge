@@ -8,12 +8,14 @@ from __future__ import annotations
 import faulthandler
 import ctypes
 import json
+import multiprocessing
 import os
 import select
 import signal
 import time
 import warnings
 from collections.abc import Callable
+from typing import Any
 
 #: OpenMP runtimes whose thread pool must be torn down before a fork.
 OMP_RUNTIME_SONAMES = ("libgomp.so.1", "libomp.so.5", "libomp.so", "libiomp5.so")
@@ -56,6 +58,47 @@ def pause_openmp_pools(mode: int = OMP_PAUSE_SOFT) -> None:
 def quiet_fatal_signals() -> None:
     """Drop the pytest-inherited faulthandler so a segfault does not dump the parent's stack."""
     faulthandler.disable()
+
+
+def run_spawned(target: Callable[[Any], dict], payload: Any, timeout: float = 900.0) -> dict:
+    """Run ``target(payload)`` in a freshly spawned interpreter rather than a fork: a CUDA context does not
+    survive fork, so device work in a child of a process that already used the GPU fails with CUDA status 3.
+    Same ``{"error": ...}`` contract as :func:`run_isolated`; ``target`` and ``payload`` must pickle."""
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    child = context.Process(target=spawned_entry, args=(target, payload, sender))
+    child.start()
+    sender.close()
+    try:
+        return spawned_result(receiver, child, timeout)
+    finally:
+        receiver.close()
+
+
+def spawned_result(receiver: Any, child: Any, timeout: float) -> dict:
+    """The spawned child's dict, or an error when it runs past ``timeout`` or dies before sending one."""
+    if not receiver.poll(timeout):
+        child.kill()
+        child.join()
+        return {"error": f"timeout after {timeout:.0f}s (runaway kernel)"}
+    try:
+        result = receiver.recv()
+    except EOFError:  # the child exited, or was killed by a signal, without sending
+        child.join()
+        return {"error": f"crashed (exit code {child.exitcode})"}
+    child.join()
+    return result
+
+
+def spawned_entry(target: Callable[[Any], dict], payload: Any, sender: Any) -> None:
+    """The spawned child's body: any Python-level failure comes back as an error (a segfault does not)."""
+    quiet_fatal_signals()
+    try:
+        result = target(payload)
+    except BaseException as e:
+        result = {"error": f"{type(e).__name__}: {str(e)[:ERROR_CHARS]}"}
+    sender.send(result)
+    sender.close()
 
 
 def run_isolated(work_fn: Callable[[], dict], timeout: float = 900.0) -> dict:

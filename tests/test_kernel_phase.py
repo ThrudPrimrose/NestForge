@@ -4,8 +4,12 @@
 CPF's argument order with the types ``ExternalCall`` declares, ``lib<kernel>.a`` defines that entry, and every
 built kernel matches its NumPy oracle."""
 
+import json
+import os
 import re
 import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -379,3 +383,65 @@ def test_the_gpu_kernel_link_passes_as_needed_before_cudart(tmp_path, monkeypatc
     link = shared_link(commands, archive.with_suffix(".so"))
     assert "-Wl,--as-needed" in link and "-lcudart" in link
     assert link.index("-Wl,--as-needed") < link.index("-lcudart")
+
+
+#: Creates this process's CUDA context, then validates a GPU kernel from the same process. A measurement run
+#: in a child forked from a CUDA-initialized parent fails with CUDA status 3 (not initialized).
+CUDA_INITIALIZED_PARENT = """import ctypes
+import json
+import os
+import sys
+from pathlib import Path
+
+import dace
+
+from nestforge.build.toolchain import discover_cuda_toolchains
+from nestforge.corpus.translate import prepare
+from nestforge.phases.kernel import build_kernel_library, schedule_kernel, validate_kernel
+from nestforge.phases.normalize import Targets, normalize
+from nestforge.phases.offload import offload
+from nestforge.phases.schedule import full_fusion
+from nestforge.phases.scopes import lower_nests_to_external_call
+from nestforge.phases.variants import device_variants
+
+N = dace.symbol("N")
+
+
+@dace.program
+def vadd(b: dace.float64[N], c: dace.float64[N], a: dace.float64[N]):
+    for i in dace.map[0:N]:
+        a[i] = b[i] + c[i]
+
+
+if __name__ == "__main__":
+    out = Path(sys.argv[1])
+    cudart = ctypes.CDLL(os.path.join(discover_cuda_toolchains()[0].cudart_dir, "libcudart.so"))
+    status = cudart.cudaFree(ctypes.c_void_p(0))
+    sdfg = vadd.to_sdfg(simplify=True)
+    normalize(sdfg, Targets(gpu=True))
+    full_fusion(sdfg, Targets(gpu=True))
+    ((ext, boundary),) = lower_nests_to_external_call(sdfg)
+    offload(sdfg, Targets(gpu=True))
+    strict = next(v for v in device_variants("gpu") if v.fp_mode == "strict-ieee")
+    src = schedule_kernel(ext, boundary, out / "gen")
+    archive = build_kernel_library(src, strict.compiler, list(strict.flags), out / "lib")
+    verdict = validate_kernel(archive, src, prepare(boundary, ext.name, out / "ref"), {"N": 1037}, reps=2)
+    print(json.dumps({"init_status": status, "error": verdict.error, "ok": verdict.ok, "maxdiff": verdict.maxdiff}))
+"""
+
+
+@pytest.mark.gpu
+def test_a_gpu_kernel_measures_correctly_after_its_process_created_a_cuda_context(tmp_path):
+    """A CUDA context does not survive fork, so the measurement must not run in a child forked from a process
+    that already used the GPU. A fresh interpreter keeps this test's context out of the rest of the suite."""
+    script = tmp_path / "cuda_initialized_parent.py"
+    script.write_text(CUDA_INITIALIZED_PARENT)
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(Path(__file__).resolve().parents[1]), *sys.path])}
+
+    run = subprocess.run(
+        [sys.executable, str(script), str(tmp_path)], capture_output=True, text=True, env=env, timeout=900
+    )
+
+    assert run.returncode == 0, run.stderr[-3000:]
+    report = json.loads(run.stdout.strip().splitlines()[-1])
+    assert report == {"init_status": 0, "error": "", "ok": True, "maxdiff": 0.0}

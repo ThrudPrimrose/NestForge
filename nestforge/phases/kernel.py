@@ -19,7 +19,9 @@ from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
 from nestforge.build.arena import (
     call_native,
-    call_on_device,
+    DeviceCall,
+    accumulating_outputs,
+    call_device,
     diff_stats,
     dtype_floor,
     make_inputs,
@@ -27,7 +29,7 @@ from nestforge.build.arena import (
     run_oracle,
 )
 from nestforge.build.flags import cuda_base_flags
-from nestforge.build.isolation import run_isolated
+from nestforge.build.isolation import run_isolated, run_spawned
 from nestforge.build.sdfg import BuildOptions, build_archive, build_cuda_archive, program_compiler
 from nestforge.build.toolchain import LIBOMP, cudart_dir, cudart_link_flags, parse_params, raw_signature
 from nestforge.corpus.translate import Prepared
@@ -122,6 +124,57 @@ def gpu_runtime_libraries(compiler: str) -> list[str]:
     return [*process_runtime_libraries(), *cudart_link_flags(cudart_dir(compiler))]
 
 
+def kernel_numbers(oracle: dict[str, np.ndarray], outputs: dict[str, np.ndarray], time_us: float) -> dict[str, float]:
+    md, md_rel = diff_stats(oracle, outputs)
+    return {"maxdiff": md, "md_rel": md_rel, "dtype_floor": dtype_floor(outputs), "time_us": time_us}
+
+
+def measure_on_cpu(
+    shared: Path,
+    src: KernelSource,
+    inputs: dict[str, np.ndarray],
+    oracle: dict[str, np.ndarray],
+    sizes: dict[str, int],
+    reps: int,
+) -> dict:
+    """The CPU twin, called in a forked child."""
+    argtypes = [p.ctype for p in parse_params(raw_signature(src.unit.read_text(), src.symbol))]
+
+    def work() -> dict[str, float]:
+        outs, us = call_native(shared, src.symbol, src.abi_order, argtypes, src.boundary, inputs, sizes, reps)
+        assert outs is not None, "call_native snapshots outputs unless told not to"
+        return kernel_numbers(oracle, outs, us)
+
+    return run_isolated(work)
+
+
+def measure_on_gpu(
+    shared: Path,
+    src: KernelSource,
+    inputs: dict[str, np.ndarray],
+    oracle: dict[str, np.ndarray],
+    sizes: dict[str, int],
+    reps: int,
+) -> dict:
+    """The GPU twin, called in a freshly spawned interpreter: a child forked from a process that already holds a
+    CUDA context cannot use the device. The comparison runs here, so this process never touches CUDA."""
+    call = DeviceCall(
+        str(shared),
+        src.symbol,
+        list(src.abi_order),
+        raw_signature(src.unit.read_text(), src.symbol),
+        list(src.boundary.outputs),
+        accumulating_outputs(src.boundary, inputs),
+        inputs,
+        sizes,
+        reps,
+    )
+    res = run_spawned(call_device, call)
+    if "error" in res:
+        return res
+    return kernel_numbers(oracle, res["outputs"], res["time_us"])
+
+
 @dataclass(frozen=True, slots=True)
 class KernelForm:
     """How the kernels of one device are scheduled, rendered, built and called."""
@@ -130,13 +183,13 @@ class KernelForm:
     suffix: str
     schedule: Callable[[Boundary], dace.SDFG]
     build: Callable[[Path, str, list[str] | None, Path], None]
-    call: Callable[..., tuple[dict[str, np.ndarray] | None, float]]
+    measure: Callable[[Path, KernelSource, dict[str, np.ndarray], dict[str, np.ndarray], dict[str, int], int], dict]
     runtime: Callable[[str], list[str]]
 
 
 FORMS: dict[str, KernelForm] = {
-    "cpu": KernelForm("c++", ".cpp", cpu_schedule, build_cpu_library, call_native, cpu_runtime_libraries),
-    "gpu": KernelForm("cuda", ".cu", gpu_schedule, build_gpu_library, call_on_device, gpu_runtime_libraries),
+    "cpu": KernelForm("c++", ".cpp", cpu_schedule, build_cpu_library, measure_on_cpu, cpu_runtime_libraries),
+    "gpu": KernelForm("cuda", ".cu", gpu_schedule, build_gpu_library, measure_on_gpu, gpu_runtime_libraries),
 }
 
 
@@ -184,19 +237,9 @@ def measure_kernel(
     reps: int,
     fp_mode: str,
 ) -> KernelVerdict:
-    """Call the twin's C entry in a forked child: one run compared to ``oracle``, then ``reps`` timed runs.
-    A crash or timeout comes back as a verdict with ``error`` set."""
-    argtypes = [p.ctype for p in parse_params(raw_signature(src.unit.read_text(), src.symbol))]
-    shared = archive.with_suffix(".so")
-    call = FORMS[src.device].call
-
-    def work() -> dict[str, float]:
-        outs, us = call(shared, src.symbol, src.abi_order, argtypes, src.boundary, inputs, sizes, reps)
-        assert outs is not None, "the kernel call snapshots outputs unless told not to"
-        md, md_rel = diff_stats(oracle, outs)
-        return {"maxdiff": md, "md_rel": md_rel, "dtype_floor": dtype_floor(outs), "time_us": us}
-
-    res = run_isolated(work)
+    """Call the twin's C entry in an isolated child (forked for a CPU kernel, spawned for a GPU kernel): one run
+    compared to ``oracle``, then ``reps`` timed runs. A crash or timeout comes back as a verdict with ``error`` set."""
+    res = FORMS[src.device].measure(archive.with_suffix(".so"), src, inputs, oracle, sizes, reps)
     if "error" in res:
         return failed_verdict(fp_mode, str(res["error"]))
     return KernelVerdict(
