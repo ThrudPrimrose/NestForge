@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import (
     BreakBlock,
@@ -226,15 +227,41 @@ def source_fact(state: SDFGState, edge: MultiConnectorEdge, facts: Dict[int, Fac
     return Fact((Reach(Producer("host", state.label)),))
 
 
-def access_flow(state: SDFGState, node: nodes.AccessNode, env: Env, facts: Dict[int, Fact], tracker: Tracker) -> None:
-    writes = [edge for edge in state.in_edges(node) if not edge.data.is_empty()]
+@dataclass(frozen=True, slots=True)
+class Views:
+    # ids of the edges binding a view to what it views, and each view node's root array
+    bindings: Dict[int, None]
+    roots: Dict[int, str]
+
+
+def state_views(state: SDFGState) -> Views:
+    bindings: Dict[int, None] = {}
+    roots: Dict[int, str] = {}
+    for node in state.data_nodes():
+        if not isinstance(node.desc(state.sdfg), dace.data.View):
+            continue
+        binding = sdutil.get_view_edge(state, node)
+        root = sdutil.get_last_view_node(state, node)
+        if binding is None or root is None:
+            raise UnsupportedProgram(f"view {node.data!r} in state {state.label!r} binds no container")
+        bindings[id(binding)] = None
+        roots[id(node)] = root.data
+    return Views(bindings, roots)
+
+
+def access_flow(
+    state: SDFGState, node: nodes.AccessNode, views: Views, env: Env, facts: Dict[int, Fact], tracker: Tracker
+) -> None:
+    # a view reads and writes its root array; the binding edge itself moves no data
+    container = views.roots.get(id(node), node.data)
+    writes = [edge for edge in state.in_edges(node) if not edge.data.is_empty() and id(edge) not in views.bindings]
     if not writes:
-        facts[id(node)] = env.get(node.data, EMPTY)
+        facts[id(node)] = env.get(container, EMPTY)
         return
     fact = merge(*(source_fact(state, edge, facts) for edge in writes))
     facts[id(node)] = fact
-    env[node.data] = fact
-    tracker.written[node.data] = None
+    env[container] = fact
+    tracker.written[container] = None
 
 
 def kernel_symbols(node: ExternalCall) -> List[str]:
@@ -264,9 +291,10 @@ def kernel_flow(state: SDFGState, node: ExternalCall, env: Env, facts: Dict[int,
 def state_flow(state: SDFGState, env: Env, tracker: Tracker) -> Env:
     env = dict(env)
     facts: Dict[int, Fact] = {}
+    views = state_views(state)
     for node in in_order(state):
         if isinstance(node, nodes.AccessNode):
-            access_flow(state, node, env, facts, tracker)
+            access_flow(state, node, views, env, facts, tracker)
         elif isinstance(node, ExternalCall):
             kernel_flow(state, node, env, facts, tracker)
     return env

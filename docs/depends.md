@@ -21,6 +21,10 @@ exit: A <- extcall_1.A | program
 A whole `AccessNode -> AccessNode` copy forwards its source's producers, so offload copies stay
 invisible.
 
+A `View` stands for the array it views, resolved through view chains to the root
+(`get_view_edge`, `get_last_view_node`): a write into the view writes that array, a read reads it,
+and the binding edge itself moves no data.
+
 ## Rules
 
 - Whole containers only. A read reads all of it; a write replaces all of it.
@@ -30,8 +34,8 @@ invisible.
 - `break` joins the loop exit, `continue` joins the back edge, `return` joins the SDFG exit.
 - Interstate `k = v`: `k` takes the producers of every name `v` reads, and `via` records the text.
 - Kernel symbols come from the manifest (`input_args` minus `array_args`).
-- Refused with `UnsupportedProgram`: `Reference` containers, an `ExternalCall` inside a nested
-  SDFG, an `ExternalCall` without a manifest.
+- Refused with `UnsupportedProgram`: `Reference` containers, a view that binds no container, an
+  `ExternalCall` inside a nested SDFG, an `ExternalCall` without a manifest.
 
 ## Output
 

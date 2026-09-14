@@ -10,6 +10,7 @@ from typing import Dict, List, Sequence, Tuple
 import pytest
 
 import dace
+from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 
 from nestforge.ir.depends import ArgEdge, KernelGraph, Producer, Reach, UnsupportedProgram, kernel_dependencies
@@ -144,20 +145,47 @@ def hand_kernel(
     writes: Sequence[str],
     symbols: Sequence[str] = (),
 ) -> ExternalCall:
-    """An ``ExternalCall`` wired to whole-array reads and writes, with the manifest phase 2 would give it."""
+    """``bare_kernel`` wired to whole-array reads and writes."""
+    ext = bare_kernel(name, reads, writes, symbols)
+    state.add_node(ext)
+    for r in reads:
+        state.add_edge(state.add_read(r), None, ext, in_conn(r), whole(sdfg, r))
+    for w in writes:
+        state.add_edge(ext, out_conn(w), state.add_write(w), None, whole(sdfg, w))
+    return ext
+
+
+def bare_kernel(name: str, reads: Sequence[str], writes: Sequence[str], symbols: Sequence[str] = ()) -> ExternalCall:
+    """An ``ExternalCall`` with the connectors and manifest phase 2 would give it, wired to nothing."""
     manifest = {"input_args": [*reads, *writes, *symbols], "array_args": [*reads, *writes], "output_args": [*writes]}
-    ext = ExternalCall(
+    return ExternalCall(
         name,
         inputs={in_conn(r): None for r in reads},
         outputs={out_conn(w): None for w in writes},
         config=manifest,
     )
-    state.add_node(ext)
-    for r in reads:
-        state.add_edge(state.add_read(r), None, ext, in_conn(r), dace.Memlet.from_array(r, sdfg.arrays[r]))
-    for w in writes:
-        state.add_edge(ext, out_conn(w), state.add_write(w), None, dace.Memlet.from_array(w, sdfg.arrays[w]))
-    return ext
+
+
+def whole(sdfg: dace.SDFG, name: str) -> dace.Memlet:
+    return dace.Memlet.from_array(name, sdfg.arrays[name])
+
+
+def arrays_with_view(label: str, views: Sequence[str]) -> dace.SDFG:
+    """Arrays ``x``, ``A``, ``y``, and each of ``views`` a ``View`` of ``A``."""
+    sdfg = dace.SDFG(label)
+    for name in ("x", "A", "y"):
+        sdfg.add_array(name, [8], dace.float64)
+    for name in views:
+        sdfg.add_datadesc(name, dace.data.View.view(sdfg.arrays["A"]))
+    return sdfg
+
+
+def bind_viewed_to_view(sdfg: dace.SDFG, state: dace.SDFGState, view: nodes.AccessNode, viewed: nodes.AccessNode):
+    state.add_edge(viewed, None, view, "views", whole(sdfg, "A"))
+
+
+def bind_view_to_viewed(sdfg: dace.SDFG, state: dace.SDFGState, view: nodes.AccessNode, viewed: nodes.AccessNode):
+    state.add_edge(view, "views", viewed, None, whole(sdfg, "A"))
 
 
 def test_chain_feeds_the_first_kernels_temporary_to_the_second():
@@ -418,6 +446,89 @@ def test_a_kernel_inside_a_nested_sdfg_is_refused():
 
     with pytest.raises(UnsupportedProgram, match="'extcall_0' sits inside nested SDFG 'inner'"):
         kernel_dependencies(outer)
+
+
+def test_a_kernel_writing_through_a_view_writes_the_viewed_array():
+    sdfg = arrays_with_view("write_through_view", ["Av"])
+    state = sdfg.add_state("compute", is_start_block=True)
+    producer, consumer = bare_kernel("extcall_0", ["x"], ["A"]), bare_kernel("extcall_1", ["A"], ["y"])
+    state.add_node(producer)
+    state.add_node(consumer)
+    view, viewed = state.add_access("Av"), state.add_access("A")
+    state.add_edge(state.add_read("x"), None, producer, in_conn("x"), whole(sdfg, "x"))
+    state.add_edge(producer, out_conn("A"), view, None, whole(sdfg, "Av"))
+    bind_view_to_viewed(sdfg, state, view, viewed)
+    state.add_edge(viewed, None, consumer, in_conn("A"), whole(sdfg, "A"))
+    state.add_edge(consumer, out_conn("y"), state.add_write("y"), None, whole(sdfg, "y"))
+
+    graph = kernel_dependencies(sdfg)
+
+    assert reaching(graph) == {
+        ("extcall_0", "x"): ("program",),
+        ("extcall_1", "A"): ("extcall_0.A",),
+        ("exit", "A"): ("extcall_0.A",),
+        ("exit", "y"): ("extcall_1.y",),
+    }
+
+
+def test_a_write_through_a_chain_of_views_reaches_the_root_array():
+    sdfg = arrays_with_view("write_through_view_chain", ["Aouter", "Ainner"])
+    state = sdfg.add_state("compute", is_start_block=True)
+    producer, consumer = bare_kernel("extcall_0", ["x"], ["A"]), bare_kernel("extcall_1", ["A"], ["y"])
+    state.add_node(producer)
+    state.add_node(consumer)
+    outer, inner, viewed = state.add_access("Aouter"), state.add_access("Ainner"), state.add_access("A")
+    state.add_edge(state.add_read("x"), None, producer, in_conn("x"), whole(sdfg, "x"))
+    state.add_edge(producer, out_conn("A"), outer, None, whole(sdfg, "Aouter"))
+    state.add_edge(outer, "views", inner, None, whole(sdfg, "Ainner"))
+    bind_view_to_viewed(sdfg, state, inner, viewed)
+    state.add_edge(viewed, None, consumer, in_conn("A"), whole(sdfg, "A"))
+    state.add_edge(consumer, out_conn("y"), state.add_write("y"), None, whole(sdfg, "y"))
+
+    graph = kernel_dependencies(sdfg)
+
+    assert reaching(graph) == {
+        ("extcall_0", "x"): ("program",),
+        ("extcall_1", "A"): ("extcall_0.A",),
+        ("exit", "A"): ("extcall_0.A",),
+        ("exit", "y"): ("extcall_1.y",),
+    }
+
+
+@pytest.mark.parametrize("bind", [bind_viewed_to_view, bind_view_to_viewed])
+def test_a_kernel_reading_through_a_view_reads_the_viewed_array(bind):
+    sdfg = arrays_with_view("read_through_view", ["Av"])
+    fill = sdfg.add_state("fill", is_start_block=True)
+    hand_kernel(sdfg, fill, "extcall_0", ["x"], ["A"])
+    use = sdfg.add_state("use")
+    sdfg.add_edge(fill, use, dace.InterstateEdge())
+    consumer = bare_kernel("extcall_1", ["A"], ["y"])
+    use.add_node(consumer)
+    view, viewed = use.add_access("Av"), use.add_access("A")
+    bind(sdfg, use, view, viewed)
+    use.add_edge(view, None, consumer, in_conn("A"), whole(sdfg, "Av"))
+    use.add_edge(consumer, out_conn("y"), use.add_write("y"), None, whole(sdfg, "y"))
+
+    graph = kernel_dependencies(sdfg)
+
+    assert reaching(graph) == {
+        ("extcall_0", "x"): ("program",),
+        ("extcall_1", "A"): ("extcall_0.A",),
+        ("exit", "A"): ("extcall_0.A",),
+        ("exit", "y"): ("extcall_1.y",),
+    }
+
+
+def test_a_view_bound_to_no_container_is_refused():
+    sdfg = arrays_with_view("unbound_view", ["Av"])
+    state = sdfg.add_state("compute", is_start_block=True)
+    producer = bare_kernel("extcall_0", ["x"], ["A"])
+    state.add_node(producer)
+    state.add_edge(state.add_read("x"), None, producer, in_conn("x"), whole(sdfg, "x"))
+    state.add_edge(producer, out_conn("A"), state.add_access("Av"), None, whole(sdfg, "Av"))
+
+    with pytest.raises(UnsupportedProgram, match="view 'Av' in state 'compute' binds no container"):
+        kernel_dependencies(sdfg)
 
 
 def test_two_runs_on_copies_give_byte_identical_json():
