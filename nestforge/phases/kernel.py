@@ -8,23 +8,32 @@ import copy
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
 import dace
 from dace import dtypes
 from dace.codegen import cpf
-from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 
-from nestforge.build.arena import call_native, diff_stats, dtype_floor, make_inputs, rung_atol, run_oracle
+from nestforge.build.arena import (
+    call_native,
+    call_on_device,
+    diff_stats,
+    dtype_floor,
+    make_inputs,
+    rung_atol,
+    run_oracle,
+)
+from nestforge.build.flags import cuda_base_flags
 from nestforge.build.isolation import run_isolated
-from nestforge.build.sdfg import BuildOptions, build_archive
+from nestforge.build.sdfg import BuildOptions, build_archive, build_cuda_archive
 from nestforge.build.toolchain import parse_params, raw_signature
 from nestforge.corpus.translate import Prepared
 from nestforge.ir.extract import Boundary
 from nestforge.ir.libnode import ExternalCall
-from nestforge.phases.normalize import Targets
+from nestforge.phases.offload import kernel_device
 
 
 @dataclass(slots=True)
@@ -35,6 +44,7 @@ class KernelSource:
     unit: Path
     abi_order: List[str]
     boundary: Boundary
+    device: str
 
     @property
     def symbol(self) -> str:
@@ -75,29 +85,64 @@ def abi_ready_copy(boundary: Boundary) -> dace.SDFG:
     return sdfg
 
 
-def default_schedule(boundary: Boundary, targets: Targets) -> dace.SDFG:
-    """The kernel copy CPF renders: :func:`abi_ready_copy` finalized for the CPU."""
-    if targets.gpu:
-        raise NotImplementedError("GPU kernels need CPF's CUDA form")
+def cpu_schedule(boundary: Boundary) -> dace.SDFG:
+    """The kernel copy the C++ unit renders: :func:`abi_ready_copy` finalized for the CPU."""
     return finalize_for_target(abi_ready_copy(boundary), "cpu")
 
 
-def schedule_kernel(ext: ExternalCall, boundary: Boundary, targets: Targets, out_dir: Path) -> KernelSource:
-    """:func:`default_schedule` rendered by CPF into ``<out_dir>/<kernel>.cpp``, whose one entry is ``ext``'s symbol."""
-    sdfg = default_schedule(boundary, targets)
+def gpu_schedule(boundary: Boundary) -> dace.SDFG:
+    """The kernel copy the CUDA unit renders: offloaded whole, so its arrays arrive as device pointers, then
+    finalized for the GPU."""
+    sdfg = abi_ready_copy(boundary)
+    offload_to_gpu(sdfg)
+    return finalize_for_target(sdfg, "gpu")
+
+
+def build_cpu_library(unit: Path, compiler: str, flags: Optional[List[str]], archive: Path) -> None:
+    opts = BuildOptions(compiler=compiler, flags=flags, link_external=True)
+    build_archive([unit], None, archive, archive.with_suffix(".so"), opts)
+
+
+def build_gpu_library(unit: Path, compiler: str, flags: Optional[List[str]], archive: Path) -> None:
+    chosen = flags if flags is not None else cuda_base_flags(cpf.CUDA_BUILD_FLAGS)
+    build_cuda_archive(unit, archive, archive.with_suffix(".so"), compiler, chosen)
+
+
+@dataclass(frozen=True, slots=True)
+class KernelForm:
+    """How the kernels of one device are scheduled, rendered, built and called."""
+
+    language: str
+    suffix: str
+    schedule: Callable[[Boundary], dace.SDFG]
+    build: Callable[[Path, str, Optional[List[str]], Path], None]
+    call: Callable[..., Tuple[Optional[Dict[str, np.ndarray]], float]]
+
+
+FORMS: Dict[str, KernelForm] = {
+    "cpu": KernelForm("c++", ".cpp", cpu_schedule, build_cpu_library, call_native),
+    "gpu": KernelForm("cuda", ".cu", gpu_schedule, build_gpu_library, call_on_device),
+}
+
+
+def schedule_kernel(ext: ExternalCall, boundary: Boundary, out_dir: Path) -> KernelSource:
+    """The kernel for the device phase 3 placed ``ext`` on, rendered by CPF into ``<out_dir>/<kernel>.cpp`` or
+    ``.cu``, whose one entry is ``ext``'s symbol."""
+    device = kernel_device(ext)
+    form = FORMS[device]
+    sdfg = form.schedule(boundary)
     sdfg.name = ext.name
-    rendering = cpf.render(sdfg, language="c++")
+    rendering = cpf.render(sdfg, language=form.language)
     out_dir.mkdir(parents=True, exist_ok=True)
-    unit = out_dir / f"{ext.name}.cpp"
+    unit = out_dir / f"{ext.name}{form.suffix}"
     unit.write_text(rendering.code)
-    return KernelSource(ext.name, unit, list(rendering.arguments), boundary)
+    return KernelSource(ext.name, unit, list(rendering.arguments), boundary, device)
 
 
 def build_kernel_library(src: KernelSource, compiler: str, flags: Optional[List[str]], out_dir: Path) -> Path:
-    """Build ``<out_dir>/lib<kernel>.a`` from the CPF unit, plus its shared twin for validation."""
+    """Build ``<out_dir>/lib<kernel>.a`` from the kernel's unit, plus its shared twin for validation."""
     archive = out_dir / f"lib{src.name}.a"
-    opts = BuildOptions(compiler=compiler, flags=flags, link_external=True)
-    build_archive([src.unit], None, archive, archive.with_suffix(".so"), opts)
+    FORMS[src.device].build(src.unit, compiler, flags, archive)
     return archive
 
 
@@ -120,10 +165,11 @@ def measure_kernel(
     A crash or timeout comes back as a verdict with ``error`` set."""
     argtypes = [p.ctype for p in parse_params(raw_signature(src.unit.read_text(), src.symbol))]
     shared = archive.with_suffix(".so")
+    call = FORMS[src.device].call
 
     def work() -> Dict[str, float]:
-        outs, us = call_native(shared, src.symbol, src.abi_order, argtypes, src.boundary, inputs, sizes, reps)
-        assert outs is not None, "call_native snapshots outputs unless told not to"
+        outs, us = call(shared, src.symbol, src.abi_order, argtypes, src.boundary, inputs, sizes, reps)
+        assert outs is not None, "the kernel call snapshots outputs unless told not to"
         md, md_rel = diff_stats(oracle, outs)
         return {"maxdiff": md, "md_rel": md_rel, "dtype_floor": dtype_floor(outs), "time_us": us}
 

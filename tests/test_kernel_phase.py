@@ -17,14 +17,16 @@ from nestforge.corpus.translate import prepare
 from nestforge.ir.libnode import proto_and_call
 from nestforge.phases.kernel import (
     build_kernel_library,
-    default_schedule,
+    gpu_schedule,
     schedule_kernel,
     use_kernel_library,
     validate_kernel,
 )
 from nestforge.phases.normalize import Targets, normalize
+from nestforge.phases.offload import device_copies, offload
 from nestforge.phases.schedule import full_fusion
 from nestforge.phases.scopes import lower_nests_to_external_call
+from nestforge.phases.variants import device_variants
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -81,6 +83,18 @@ def lowered_kernel(program):
     return sdfg, ext, boundary
 
 
+def gpu_lowered_kernel(program, on_device=()):
+    """``program`` through phases 0-3 for a GPU target; ``on_device`` names inputs the program keeps in GPU memory."""
+    sdfg = program.to_sdfg(simplify=True)
+    normalize(sdfg, Targets(gpu=True))
+    full_fusion(sdfg, Targets(gpu=True))
+    for name in on_device:
+        sdfg.arrays[name].storage = dace.StorageType.GPU_Global
+    ((ext, boundary),) = lower_nests_to_external_call(sdfg)
+    offload(sdfg, Targets(gpu=True))
+    return sdfg, ext, boundary
+
+
 def split_decl(decl: str) -> Tuple[str, str]:
     """``(type, name)`` of one C parameter declaration, qualifiers other than ``const`` dropped."""
     text = " ".join(re.sub(r"\b__restrict__\b", "", decl).split()).replace(" *", "*")
@@ -99,7 +113,7 @@ def test_the_default_kernel_is_a_standalone_cpf_unit(tmp_path, program):
     _, ext, boundary = lowered_kernel(program)
     before = boundary.standalone_sdfg.to_json()
 
-    src = schedule_kernel(ext, boundary, Targets(), tmp_path)
+    src = schedule_kernel(ext, boundary, tmp_path)
 
     text = src.unit.read_text()
     assert not re.search(r'#include\s*[<"]dace/', text)
@@ -108,10 +122,46 @@ def test_the_default_kernel_is_a_standalone_cpf_unit(tmp_path, program):
     assert boundary.standalone_sdfg.to_json() == before
 
 
-def test_a_gpu_target_is_refused_until_cpf_renders_cuda():
+def test_the_gpu_schedule_puts_every_argument_array_on_the_device_and_copies_nothing():
+    """The kernel takes device pointers, so the whole kernel moves to the device and places no copy of its own."""
     _, _, boundary = lowered_kernel(vadd)
-    with pytest.raises(NotImplementedError, match="CUDA form"):
-        default_schedule(boundary, Targets(gpu=True))
+
+    sdfg = gpu_schedule(boundary)
+
+    arguments = [desc for desc in sdfg.arrays.values() if not desc.transient]
+    maps = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.MapEntry)]
+    assert len(arguments) == 3
+    assert all(desc.storage == dace.StorageType.GPU_Global for desc in arguments)
+    assert any(entry.map.schedule == dace.ScheduleType.GPU_Device for entry in maps)
+    assert device_copies(sdfg) == []
+
+
+@pytest.mark.parametrize("program", [vadd, scaled], ids=["vadd", "scaled"])
+def test_a_gpu_kernel_is_one_cuda_unit_whose_entry_matches_the_external_call_prototype(tmp_path, program):
+    """After phase 3 places the kernel on the GPU, phase 4 renders CUDA with the same entry the parent calls."""
+    sdfg, ext, boundary = gpu_lowered_kernel(program)
+    src = schedule_kernel(ext, boundary, tmp_path)
+    use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order)
+
+    proto, _ = proto_and_call(ext, next(s for s in sdfg.all_states() if ext in s.nodes()))
+
+    text = src.unit.read_text()
+    assert (src.device, src.unit.suffix) == ("gpu", ".cu")
+    assert ENTRY_DEFINITION.findall(text) == [ext.name] and text.count('extern "C"') == 1
+    assert "cudaLaunchKernel(" in text and "__dace_" not in text
+    declared = [split_decl(p) for p in split_params(re.search(r"\((.*)\)", proto).group(1))]
+    assert declared == entry_params(src)
+
+
+def test_a_length_one_device_array_input_is_a_device_pointer_in_the_prototype(tmp_path):
+    sdfg, ext, boundary = gpu_lowered_kernel(scaled_by_cell, on_device=("alpha",))
+    src = schedule_kernel(ext, boundary, tmp_path)
+    use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order)
+
+    proto, _ = proto_and_call(ext, next(s for s in sdfg.all_states() if ext in s.nodes()))
+
+    assert proto == 'extern "C" void extcall_0(const double* alpha, const double* x, double* y, int64_t N);'
+    assert [split_decl(p) for p in split_params(re.search(r"\((.*)\)", proto).group(1))] == entry_params(src)
 
 
 def test_the_unit_defines_one_entry_in_cpf_order_not_manifest_order(tmp_path):
@@ -120,7 +170,7 @@ def test_the_unit_defines_one_entry_in_cpf_order_not_manifest_order(tmp_path):
     pointers silently."""
     _, ext, boundary = lowered_kernel(vadd)
 
-    src = schedule_kernel(ext, boundary, Targets(), tmp_path)
+    src = schedule_kernel(ext, boundary, tmp_path)
 
     assert ENTRY_DEFINITION.findall(src.unit.read_text()) == [ext.name]
     assert [name for _, name in entry_params(src)] == src.abi_order == ["a", "b", "c", "N"]
@@ -134,7 +184,7 @@ def test_the_entry_declares_each_parameter_as_the_external_call_prototype_does(t
     corrupts the call: an ``int`` symbol must arrive as the ``int64_t`` the parent declares, an array as a
     pointer, and the read-only scalar ``alpha`` by value."""
     sdfg, ext, boundary = lowered_kernel(program)
-    src = schedule_kernel(ext, boundary, Targets(), tmp_path)
+    src = schedule_kernel(ext, boundary, tmp_path)
     use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order)
 
     proto, _ = proto_and_call(ext, next(s for s in sdfg.all_states() if ext in s.nodes()))
@@ -146,7 +196,7 @@ def test_the_entry_declares_each_parameter_as_the_external_call_prototype_does(t
 def test_a_read_only_scalar_input_crosses_the_boundary_by_value(tmp_path):
     """``alpha`` is a Scalar in the program, so the prototype takes its value and the call passes it."""
     sdfg, ext, boundary = lowered_kernel(scaled)
-    src = schedule_kernel(ext, boundary, Targets(), tmp_path)
+    src = schedule_kernel(ext, boundary, tmp_path)
     use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order)
 
     proto, call = proto_and_call(ext, next(s for s in sdfg.all_states() if ext in s.nodes()))
@@ -170,7 +220,7 @@ def test_lowering_refuses_a_host_length_one_array_input_and_leaves_the_program_u
 @pytest.mark.e2e
 def test_the_archive_defines_the_entry_once_and_no_dace_runtime(tmp_path):
     _, ext, boundary = lowered_kernel(vadd)
-    src = schedule_kernel(ext, boundary, Targets(), tmp_path / "gen")
+    src = schedule_kernel(ext, boundary, tmp_path / "gen")
 
     archive = build_kernel_library(src, "g++", None, tmp_path / "lib")
 
@@ -188,11 +238,32 @@ def test_the_built_kernel_matches_its_numpy_oracle_bit_for_bit(tmp_path, program
     """The shipped entry on seeded inputs, forked, against the kernel's NumPy reference at the strict rung;
     the in-place kernel is restored before every timed rep."""
     _, ext, boundary = lowered_kernel(program)
-    src = schedule_kernel(ext, boundary, Targets(), tmp_path / "gen")
+    src = schedule_kernel(ext, boundary, tmp_path / "gen")
     archive = build_kernel_library(src, "g++", None, tmp_path / "lib")
     prep = prepare(boundary, ext.name, tmp_path / "ref")
 
     verdict = validate_kernel(archive, src, prep, sizes, reps=3)
+
+    assert verdict.error == "", verdict.error
+    assert verdict.ok and verdict.maxdiff == 0.0, verdict
+    assert verdict.time_us > 0.0
+
+
+GPU_KERNELS = [(vadd, ()), (scaled, ()), (scaled_by_cell, ("alpha",))]
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("program, on_device", GPU_KERNELS, ids=["vadd", "scaled_by_value", "alpha_on_device"])
+def test_a_built_gpu_kernel_matches_its_numpy_oracle_bit_for_bit(tmp_path, program, on_device):
+    """Device buffers for the arrays, a by-value scalar, and a length-1 device array all reach the CUDA kernel,
+    built by nvcc at the strict rung."""
+    _, ext, boundary = gpu_lowered_kernel(program, on_device)
+    src = schedule_kernel(ext, boundary, tmp_path / "gen")
+    strict = next(v for v in device_variants("gpu") if v.fp_mode == "strict-ieee")
+    archive = build_kernel_library(src, strict.compiler, list(strict.flags), tmp_path / "lib")
+    prep = prepare(boundary, ext.name, tmp_path / "ref")
+
+    verdict = validate_kernel(archive, src, prep, {"N": 1037}, reps=3)
 
     assert verdict.error == "", verdict.error
     assert verdict.ok and verdict.maxdiff == 0.0, verdict

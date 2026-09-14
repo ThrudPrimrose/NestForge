@@ -17,7 +17,6 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 
-from nestforge.build.toolchain import discover_toolchains
 from nestforge.corpus.translate import Prepared, emit_sources, prepare
 from nestforge.ir.extract import Boundary, detach, extract_map_nest, find_state_of_node
 from nestforge.ir.introspect import describe_graph, kernel_body, kernel_source, nest_reads_writes
@@ -48,7 +47,7 @@ from nestforge.phases.scopes import (
     offload_candidates,
     top_level_map_entries,
 )
-from nestforge.phases.variants import VariantCell, enumerate_variants, select_variant
+from nestforge.phases.variants import VariantCell, device_variants, select_variant
 
 #: kernel_source language -> (translator target, generated file suffix). C and C++ come from one C emit.
 LANG_LOWERING = {"c": ("c", ".c"), "cpp": ("c", ".cpp"), "fortran": ("fortran", ".f90")}
@@ -310,7 +309,7 @@ class Session:
     def optimize_kernel(self, kernel_id: str) -> dict:
         """Apply the default kernel schedule and generate its source with one C entry."""
         ext, boundary = self.resolve(kernel_id, "kernel")
-        src = schedule_kernel(ext, boundary, self.targets, self.work_dir / ext.name / "kernel")
+        src = schedule_kernel(ext, boundary, self.work_dir / ext.name / "kernel")
         self.kernel_sources[kernel_id] = src
         return {"kernel": ext.name, "symbol": src.symbol, "abi_order": list(src.abi_order)}
 
@@ -334,19 +333,19 @@ class Session:
         """Build and time the kernel's variants, link the fastest correct one, and summarize the sweep.
 
         :param sizes: Value of every symbol the kernel needs, used for validation and timing.
-        :param compilers: Toolchain names to keep (``gcc``, ``clang``, ...); all discovered ones when ``None``.
+        :param compilers: Toolchain names to keep (``gcc``, ``clang``, ``nvcc``, ``nvcc-13.1``, ...); all discovered
+            ones for the kernel's device when ``None``.
         """
         if kernel_id not in self.kernel_sources:
             self.optimize_kernel(kernel_id)
         src = self.kernel_sources[kernel_id]
         ext, _ = self.resolve(kernel_id, "kernel")
-        toolchains = [tc for tc in discover_toolchains() if compilers is None or tc.name in compilers]
         result = select_variant(
             src,
             self.prepare_kernel(kernel_id),
             sizes,
             reps,
-            enumerate_variants(toolchains),
+            device_variants(src.device, compilers),
             self.work_dir / ext.name / "variants",
         )
         winner = result.winner
@@ -382,7 +381,7 @@ def winner_config(winner: Optional[VariantCell]) -> dict:
         return dict.fromkeys(("compiler", "fp_mode", "cost_model", "flags", "time_us"))
     variant = winner.variant
     return {
-        "compiler": Path(variant.compiler).name,
+        "compiler": variant.toolchain,
         "fp_mode": variant.fp_mode,
         "cost_model": variant.cost_model,
         "flags": list(variant.flags),

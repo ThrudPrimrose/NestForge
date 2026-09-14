@@ -6,7 +6,7 @@ icx/icpx/ifx default to ``-fp-model=fast``."""
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 from nestforge.build.toolchain import CXX_STD
 
@@ -120,3 +120,28 @@ def cxx_source_flags(family: str, cxx_std: str = CXX_STD) -> List[str]:
     if family == "gnu":
         flags.append("-D__builtin_complex(re,im)=((__complex__ double){re,im})")
     return flags
+
+
+#: nvcc's FP rungs. The device has no fast-math switch, so a GPU kernel sweeps the two rungs nvcc expresses.
+CUDA_FP_LEVELS: Tuple[str, ...] = ("strict-ieee", "contract-fma")
+
+#: Device flag per rung (``--fmad`` fuses multiply-adds on the device), plus the host rung for the unit's host code.
+CUDA_FP: Dict[str, List[str]] = {
+    "strict-ieee": ["--fmad=false", "-Xcompiler=-ffp-contract=off"],
+    "contract-fma": ["--fmad=true", "-Xcompiler=-ffp-contract=fast"],
+}
+
+#: The cost-model value of a GPU cell: nvcc has no vectorizer cost model to sweep.
+NO_COST_MODEL = "none"
+
+
+def cuda_base_flags(build_flags: Sequence[str]) -> List[str]:
+    """``build_flags`` (what CPF's CUDA unit needs) + ``-O3`` + native device arch + PIC/shared: the one place GPU
+    flags are composed, and the counterpart of :func:`base_flags`."""
+    return [*build_flags, "-O3", "-arch=native", "-Xcompiler=-fPIC", "-shared"]
+
+
+def cuda_flag_matrix(build_flags: Sequence[str]) -> List[Tuple[str, List[str]]]:
+    """``[(fp_level, full_flags), ...]`` for nvcc."""
+    base = cuda_base_flags(build_flags)
+    return [(level, base + CUDA_FP[level]) for level in CUDA_FP_LEVELS]

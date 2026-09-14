@@ -29,6 +29,8 @@ from nestforge.build.toolchain import (
     OpenMPRuntime,
     Param,
     ar_for,
+    cudart_dir,
+    cudart_link_flags,
     parse_params,
     run,
     signature,
@@ -199,28 +201,34 @@ def build_archive(
     """Compile ``sources`` (against ``folder``'s headers, if given), archive them, and link ``shared`` from the
     whole archive."""
     cmds = build_commands(folder, opts)
-    ar = ar_for(opts.compiler)
     objs = [archive.parent / f"{src.stem}.o" for src in sources]
     archive.parent.mkdir(parents=True, exist_ok=True)
-    if archive.exists():
-        archive.unlink()  # ar r APPENDS; start clean so a rebuild doesn't stack stale members
     t0 = time.perf_counter()
     for src, obj in zip(sources, objs):
         run([cmds.compiler, *cmds.cflags, "-c", *cmds.compile_extra, str(src), "-o", str(obj)])
-    run([ar, "rcs", str(archive), *[str(obj) for obj in objs]])
-    run(
-        [
-            cmds.compiler,
-            "-shared",
-            "-Wl,--export-dynamic",
-            "-Wl,--whole-archive",
-            str(archive),
-            "-Wl,--no-whole-archive",
-            *cmds.link_libs,
-            "-o",
-            str(shared),
-        ]
-    )
+    archive_and_link(objs, archive, shared, opts.compiler, cmds.link_libs)
+    return time.perf_counter() - t0
+
+
+def archive_and_link(
+    objects: Sequence[Path], archive: Path, shared: Path, linker: str, link_libs: Sequence[str]
+) -> None:
+    """Archive ``objects`` into ``archive`` and link ``shared`` from the whole archive."""
+    if archive.exists():
+        archive.unlink()  # ar r APPENDS; start clean so a rebuild doesn't stack stale members
+    run([ar_for(linker), "rcs", str(archive), *[str(obj) for obj in objects]])
+    whole = ["-Wl,--export-dynamic", "-Wl,--whole-archive", str(archive), "-Wl,--no-whole-archive"]
+    run([linker, "-shared", *whole, *link_libs, "-o", str(shared)])
+
+
+def build_cuda_archive(source: Path, archive: Path, shared: Path, nvcc: str, flags: Sequence[str]) -> float:
+    """Compile one CUDA unit with ``nvcc``, archive it, and link ``shared`` with the host compiler against the
+    ``libcudart`` that ``nvcc`` itself links."""
+    obj = archive.parent / f"{source.stem}.o"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    t0 = time.perf_counter()
+    run([nvcc, *[f for f in flags if f != "-shared"], "-c", str(source), "-o", str(obj)])
+    archive_and_link([obj], archive, shared, DEFAULT_COMPILER, cudart_link_flags(cudart_dir(nvcc)))
     return time.perf_counter() - t0
 
 

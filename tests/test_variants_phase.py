@@ -11,14 +11,17 @@ import pytest
 import dace
 
 from nestforge.build import flags
-from nestforge.build.toolchain import Toolchain
+from dace.codegen import cpf
+
+from nestforge.build.toolchain import CudaToolchain, Toolchain
 from nestforge.corpus.translate import prepare
 from nestforge.ir.libnode import ExternLibEnv
 from nestforge.phases.kernel import KernelVerdict, at_rung, schedule_kernel, use_kernel_library
 from nestforge.phases.normalize import Targets, normalize
 from nestforge.phases.schedule import full_fusion
 from nestforge.phases.scopes import lower_nests_to_external_call
-from nestforge.phases.variants import enumerate_variants, select_variant
+from nestforge.phases.offload import offload
+from nestforge.phases.variants import device_variants, enumerate_cuda_variants, enumerate_variants, select_variant
 
 N = dace.symbol("N")
 
@@ -31,6 +34,8 @@ def vadd(b: dace.float64[N], c: dace.float64[N], a: dace.float64[N]):
 
 GCC = Toolchain(name="gcc", cc="gcc", cxx="g++")
 CLANG = Toolchain(name="clang", cc="clang", cxx="clang++")
+NVCC_OLDER = CudaToolchain(nvcc="nvcc-a", release="13.1", cudart_dir="lib-a")
+NVCC_NEWER = CudaToolchain(nvcc="nvcc-b", release="13.3", cudart_dir="lib-b")
 
 
 def lowered_vadd():
@@ -71,6 +76,22 @@ def test_a_cost_model_the_family_has_no_knob_for_is_not_a_second_build():
     assert len(variants) == len(flags.FP_LEVELS) * 2
 
 
+def test_gpu_variants_cross_every_nvcc_with_two_fp_rungs_and_no_cost_model():
+    variants = enumerate_cuda_variants([NVCC_OLDER, NVCC_NEWER])
+
+    assert [(v.toolchain, v.fp_mode) for v in variants] == [
+        ("nvcc-13.1", "strict-ieee"),
+        ("nvcc-13.1", "contract-fma"),
+        ("nvcc-13.3", "strict-ieee"),
+        ("nvcc-13.3", "contract-fma"),
+    ]
+    assert {v.cost_model for v in variants} == {flags.NO_COST_MODEL}
+    assert len({v.label for v in variants}) == len(variants)
+    for v in variants:
+        assert "-arch=native" in v.flags and set(cpf.CUDA_BUILD_FLAGS) <= set(v.flags), v.label
+        assert ("--fmad=false" in v.flags) == (v.fp_mode == "strict-ieee"), v.label
+
+
 def test_a_toolchain_without_a_cxx_compiler_contributes_no_variant():
     assert enumerate_variants([Toolchain(name="gcc", cc="gcc", cxx=None)]) == []
 
@@ -92,7 +113,7 @@ def test_the_sweep_measures_identical_builds_once_and_the_fastest_correct_build_
     """A pure add reaches no FP rung below fast-math, so strict and contract-fma compile to one artifact:
     every cell is still reported, the twin carries the measured numbers, and the winner is correct."""
     _, ext, boundary = lowered_vadd()
-    src = schedule_kernel(ext, boundary, Targets(), tmp_path / "gen")
+    src = schedule_kernel(ext, boundary, tmp_path / "gen")
     prep = prepare(boundary, ext.name, tmp_path / "ref")
     variants = gcc_variants(cost_model="default")
 
@@ -126,7 +147,7 @@ def test_the_winning_archive_links_statically_into_the_parent_and_matches_numpy(
     """The whole flow: the phase-4 winner linked into the parent through ``ExternalCall``'s extern-call
     expansion. An archive carries no runtime, so the parent ends with at most one OpenMP runtime."""
     sdfg, ext, boundary = lowered_vadd()
-    src = schedule_kernel(ext, boundary, Targets(), tmp_path / "gen")
+    src = schedule_kernel(ext, boundary, tmp_path / "gen")
     prep = prepare(boundary, ext.name, tmp_path / "ref")
     result = select_variant(
         src, prep, {"N": 257}, 1, gcc_variants(fp_mode="strict-ieee", cost_model="default"), tmp_path / "variants"
@@ -147,3 +168,22 @@ def test_the_winning_archive_links_statically_into_the_parent_and_matches_numpy(
     assert str(result.library) in ExternLibEnv.cmake_libraries
     assert not any("-rpath" in f for f in ExternLibEnv.cmake_link_flags), "statically in, not loaded"
     assert len(openmp_runtimes(str(compiled._lib._library_filename))) <= 1
+
+
+@pytest.mark.gpu
+def test_the_gpu_sweep_measures_every_nvcc_cell_and_a_correct_cell_wins(tmp_path):
+    sdfg = vadd.to_sdfg(simplify=True)
+    normalize(sdfg, Targets(gpu=True))
+    full_fusion(sdfg, Targets(gpu=True))
+    ((ext, boundary),) = lower_nests_to_external_call(sdfg)
+    offload(sdfg, Targets(gpu=True))
+    src = schedule_kernel(ext, boundary, tmp_path / "gen")
+    prep = prepare(boundary, ext.name, tmp_path / "ref")
+    variants = device_variants("gpu")
+
+    result = select_variant(src, prep, {"N": 1037}, 3, variants, tmp_path / "variants")
+
+    assert variants and len(result.cells) == len(variants)
+    assert all(cell.verdict.error == "" for cell in result.cells), [c.verdict.error for c in result.cells]
+    assert result.winner is not None and result.winner.verdict.ok
+    assert result.library == result.winner.archive

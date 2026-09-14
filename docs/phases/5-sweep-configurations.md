@@ -8,7 +8,7 @@ the NumPy oracle. This is the variant search from the Vectra paper, applied per 
 - **CPU axes.** Compiler (gcc, clang, icx) x FP mode x the compiler's vectorizer cost model, over
   the kernel's CPF C++.
 - **GPU axes.** nvcc toolchains found on the machine x FP mode (strict-ieee, contract-fma), over the
-  kernel's CPF CUDA. No cost model.
+  kernel's CPF CUDA, every cell with `-arch=native`. No cost model.
 - Variants that compile to the same object are timed once.
 - Every variant runs in a forked child, so a crash is a recorded result.
 
@@ -20,4 +20,4 @@ runtime.
 | default | brute force over all axes the toolchain supports |
 | session | `sweep_configurations(kernel_id, sizes, reps, compilers)` links the winner |
 | code | `nestforge/phases/variants.py`, `nestforge/build/arena.py`, `nestforge/build/flags.py` |
-| status | CPU sweep over CPF C++ implemented (`enumerate_variants`, `select_variant`); CUDA pending |
+| status | CPU sweep over CPF C++ and GPU sweep over CPF CUDA implemented (`device_variants`, `select_variant`) |

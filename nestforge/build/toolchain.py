@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -479,6 +480,71 @@ def discover_toolchains(requested: str = "auto") -> List[Toolchain]:
             warnings.warn(f"{fam}: C++ compiler {cxx_exe!r} not found; native-baseline column disabled for {fam}")
         out.append(Toolchain(name=fam, cc=cc, cxx=cxx))
     return out
+
+
+@dataclass(frozen=True, slots=True)
+class CudaToolchain:
+    """One nvcc found on PATH, with its CUDA release and the directory its ``libcudart`` lives in."""
+
+    nvcc: str
+    release: str
+    cudart_dir: str
+
+    @property
+    def name(self) -> str:
+        return f"nvcc-{self.release}"
+
+
+def path_executables(exe: str) -> List[str]:
+    """Every distinct ``exe`` on PATH, resolved through symlinks, in PATH order."""
+    found: Dict[str, None] = {}
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = Path(directory) / exe
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            found.setdefault(str(candidate.resolve()), None)
+    return list(found)
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def nvcc_release(nvcc: str) -> str:
+    """``major.minor`` of the CUDA toolkit ``nvcc`` belongs to."""
+    out = subprocess.run([nvcc, "--version"], capture_output=True, text=True, timeout=60).stdout
+    match = re.search(r"release (\d+\.\d+)", out)
+    if match is None:
+        raise LookupError(f"{nvcc} --version names no CUDA release: {out[:200]!r}")
+    return match.group(1)
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def cudart_dir(nvcc: str) -> str:
+    """The directory ``nvcc`` links ``libcudart`` from, read off its own verbose link of a probe library."""
+    with tempfile.TemporaryDirectory(prefix="nf_cudart_") as scratch:
+        source = Path(scratch) / "probe.cu"
+        source.write_text("int nf_cudart_probe() { return 0; }\n")
+        probe = str(Path(scratch) / "probe.so")
+        link = [nvcc, "-v", "-shared", "-Xcompiler=-fPIC", str(source), "-o", probe, "-lcudart"]
+        proc = subprocess.run(link, capture_output=True, text=True, timeout=COMPILE_TIMEOUT_S)
+    for directory in re.findall(r"(?<=-L)\S+", proc.stdout + proc.stderr):
+        candidate = Path(directory.strip('"'))
+        if (candidate / "libcudart.so").exists():
+            return str(candidate.resolve())
+    raise LookupError(f"{nvcc} names no directory holding libcudart.so in its link line")
+
+
+def discover_cuda_toolchains() -> List[CudaToolchain]:
+    """Every nvcc on PATH, one toolchain per distinct compiler."""
+    return [CudaToolchain(nvcc, nvcc_release(nvcc), cudart_dir(nvcc)) for nvcc in path_executables("nvcc")]
+
+
+def cudart_link_flags(directory: str) -> List[str]:
+    """Link ``libcudart`` from ``directory`` and find it there again at load time."""
+    return [f"-L{directory}", "-lcudart", f"-Wl,-rpath,{directory}"]
+
+
+def needed_libraries(shared: Path) -> List[str]:
+    """The ``NEEDED`` sonames of a shared object, in ``readelf -d`` order."""
+    out = subprocess.run(["readelf", "-d", str(shared)], capture_output=True, text=True, check=True).stdout
+    return re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", out)
 
 
 @functools.lru_cache(maxsize=None, typed=True)

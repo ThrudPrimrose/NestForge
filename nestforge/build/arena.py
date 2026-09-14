@@ -6,7 +6,9 @@ NumPy oracle, the FP-rung gate, and the bind-once / rewind-per-rep ctypes call."
 from __future__ import annotations
 
 import ctypes
+import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -16,6 +18,7 @@ import dace
 from dace import symbolic
 
 from nestforge.build import flags
+from nestforge.build.toolchain import needed_libraries
 from nestforge.ir.emit_numpy import load_emitted, maxsize_loop_scratch, scratch_arrays
 from nestforge.ir.extract import Boundary
 from nestforge.corpus.translate import Prepared
@@ -181,6 +184,107 @@ def call_native(
         total += time.perf_counter() - t0
     elapsed_us = total / reps * 1e6
     return outputs, elapsed_us
+
+
+#: ``cudaMemcpyKind`` values.
+HOST_TO_DEVICE = 1
+DEVICE_TO_HOST = 2
+
+
+def cuda_check(status: int, what: str) -> None:
+    if status != 0:
+        raise RuntimeError(f"{what} failed with CUDA status {status}")
+
+
+def loaded_cudart(shared: Path) -> ctypes.CDLL:
+    """The ``libcudart`` an already loaded kernel library links, bound without loading a second copy."""
+    soname = next((name for name in needed_libraries(shared) if name.startswith("libcudart")), None)
+    if soname is None:
+        raise LookupError(f"{shared} does not link libcudart; a device kernel must name its runtime")
+    return ctypes.CDLL(soname, mode=os.RTLD_NOLOAD)
+
+
+@dataclass(slots=True)
+class DeviceMemory:
+    """Device copies of a kernel's pointer arguments, allocated and freed through one ``libcudart``."""
+
+    cudart: ctypes.CDLL
+    pointers: Dict[str, ctypes.c_void_p]
+
+    def upload(self, name: str, host: np.ndarray) -> None:
+        source = host.ctypes.data_as(ctypes.c_void_p)
+        status = self.cudart.cudaMemcpy(self.pointers[name], source, ctypes.c_size_t(host.nbytes), HOST_TO_DEVICE)
+        cuda_check(status, f"copy of {name} to the device")
+
+    def download(self, name: str, host: np.ndarray) -> None:
+        target = host.ctypes.data_as(ctypes.c_void_p)
+        status = self.cudart.cudaMemcpy(target, self.pointers[name], ctypes.c_size_t(host.nbytes), DEVICE_TO_HOST)
+        cuda_check(status, f"copy of {name} to the host")
+
+    def free(self) -> None:
+        for pointer in self.pointers.values():
+            self.cudart.cudaFree(pointer)
+
+
+def device_memory(cudart: ctypes.CDLL, buffers: Dict[str, np.ndarray], names: Sequence[str]) -> DeviceMemory:
+    """A device buffer per name, holding the host contents."""
+    memory = DeviceMemory(cudart, {})
+    for name in names:
+        pointer = ctypes.c_void_p()
+        cuda_check(
+            cudart.cudaMalloc(ctypes.byref(pointer), ctypes.c_size_t(buffers[name].nbytes)), f"allocation of {name}"
+        )
+        memory.pointers[name] = pointer
+        memory.upload(name, buffers[name])
+    return memory
+
+
+def time_device_reps(
+    fn: Any, args: list, memory: DeviceMemory, boundary: Boundary, host: Dict[str, np.ndarray], reps: int
+) -> Tuple[Dict[str, np.ndarray], float]:
+    """One correctness call and its outputs, a warm call, then ``reps`` timed calls; an accumulating output is
+    uploaded again from its pristine host copy before every call, outside the timed region."""
+    restore = accumulating_outputs(boundary, host)
+    fn(*args)  # the CPF entry synchronizes before it returns
+    outputs = {name: host[name].copy() for name in boundary.outputs if name in memory.pointers}
+    for name, buffer in outputs.items():
+        memory.download(name, buffer)
+    total = 0.0
+    for rep in range(reps + 1):
+        for name in restore:
+            memory.upload(name, host[name])
+        t0 = time.perf_counter()
+        fn(*args)
+        total += (time.perf_counter() - t0) if rep > 0 else 0.0
+    return outputs, total / reps * 1e6
+
+
+def call_on_device(
+    so: Path,
+    symbol: str,
+    order: List[str],
+    argtypes: list,
+    boundary: Boundary,
+    inputs: Dict[str, np.ndarray],
+    sizes: Dict[str, int],
+    reps: int,
+) -> Tuple[Optional[Dict[str, np.ndarray]], float]:
+    """:func:`call_native` for a device kernel: every pointer argument is a device buffer, copied down once and
+    read back once; scalars and sizes still go by value."""
+    fn = ctypes.CDLL(str(so))[symbol]  # ctypes CDLL indexing (not getattr) to bind the kernel symbol
+    fn.argtypes = argtypes
+    fn.restype = None
+    host = {k: v.copy() for k, v in inputs.items()}
+    on_device = [arg for arg, ctype in zip(order, argtypes) if arg in host and isinstance(ctype, POINTER_TYPE)]
+    memory = device_memory(loaded_cudart(so), host, on_device)
+    args = [
+        ctypes.cast(memory.pointers[arg], ctype) if arg in memory.pointers else bind_argument(arg, ctype, host, sizes)
+        for arg, ctype in zip(order, argtypes)
+    ]
+    try:
+        return time_device_reps(fn, args, memory, boundary, host, reps)
+    finally:
+        memory.free()
 
 
 def maxdiff(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> float:

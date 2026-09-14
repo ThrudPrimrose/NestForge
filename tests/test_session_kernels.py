@@ -7,6 +7,8 @@ import pytest
 
 import dace
 
+from nestforge.build import flags
+from nestforge.phases.normalize import Targets
 from nestforge.session import Session
 
 N = dace.symbol("N", dtype=dace.int64)
@@ -65,3 +67,18 @@ def test_sweep_without_matching_compilers_reports_no_winner(tmp_path):
     assert [result[key] for key in ("compiler", "fp_mode", "cost_model", "flags", "time_us")] == [None] * 5
     ext, _ = session.resolve(kernel_id, "kernel")
     assert ext.implementation != "ExternCall"
+
+
+@pytest.mark.gpu
+def test_a_gpu_sweep_reports_an_nvcc_configuration_without_a_cost_model(tmp_path):
+    session = Session(scaled_sum.to_sdfg(simplify=True), targets=Targets(gpu=True), work_dir=str(tmp_path))
+    session.define_scopes()
+    (kernel,) = session.offload()["kernels"]
+
+    result = session.sweep_configurations(kernel["id"], sizes={"N": 256}, reps=2)
+
+    assert result["winner"] is not None
+    assert result["compiler"].startswith("nvcc-") and result["cost_model"] == flags.NO_COST_MODEL
+    assert result["fp_mode"] in flags.CUDA_FP_LEVELS and "-arch=native" in result["flags"]
+    ext, _ = session.resolve(kernel["id"], "kernel")
+    assert ext.implementation == "ExternCall" and ext.lib_path.endswith(".a")
