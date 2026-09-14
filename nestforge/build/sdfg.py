@@ -26,6 +26,7 @@ from nestforge.build.toolchain import (
     CXX_STD,
     DEFAULT_COMPILER,
     DEFAULT_FLAGS,
+    AS_NEEDED,
     LIBOMP,
     OpenMPRuntime,
     Param,
@@ -220,7 +221,12 @@ def archive_and_link(
         archive.unlink()  # ar r APPENDS; start clean so a rebuild doesn't stack stale members
     run([ar_for(linker), "rcs", str(archive), *[str(obj) for obj in objects]])
     whole = ["-Wl,--export-dynamic", "-Wl,--whole-archive", str(archive), "-Wl,--no-whole-archive"]
-    run([linker, "-shared", *whole, *link_libs, "-o", str(shared)])
+    link_shared(linker, whole, link_libs, shared)
+
+
+def link_shared(linker: str, inputs: Sequence[str], link_libs: Sequence[str], shared: Path) -> None:
+    """The one shared-library link: :data:`AS_NEEDED` ahead of ``inputs``, then the libraries."""
+    run([linker, "-shared", AS_NEEDED, *inputs, *link_libs, "-o", str(shared)])
 
 
 def build_cuda_archive(source: Path, archive: Path, shared: Path, nvcc: str, flags: Sequence[str]) -> float:
@@ -243,7 +249,7 @@ def compile(frame: Path, folder: Path, name: str, opts: BuildOptions) -> Tuple[P
     obj = folder / f"{name}.o"
     t0 = time.perf_counter()
     run([cmds.compiler, *cmds.cflags, "-c", *cmds.compile_extra, str(frame), "-o", str(obj)])
-    run([cmds.compiler, "-shared", *cmds.cflags, str(obj), *cmds.link_libs, "-o", str(so)])
+    link_shared(cmds.compiler, [*cmds.cflags, str(obj)], cmds.link_libs, so)
     return so, time.perf_counter() - t0
 
 
@@ -264,9 +270,12 @@ def compile_linked_program(sdfg: dace.SDFG, build_folder: Path) -> Any:
     """Compile a program that links kernel libraries, with libomp as its one OpenMP runtime; the CMake
     setting holds for this compile only."""
     extra = [dace.config.Config.get("compiler", "extra_cmake_args"), *libomp_cmake_args(program_compiler())]
+    # DaCe folds compiler.linker.args into the one CMAKE_SHARED_LINKER_FLAGS it passes, after extra_cmake_args
+    linker_args = [dace.config.Config.get("compiler", "linker", "args"), AS_NEEDED]
     sdfg.build_folder = str(build_folder)
     with dace.config.set_temporary("compiler", "extra_cmake_args", value=" ".join(arg for arg in extra if arg)):
-        return sdfg.compile()
+        with dace.config.set_temporary("compiler", "linker", "args", value=" ".join(arg for arg in linker_args if arg)):
+            return sdfg.compile()
 
 
 def apply_vectorizer(sdfg: dace.SDFG, config: object) -> None:

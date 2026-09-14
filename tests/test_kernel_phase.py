@@ -13,6 +13,8 @@ import pytest
 
 import dace
 
+import nestforge.build.sdfg as build_sdfg
+
 from nestforge.build.isolation import run_isolated
 from nestforge.build.sdfg import compile_linked_program
 from nestforge.build.toolchain import needed_libraries, raw_signature, split_params
@@ -331,3 +333,50 @@ def test_the_program_hands_a_length_one_device_array_to_the_gpu_kernel_as_a_devi
     program = compiled._lib._library_filename
     assert any(name.startswith("libcudart.so") for name in needed_libraries(program))
     assert [stem for stem in openmp_runtime_stems(program) if stem != "libomp"] == []
+
+
+def recorded_links(monkeypatch):
+    """Every command the build runs from now on, still run for real: a spy at the subprocess edge."""
+    commands = []
+    real_run = build_sdfg.run
+
+    def record(cmd, *args, **kwargs):
+        commands.append(list(cmd))
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(build_sdfg, "run", record)
+    return commands
+
+
+def shared_link(commands, shared):
+    """The command that linked ``shared``."""
+    (link,) = [cmd for cmd in commands if "-shared" in cmd and cmd[-1] == str(shared)]
+    return link
+
+
+@pytest.mark.e2e
+def test_the_kernel_link_passes_as_needed_before_its_libraries(tmp_path, monkeypatch):
+    _, ext, boundary = lowered_kernel(vadd)
+    src = schedule_kernel(ext, boundary, tmp_path / "gen")
+    commands = recorded_links(monkeypatch)
+
+    archive = build_kernel_library(src, "g++", None, tmp_path / "lib")
+
+    link = shared_link(commands, archive.with_suffix(".so"))
+    libraries = [i for i, arg in enumerate(link) if arg.startswith("-l")]
+    assert libraries and "-Wl,--as-needed" in link
+    assert link.index("-Wl,--as-needed") < min(libraries)
+
+
+@pytest.mark.gpu
+def test_the_gpu_kernel_link_passes_as_needed_before_cudart(tmp_path, monkeypatch):
+    _, ext, boundary = gpu_lowered_kernel(vadd)
+    src = schedule_kernel(ext, boundary, tmp_path / "gen")
+    strict = next(v for v in device_variants("gpu") if v.fp_mode == "strict-ieee")
+    commands = recorded_links(monkeypatch)
+
+    archive = build_kernel_library(src, strict.compiler, list(strict.flags), tmp_path / "lib")
+
+    link = shared_link(commands, archive.with_suffix(".so"))
+    assert "-Wl,--as-needed" in link and "-lcudart" in link
+    assert link.index("-Wl,--as-needed") < link.index("-lcudart")

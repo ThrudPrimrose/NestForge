@@ -149,6 +149,12 @@ def openmp_runtime_stems(so_path):
     return [stem for stem in names if stem in ("libgomp", "libomp", "libiomp5")]
 
 
+def program_build_ninja(build_folder):
+    """The lines of the ``build.ninja`` DaCe's CMake wrote for a program: the link commands it ran."""
+    (ninja,) = list(build_folder.rglob("build.ninja"))
+    return ninja.read_text().splitlines()
+
+
 @pytest.mark.e2e
 def test_the_winning_archive_links_statically_into_the_parent_and_matches_numpy(tmp_path):
     """The whole flow: the phase-4 winner linked into the parent through ``ExternalCall``'s extern-call
@@ -176,6 +182,8 @@ def test_the_winning_archive_links_statically_into_the_parent_and_matches_numpy(
     assert runtime and set(runtime) <= set(ExternLibEnv.cmake_libraries)
     assert not any("-rpath" in f for f in ExternLibEnv.cmake_link_flags), "statically in, not loaded"
     assert openmp_runtime_stems(compiled._lib._library_filename) == ["libomp"]
+    link_flags = [line for line in program_build_ninja(tmp_path / "parent") if line.strip().startswith("LINK_FLAGS =")]
+    assert link_flags and all("-Wl,--as-needed" in line for line in link_flags)
 
 
 @pytest.mark.gpu

@@ -32,6 +32,10 @@ _C_PTR = {"float": ctypes.c_float, "double": ctypes.c_double, "int32_t": ctypes.
 
 DEFAULT_COMPILER = "g++"
 
+#: Records a shared library in DT_NEEDED only when something references it. Every link nest-forge performs
+#: passes it before its libraries, instead of trusting a distribution's default.
+AS_NEEDED = "-Wl,--as-needed"
+
 #: The ONE C++ standard the whole tree compiles against; override per call only to TEST, never to ship.
 CXX_STD = "c++20"
 
@@ -260,7 +264,7 @@ def linkable_lib_dir(soname: str, compiler: str = DEFAULT_COMPILER) -> Optional[
         return None
     for d in env_library_dirs():  # explicit intent (spack/module) outranks anything inferred
         p = Path(d)
-        if (p / f"lib{soname}.so").exists() or (p / f"lib{soname}.a").exists() or (p / f"lib{soname}.dylib").exists():
+        if (p / f"lib{soname}.so").exists() or (p / f"lib{soname}.a").exists():
             return d
     for probe in _LIB_PROBE_DRIVERS:
         if probe != compiler and shutil.which(probe):
@@ -292,7 +296,7 @@ def lib_findable(soname: str, lib_dir: Optional[str]) -> bool:
     """True if lib<soname> is in lib_dir, an env loader path, or the system loader path (matches .so.N too)."""
     for d in ([lib_dir] if lib_dir else []) + env_library_dirs():
         p = Path(d)
-        if (p / f"lib{soname}.a").exists() or (p / f"lib{soname}.dylib").exists() or any(p.glob(f"lib{soname}.so*")):
+        if (p / f"lib{soname}.a").exists() or any(p.glob(f"lib{soname}.so*")):
             return True
     return ctypes.util.find_library(soname) is not None
 
@@ -522,13 +526,28 @@ def cudart_dir(nvcc: str) -> str:
         source = Path(scratch) / "probe.cu"
         source.write_text("int nf_cudart_probe() { return 0; }\n")
         probe = str(Path(scratch) / "probe.so")
-        link = [nvcc, "-v", "-shared", "-Xcompiler=-fPIC", str(source), "-o", probe, "-lcudart"]
+        link = [
+            nvcc,
+            "-v",
+            "-shared",
+            "-Xcompiler=-fPIC",
+            nvcc_linker_flag(AS_NEEDED),
+            str(source),
+            "-o",
+            probe,
+            "-lcudart",
+        ]
         proc = subprocess.run(link, capture_output=True, text=True, timeout=COMPILE_TIMEOUT_S)
     for directory in re.findall(r"(?<=-L)\S+", proc.stdout + proc.stderr):
         candidate = Path(directory.strip('"'))
         if (candidate / "libcudart.so").exists():
             return str(candidate.resolve())
     raise LookupError(f"{nvcc} names no directory holding libcudart.so in its link line")
+
+
+def nvcc_linker_flag(flag: str) -> str:
+    """A ``-Wl,`` linker flag spelled for nvcc, which rejects ``-Wl,`` and forwards ``-Xlinker=`` instead."""
+    return "-Xlinker=" + flag.removeprefix("-Wl,")
 
 
 def discover_cuda_toolchains() -> List[CudaToolchain]:
