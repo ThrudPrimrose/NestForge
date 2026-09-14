@@ -188,7 +188,7 @@ def test_pausing_is_safe_when_no_openmp_runtime_is_loaded():
 def mapped_omp():
     with open("/proc/self/maps") as fh:
         maps = fh.read()
-    return sorted({n for n in ("libgomp", "libomp", "libiomp5", "libnvomp") if n + ".so" in maps})
+    return sorted({n for n in ("libgomp", "libomp", "libiomp5") if n + ".so" in maps})
 
 
 def test_the_pause_drops_the_thread_count_for_the_default_runtime(tmp_path):

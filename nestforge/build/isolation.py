@@ -15,7 +15,7 @@ import warnings
 from typing import Callable, Dict
 
 #: OpenMP runtimes whose thread pool must be torn down before a fork.
-OMP_RUNTIME_SONAMES = ("libgomp.so.1", "libomp.so.5", "libomp.so", "libiomp5.so", "libnvomp.so")
+OMP_RUNTIME_SONAMES = ("libgomp.so.1", "libomp.so.5", "libomp.so", "libiomp5.so")
 
 #: ``omp_pause_resource_t`` (OpenMP 5.0); ``hard`` also frees threadprivate data, so ``soft`` is default.
 OMP_PAUSE_SOFT = 1

@@ -88,7 +88,7 @@ def prune_reason(compiler, runtime):
     """Why ``compiler`` cannot link ``runtime`` (ABI or name selection first, then installation), or None."""
     if not runtime.compatible(compiler):
         return f"{compiler} cannot link {runtime.name} (single-runtime contract)"
-    if compiler_family(compiler) != "intel-classic" and not lib_linkable(runtime.soname, compiler):
+    if not lib_linkable(runtime.soname, compiler):
         return f"{runtime.name} is not linkable by {compiler} (runtime not installed for it)"
     return None
 
@@ -177,7 +177,6 @@ def test_libgomp_is_pruned_for_llvm_but_kept_for_gnu():
     assert libomp.compatible("gcc") and libomp.compatible("clang")
     with pytest.raises(ValueError, match="libgomp"):  # refused with a reason, never a silently serial flag
         libgomp.compile_flags("clang")
-    assert not libomp.compatible("icc") and OPENMP_RUNTIMES["libiomp5"].compatible("icc")
     assert compiler_family("icx") == "llvm" and libomp.compatible("icx")  # icx is clang-based: name-selects libomp
 
 

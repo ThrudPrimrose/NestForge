@@ -47,6 +47,6 @@ would lose members.
 `nestforge.build.toolchain.OpenMPRuntime` names the single OpenMP runtime a build links against
 (default `libomp`, since it is LLVM-selectable and also implements the GOMP ABI, so a GCC-built and
 a Clang-built object can share one thread pool). `OpenMPRuntime.check` raises before compiling a
-translation unit against a runtime a given compiler cannot actually link (classic Intel hard-links
-its own runtime; LLVM selects by name; GNU accepts any GOMP-ABI runtime), which is how a
-mixed-compiler build is kept off a mixed-runtime link.
+translation unit against a runtime a given compiler cannot actually link (LLVM selects by name;
+GNU accepts any GOMP-ABI runtime), which is how a mixed-compiler build is kept off a
+mixed-runtime link.

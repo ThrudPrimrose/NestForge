@@ -171,17 +171,13 @@ def test_openmp_runtime_is_a_separate_per_compiler_flag_axis():
     """The OpenMP runtime maps to the right flag PER COMPILER, so mixed-compiler builds share ONE runtime."""
     rt = OpenMPRuntime()  # default libomp
     assert compiler_family("gfortran") == "gnu" and compiler_family("flang") == "llvm"
-    assert compiler_family("icx") == "llvm" and compiler_family("icc") == "intel-classic"
+    assert compiler_family("icx") == "llvm"
     # LLVM family selects the runtime BY NAME (flang -fopenmp=libomp).
     assert rt.compile_flags("flang") == ["-fopenmp=libomp"]
     assert rt.compile_flags("clang++") == ["-fopenmp=libomp"]
     assert rt.compile_flags("icx") == ["-fopenmp=libomp"]
     # gnu emits GOMP calls at compile and links the mandated runtime explicitly (not -fopenmp -> libgomp).
     assert rt.compile_flags("g++") == ["-fopenmp"] and without_search_paths(rt.link_flags("g++")) == ["-lomp"]
-    # intel-classic links ONLY its native runtime (icc->libiomp5), not libomp.
-    from nestforge.build.toolchain import LIBIOMP5
-    assert LIBIOMP5.compile_flags("icc") == ["-qopenmp"]
-    assert without_search_paths(LIBIOMP5.link_flags("icc")) == ["-qopenmp"]
     # a lib_dir threads onto the link line as a -L/-rpath PAIR (so the .so is found at run time too),
     # and both are discovery, not selection -- without_search_paths must drop both.
     pinned = OpenMPRuntime(lib_dir="/opt/omp/lib").link_flags("g++")
@@ -201,10 +197,9 @@ def test_openmp_runtime_registry_covers_the_popular_runtimes():
 
 def test_openmp_abi_compatibility_is_enforced():
     """A runtime is usable only if the compiler can actually LINK it, which depends on HOW the family
-    selects a runtime, not ABI alone: gcc links any gomp-capable runtime by soname; LLVM name-selects only
-    libomp/libiomp5 (kmpc ABI); icc hard-links its native runtime alone. Mismatches raise."""
+    selects a runtime, not ABI alone: gcc links any gomp-capable runtime by soname; LLVM name-selects
+    only libomp/libiomp5 (kmpc ABI). Mismatches raise."""
     from nestforge.build.toolchain import LIBGOMP, LIBIOMP5, LIBOMP
-    assert LIBIOMP5.compatible("icc") and not LIBOMP.compatible("icc") and not LIBGOMP.compatible("icc")
     # clang name-selects libomp/libiomp5 but NOT libgomp (no __kmpc_*).
     assert LIBOMP.compatible("clang++") and LIBIOMP5.compatible("clang++")
     assert not LIBGOMP.compatible("clang++")

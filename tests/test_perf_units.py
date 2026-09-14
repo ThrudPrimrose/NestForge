@@ -61,7 +61,7 @@ def test_flag_matrix_atol_covers_every_level():
 
 
 def toolchain_labelled(label, cc):
-    return Toolchain(name=label, cc=cc, cxx=None, source="path")
+    return Toolchain(name=label, cc=cc, cxx=None)
 
 
 def test_toolchain_fp_family_maps_labels_to_fp_families():
@@ -225,6 +225,5 @@ def test_the_two_family_vocabularies_stay_apart():
     that true, so a future 'simplification' that collapses them fails here instead of in a sweep."""
     from nestforge.build.toolchain import compiler_family
 
-    assert compiler_family("icc") == "intel-classic" and compiler_family("icc") not in flags._FP
     assert compiler_family("icx") == "llvm"  # an Intel compiler classified llvm: the ABI, not the FP family
     assert toolchain_labelled("intel", "icx").fp_family == "intel"

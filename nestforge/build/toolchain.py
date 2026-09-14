@@ -38,18 +38,16 @@ DEFAULT_FLAGS = ["-O3", "-march=native", f"-std={CXX_STD}", "-fPIC", "-shared"]
 
 @functools.lru_cache(maxsize=None, typed=True)
 def compiler_family(compiler: str) -> str:
-    """OpenMP-relevant compiler family: ``llvm`` (clang/flang, icx/icpx/ifx), ``intel-classic``
-    (icc/icpc/ifort), or ``gnu`` (gcc/gfortran, default)."""
+    """OpenMP-relevant compiler family: ``llvm`` (clang/flang, icx/icpx/ifx), or ``gnu``
+    (gcc/gfortran, default)."""
     b = Path(compiler).name.lower()
     if "clang" in b or "flang" in b or b.startswith(("icx", "icpx", "ifx")):
         return "llvm"
-    if b.startswith(("icc", "icpc", "ifort")):
-        return "intel-classic"
     return "gnu"
 
 
-#: OpenMP ABI a family emits -- ``gomp`` (GCC ``GOMP_*``) or ``kmpc`` (LLVM/Intel ``__kmpc_*``).
-_COMPILER_ABI = {"gnu": "gomp", "llvm": "kmpc", "intel-classic": "kmpc"}
+#: OpenMP ABI a family emits -- ``gomp`` (GCC ``GOMP_*``) or ``kmpc`` (LLVM/oneAPI ``__kmpc_*``).
+_COMPILER_ABI = {"gnu": "gomp", "llvm": "kmpc"}
 
 #: Runtimes selectable via -fopenmp=<name> on clang/flang/icx; gcc links any runtime explicitly via -l<soname>.
 _LLVM_SELECTABLE = frozenset({"libomp", "libgomp", "libiomp5"})
@@ -67,11 +65,9 @@ class OpenMPRuntime:
     provides: frozenset = frozenset({"kmpc", "gomp"})
 
     def compatible(self, compiler: str) -> bool:
-        """True if ``compiler`` can LINK this runtime: intel-classic hard-links its own native runtime
-        only; llvm selects by name from the LLVM-selectable set; gnu links any gomp-ABI runtime."""
+        """True if ``compiler`` can LINK this runtime: llvm selects by name from the LLVM-selectable
+        set; gnu links any gomp-ABI runtime."""
         fam = compiler_family(compiler)
-        if fam == "intel-classic":
-            return self.name == "libiomp5"
         if fam == "llvm":
             return self.name in _LLVM_SELECTABLE and _COMPILER_ABI["llvm"] in self.provides
         return _COMPILER_ABI["gnu"] in self.provides
@@ -80,10 +76,6 @@ class OpenMPRuntime:
         if self.compatible(compiler):
             return
         fam = compiler_family(compiler)
-        if fam == "intel-classic":
-            raise ValueError(f"{Path(compiler).name} (classic Intel) links OpenMP through '-qopenmp', which uses its "
-                             f"native libiomp5; it cannot link {self.name}. Use the libiomp5 runtime for icc/icpc, "
-                             f"or drop the classic Intel compiler from this runtime's sweep.")
         if fam == "llvm":
             if _COMPILER_ABI["llvm"] not in self.provides:
                 raise ValueError(f"{Path(compiler).name} emits the 'kmpc' OpenMP ABI, which {self.name} does not "
@@ -102,8 +94,6 @@ class OpenMPRuntime:
         fam = compiler_family(compiler)
         if fam == "llvm":  # pick the runtime by name
             return [f"-fopenmp={self.name}"]
-        if fam == "intel-classic":
-            return ["-qopenmp"]
         return ["-fopenmp"]  # gnu: runtime fixed at link, not by this flag
 
     def link_flags(self, compiler: str) -> List[str]:
@@ -116,8 +106,6 @@ class OpenMPRuntime:
         libdir = [f"-L{pinned}", f"-Wl,-rpath,{pinned}"] if pinned else []
         if fam == "llvm":
             return [f"-fopenmp={self.name}", *libdir]
-        if fam == "intel-classic":
-            return ["-qopenmp", *libdir]
         # gnu: link the runtime EXPLICITLY (bare -fopenmp would pull libgomp instead)
         return [*libdir, f"-l{self.soname}"]
 
@@ -312,8 +300,7 @@ def usable_openmp(compiler: str) -> Optional[OpenMPRuntime]:
     for rt in OPENMP_RUNTIMES.values():  # deliberately libomp-first
         if not rt.compatible(compiler):
             continue
-        # intel-classic hard-links its own runtime through -qopenmp; there is no -l to resolve.
-        if compiler_family(compiler) == "intel-classic" or lib_linkable(rt.soname, compiler):
+        if lib_linkable(rt.soname, compiler):
             return rt
     return None
 
@@ -410,7 +397,7 @@ def compiler_version(compiler: str) -> Tuple[int, int]:
         return (0, 0)
     out = f"{p.stdout}\n{p.stderr}"
     fam = compiler_family(compiler)
-    if fam in ("llvm", "intel-classic"):
+    if fam == "llvm":
         m = re.search(r"clang version (\d+)\.(\d+)", out)
         if m:
             return (int(m.group(1)), int(m.group(2)))
@@ -432,7 +419,6 @@ class Toolchain:
     name: str
     cc: str
     cxx: Optional[str]  # None -> no native column
-    source: str  # always "path"
 
     @property
     def family(self) -> str:
@@ -480,7 +466,7 @@ def discover_toolchains(requested: str = "auto") -> List[Toolchain]:
         cxx = shutil.which(cxx_exe)
         if cxx is None:
             warnings.warn(f"{fam}: C++ compiler {cxx_exe!r} not found; native-baseline column disabled for {fam}")
-        out.append(Toolchain(name=fam, cc=cc, cxx=cxx, source="path"))
+        out.append(Toolchain(name=fam, cc=cc, cxx=cxx))
     return out
 
 
