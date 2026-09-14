@@ -31,8 +31,8 @@ def test_optimize_kernel_writes_one_c_entry_with_the_boundary_arguments(tmp_path
     """The optimized kernel exposes one extern C symbol whose arguments are the boundary's names."""
     session, kernel_id = one_kernel_session(tmp_path)
     info = session.optimize_kernel(kernel_id)
-    wrapper = (tmp_path / info["kernel"]).rglob(f"{info['kernel']}_entry.cpp")
-    text = next(wrapper).read_text()
+    unit = (tmp_path / info["kernel"]).rglob(f"{info['kernel']}.cpp")
+    text = next(unit).read_text()
     assert text.count('extern "C"') == 1
     assert f"void {info['symbol']}(" in text
     assert sorted(info["abi_order"]) == sorted(session.kernel_boundary(kernel_id)["boundary_order"])
@@ -44,6 +44,9 @@ def test_sweep_links_the_fastest_correct_variant_into_the_program(tmp_path):
     result = session.sweep_configurations(kernel_id, sizes={"N": 256}, reps=2, compilers=["gcc"])
     assert result["winner"] is not None
     assert result["cells"] >= 1
+    assert result["compiler"] == "g++"
+    assert result["winner"] == f"g++:{result['fp_mode']}:{result['cost_model']}"
+    assert "-O3" in result["flags"] and result["time_us"] > 0.0
     ext, _ = session.resolve(kernel_id, "kernel")
     assert ext.implementation == "ExternCall"
     assert ext.lib_path.endswith(".a")
@@ -58,5 +61,6 @@ def test_sweep_without_matching_compilers_reports_no_winner(tmp_path):
     session, kernel_id = one_kernel_session(tmp_path)
     result = session.sweep_configurations(kernel_id, sizes={"N": 64}, reps=1, compilers=["no-such-compiler"])
     assert result["winner"] is None
+    assert [result[key] for key in ("compiler", "fp_mode", "cost_model", "flags", "time_us")] == [None] * 5
     ext, _ = session.resolve(kernel_id, "kernel")
     assert ext.implementation != "ExternCall"

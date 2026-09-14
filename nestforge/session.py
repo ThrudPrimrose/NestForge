@@ -30,7 +30,7 @@ from nestforge.phases.schedule import (FissionMove, FusionMove, RegionMove, appl
                                        scope_metrics)
 from nestforge.phases.scopes import (is_parallel_nest, label_nest, lower_nests_to_external_call, offload_candidates,
                                      top_level_map_entries)
-from nestforge.phases.variants import enumerate_variants, select_variant
+from nestforge.phases.variants import VariantCell, enumerate_variants, select_variant
 
 #: kernel_source language -> (translator target, generated file suffix). C and C++ come from one C emit.
 LANG_LOWERING = {"c": ("c", ".c"), "cpp": ("c", ".cpp"), "fortran": ("fortran", ".f90")}
@@ -331,7 +331,7 @@ class Session:
             "cells": len(result.cells),
             "collapsed": list(result.collapsed),
             "winner": winner.variant.label if winner is not None else None,
-            "time_us": winner.verdict.time_us if winner is not None else None,
+            **winner_config(winner),
         }
 
     # Feedback
@@ -347,6 +347,20 @@ class Session:
             "best_name": best.name if best is not None else None,
             "best_us": best.median_us if best is not None else None
         }
+
+
+def winner_config(winner: Optional[VariantCell]) -> dict:
+    """The configuration phase 5 chose: compiler, FP mode, cost model, flags and measured time, or all ``None``."""
+    if winner is None:
+        return dict.fromkeys(("compiler", "fp_mode", "cost_model", "flags", "time_us"))
+    variant = winner.variant
+    return {
+        "compiler": Path(variant.compiler).name,
+        "fp_mode": variant.fp_mode,
+        "cost_model": variant.cost_model,
+        "flags": list(variant.flags),
+        "time_us": winner.verdict.time_us,
+    }
 
 
 def fusion_units(sdfg: dace.SDFG) -> List[Tuple[object, Union[nodes.MapEntry, LoopRegion]]]:

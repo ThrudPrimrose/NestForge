@@ -3,9 +3,9 @@
 [../README.md](../README.md) · related: [4 Optimize Kernels](phases/4-optimize-kernels.md) ·
 [5 Sweep Configurations](phases/5-sweep-configurations.md)
 
-Phase 3 vectorizes each kernel with one fixed DaCe configuration; phase 4 then sweeps compiler,
-FP mode and vectorizer cost model over the result. This page covers the two axes phase 4 sweeps
-and the vectorizer knobs a kernel's emitted code can vary on.
+Phase 4 renders each kernel as a standalone CPF unit and leaves vectorization to the compiler; phase 5
+then sweeps compiler, FP mode and the compiler's own vectorizer cost model over that unit. This page
+covers those sweep axes and the DaCe vectorizer knobs, which are no longer part of the default.
 
 ## The FP ladder
 
@@ -28,10 +28,19 @@ its front end reassociates at `-O` even under `-ffp-contract=off`).
 `DTYPE_ATOL` adds a floor per output dtype (about one ULP of that storage format), composed as
 `max(rung, dtype)`, so a rung's tolerance never asks more of fp16 output than fp16 can represent.
 
-## Vectorizer knobs
+## Compiler cost models
 
-DaCe's multi-dimensional tile-op vectorizer (`dace.transformation.passes.vectorization`) takes a
-`VectorizeConfig` with the knobs that change the emitted C++:
+`COST_MODELS` in `nestforge/build/flags.py` is the phase 5 vectorization axis: `default` keeps the
+compiler's own model, `cheap` asks for fewer vectorizations (only gcc has the knob,
+`-fvect-cost-model=cheap`, so other families dedup it onto `default`), and `no-vec` turns the
+vectorizer off as a scalar floor.
+
+## DaCe vectorizer knobs
+
+DaCe's multi-dimensional tile-op vectorizer (`dace.transformation.passes.vectorization`) is not
+applied to phase 4 kernels, because a CPF unit cannot call its tile-op runtime. It still applies to
+an owned DaCe build through `BuildOptions.vectorize`, and takes a `VectorizeConfig` with the knobs
+that change the emitted C++:
 
 | Knob | Effect on emitted code |
 |---|---|

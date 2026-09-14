@@ -158,7 +158,7 @@ class BuildCommands:
     link_libs: List[str]  # after the object: the linker resolves left to right
 
 
-def build_commands(folder: Path, opts: BuildOptions) -> BuildCommands:
+def build_commands(folder: Optional[Path], opts: BuildOptions) -> BuildCommands:
     compiler = opts.compiler
     # dace emits `#pragma omp parallel for` for every multicore map; a build without OpenMP runs it serially.
     omp = opts.openmp or usable_openmp(compiler)
@@ -171,12 +171,14 @@ def build_commands(folder: Path, opts: BuildOptions) -> BuildCommands:
     libs = [*omp_l, *(opts.blas_link or []), *(opts.extra_link or []), *support_rpath_flags(compiler)]
     return BuildCommands(compiler=compiler,
                          cflags=[f for f in opts.resolved_flags() if f != "-shared"],
-                         compile_extra=[*omp_c, *include_flags(folder)],
+                         compile_extra=[*omp_c, *(include_flags(folder) if folder is not None else [])],
                          link_libs=libs)
 
 
-def build_archive(sources: Sequence[Path], folder: Path, archive: Path, shared: Path, opts: BuildOptions) -> float:
-    """Compile ``sources`` against ``folder``'s headers, archive them, and link ``shared`` from the whole archive."""
+def build_archive(sources: Sequence[Path], folder: Optional[Path], archive: Path, shared: Path,
+                  opts: BuildOptions) -> float:
+    """Compile ``sources`` (against ``folder``'s headers, if given), archive them, and link ``shared`` from the
+    whole archive."""
     cmds = build_commands(folder, opts)
     ar = ar_for(opts.compiler)
     objs = [archive.parent / f"{src.stem}.o" for src in sources]

@@ -6,16 +6,19 @@ Phase 4 produces each kernel's implementation, one kernel at a time. Every kerne
 library `lib<kernel>.a` with a single `extern "C"` entry, which the parent program links. The
 kernel's NumPy reference is the correctness oracle for every implementation.
 
-- **Default (DaCe).** CPU kernels get DaCe's vectorizer with one default configuration, then
-  `finalize_for_target`. GPU kernels are offloaded and finalized for the GPU. DaCe's generated
-  program gets a small generated wrapper (init, run, exit) behind the C entry.
+- **Default (CPF).** DaCe's `cpf.render` writes the kernel as one standalone canonical parallel form
+  unit. The unit needs no DaCe header or runtime and defines the kernel's C entry itself: C++ with
+  OpenMP pragmas on CPU, CUDA on GPU once CPF emits that form. Before rendering, the kernel copy is
+  finalized for its device, its integer symbols become `int64_t` and a scalar input becomes a
+  length-1 array, so the entry takes exactly what the `ExternalCall` prototype passes. The DaCe
+  vectorizer is not applied; the compiler vectorizes, and phase 5 sweeps its cost models.
 - **Kernel agent.** The agent receives the kernel as NumPy, C++ or Fortran plus its boundary, and
   returns source or a library that exposes the same entry. HPCAgent-Bench runs the agent.
 
 | | |
 |---|---|
-| default | DaCe vectorizer + `finalize_for_target(device)` |
+| default | `finalize_for_target(device)` + `cpf.render(kernel, language="c++")` |
 | session | `optimize_kernel(kernel_id)`, `set_kernel(kernel_id, lib_path, symbol, abi_order)` |
-| output | kernel source for phase 5, or a finished `lib<kernel>.a` |
+| output | the kernel's CPF unit, or a finished `lib<kernel>.a` |
 | code | `nestforge/phases/kernel.py`, `nestforge/build/sdfg.py` |
-| status | CPU default implemented (`schedule_kernel`, `build_kernel_library`, `validate_kernel`); GPU waits for offloading |
+| status | CPU implemented (`schedule_kernel`, `build_kernel_library`, `validate_kernel`); GPU waits for CPF's CUDA form |

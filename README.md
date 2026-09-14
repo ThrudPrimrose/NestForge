@@ -11,7 +11,7 @@ deterministic default, and exposes the same API to a scripted optimizer, a human
 | [1 Shape Kernels](docs/phases/1-shape-kernels.md) | fusion and fission granularity | fuse all legal loops | scheduling |
 | [2 Define Scopes](docs/phases/2-define-scopes.md) | which nests become external kernels | one scope per parallel top-level map | scheduling |
 | [3 Offload](docs/phases/3-offload.md) | device per kernel, host/device copies | all scopes on GPU (planned) | scheduling |
-| [4 Optimize Kernels](docs/phases/4-optimize-kernels.md) | each kernel's code, one `lib<kernel>.a` | specialize per device: DaCe vectorizer on CPU | kernel |
+| [4 Optimize Kernels](docs/phases/4-optimize-kernels.md) | each kernel's code, one `lib<kernel>.a` | standalone CPF kernel: C++ on CPU, CUDA on GPU | kernel |
 | [5 Sweep Configurations](docs/phases/5-sweep-configurations.md) | compiler, FP mode, vectorizer cost model | keep the fastest correct variant | none |
 
 Phase 5 sweeps GNU, LLVM and oneAPI against three FP modes (strict, contract, fast-math) and the
