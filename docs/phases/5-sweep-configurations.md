@@ -18,4 +18,4 @@ runtime.
 |---|---|
 | default | brute force over all axes the toolchain supports |
 | code | `nestforge/phases/variants.py`, `nestforge/build/arena.py`, `nestforge/build/flags.py` |
-| status | CPU sweep exists over translator C; moving to DaCe C++ and CUDA |
+| status | CPU sweep over DaCe C++ implemented (`enumerate_variants`, `select_variant`); CUDA pending |

@@ -7,21 +7,13 @@ import ctypes
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from nestforge.build import arena
 
 from nestforge.build.isolation import run_isolated
 from nestforge.build import flags
 from nestforge.build import harness
-
-
-def test_native_symbol_fallback_to_first_kernel():
-    # The convention symbol is used when present; otherwise the first `void <name>(` is taken.
-    assert harness.native_symbol("void s000_d(double* a)", "s000_d") == "s000_d"
-    assert harness.native_symbol("void renamed_kernel(double* a)", "s000_d") == "renamed_kernel"
-    with pytest.raises(LookupError):
-        harness.native_symbol("int not_a_kernel;", "s000_d")
+from nestforge.build.toolchain import Toolchain
 
 
 # --- emitted-source signature order (harness.signature_order) ------------------------------------------
@@ -31,13 +23,6 @@ def test_signature_order_c_and_fortran_multiline():
     # a long Fortran arg list wraps with `&` continuations; they must be stripped, not become arg names.
     ftn = "subroutine s1115_fp64(aa, &\n  & bb_slice, cc, &\n  & LEN_2D) bind(c, name='s1115_fp64')\n"
     assert harness.signature_order(ftn, "s1115_fp64", "fortran") == ["aa", "bb_slice", "cc", "LEN_2D"]
-
-
-def test_fortran_unmunge_multiple_and_no_underscore():
-    # a leading `_` munges to `x`; a non-underscore name is unchanged; both reverse cleanly.
-    order = ["x_a", "xb", "LEN_1D"]
-    names = ["__a", "xb", "LEN_1D"]
-    assert harness.fortran_unmunge(order, names) == ["__a", "xb", "LEN_1D"]
 
 
 def test_abi_order_pointer_star_stripped():
@@ -94,18 +79,22 @@ def test_veclib_flags_compose_and_gate_by_compatibility():
 
 
 def test_lane_flags_threads_veclib_and_rejects_incompatible():
-    ok, r = flags.lane_flags("llvm", "default-fp", "default", "sequential", "c", 4, compiler="clang++", veclib="sleef")
+    ok, r = flags.lane_flags("llvm", "default-fp", "default", "c", compiler="clang++", veclib="sleef")
     assert r is None and "-fveclib=libmvec" in ok and any("-lsleefgnuabi" in a for a in ok)
-    bad, reason = flags.lane_flags("gnu", "default-fp", "default", "sequential", "c", 4, compiler="g++", veclib="svml")
+    bad, reason = flags.lane_flags("gnu", "default-fp", "default", "c", compiler="g++", veclib="svml")
     assert bad is None and "incompatible" in reason  # unsupported cell recorded, never silently emitted
 
 
-def test_family_of_maps_labels_to_fp_families():
-    assert harness.family_of("gcc") == "gnu"
-    assert harness.family_of("clang") == "llvm"
-    assert harness.family_of("nvhpc") == "nvidia"
-    assert harness.family_of("intel") == "intel"
-    assert harness.family_of("unknown") == "gnu"  # safe default
+def toolchain_labelled(label, cc):
+    return Toolchain(name=label, cc=cc, cxx=None, version=(0, 0), source="path")
+
+
+def test_toolchain_fp_family_maps_labels_to_fp_families():
+    assert toolchain_labelled("gcc", "gcc").fp_family == "gnu"
+    assert toolchain_labelled("clang", "clang").fp_family == "llvm"
+    assert toolchain_labelled("nvhpc", "nvc").fp_family == "nvidia"
+    assert toolchain_labelled("intel", "icx").fp_family == "intel"
+    assert toolchain_labelled("unknown", "some-cc").fp_family == "gnu"  # safe default
 
 
 # --- key_seed determinism -----------------------------------------------------------------------------
@@ -248,22 +237,21 @@ def test_rewind_snapshot_writes_through_to_the_bound_buffer():
     assert snapshot[0][0] is a
 
 
-def test_family_of_only_ever_names_a_real_fp_family():
-    """`family_of` feeds `flags.fp_flags`/`base_flags`, which index the FP tables by family. A label it maps
-    to a family those tables do not have would KeyError mid-sweep -- or worse, `base_flags` would silently
-    fall back to `-march=native` and the cell would be measured under flags nobody chose."""
-    labels = ["gcc", "clang", "nvhpc", "intel", "some-future-toolchain"]
-    for label in labels:
-        assert harness.family_of(label) in flags._FP, label
-        assert harness.family_of(label) in flags._REDUCED_FP, label
+def test_toolchain_fp_family_only_ever_names_a_real_fp_family():
+    """`Toolchain.fp_family` feeds `flags.lane_flags`, which indexes the FP tables by family. A toolchain it
+    maps to a family those tables do not have would decline every cell -- or worse, `base_flags` would
+    silently fall back to `-march=native` and the cell would be measured under flags nobody chose."""
+    for label, cc in (("gcc", "gcc"), ("clang", "clang"), ("nvhpc", "nvc"), ("intel", "icx"), ("future", "fcc")):
+        assert toolchain_labelled(label, cc).fp_family in flags._FP, label
+        assert toolchain_labelled(label, cc).fp_family in flags._REDUCED_FP, label
 
 
 def test_the_two_family_vocabularies_stay_apart():
-    """toolchain.compiler_family classifies an EXECUTABLE for its OpenMP ABI; family_of classifies a toolchain
-    LABEL for the FP tables. They are not interchangeable, and this pins the exact disagreement that makes
+    """toolchain.compiler_family classifies an EXECUTABLE for its OpenMP ABI; Toolchain.fp_family classifies a
+    toolchain for the FP tables. They are not interchangeable, and this pins the exact disagreement that makes
     that true, so a future 'simplification' that collapses them fails here instead of in a sweep."""
     from nestforge.build.toolchain import compiler_family
 
     assert compiler_family("icc") == "intel-classic" and compiler_family("icc") not in flags._FP
     assert compiler_family("icx") == "llvm"  # an Intel compiler classified llvm: the ABI, not the FP family
-    assert harness.family_of("intel") == "intel"
+    assert toolchain_labelled("intel", "icx").fp_family == "intel"

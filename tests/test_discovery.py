@@ -1,15 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Compiler + BLAS backend discovery return well-formed link flags."""
-from nestforge.build.arena import BlasBackend, discover_blas_libraries, discover_compilers
-
-
-def test_discover_compilers_returns_existing_paths():
-    import os
-    compilers = discover_compilers()
-    assert compilers, "expected at least one of gcc/clang on PATH"
-    for name, path in compilers.items():
-        assert os.path.exists(path)
+"""BLAS backend discovery returns well-formed link flags."""
+from nestforge.build.arena import BlasBackend, discover_blas_libraries
 
 
 def test_discover_blas_backends_are_link_flags():

@@ -58,25 +58,6 @@ def test_emitted_signature_disagrees_with_manifest_role_order(tmp_path):
         "the two orders now coincide for this kernel -- pick one whose output still sorts before its input"
 
 
-@pytest.mark.integration  # compiles + runs the nest
-def test_arena_binds_by_the_emitted_signature_not_the_manifest(tmp_path):
-    """End-to-end: the arena must compute a[i] = b[i] + 1 correctly for a kernel whose OUTPUT sorts before
-    its INPUT.
-
-    Binding by manifest order hands the kernel arena's `b` where it expects `a` and vice versa: it writes
-    into the input buffer and reads the output buffer, so `a` comes back as the untouched zeros the arena
-    allocated for it (and `b`, which the test does not read, silently holds the answer). Both are double*,
-    so ctypes raises nothing -- only the value is wrong.
-    """
-    from nestforge.build.arena import run_arena
-
-    prep, boundary = prepared_nest(tmp_path)
-    csrc = next(s for s in emit_sources(prep, tmp_path, target="c") if s.suffix == ".c" and "pluto" not in s.name)
-    result = run_arena(prep, boundary, csrc, tmp_path / "build", sizes={"N": 32}, reps=2)
-    cells = [c for c in result.cells if c.ok]
-    assert cells, f"no arena cell validated -- the ABI bind order is wrong: {[c.error for c in result.cells]}"
-
-
 def test_a_prototype_above_the_definition_does_not_widen_the_capture():
     """`raw_signature` anchors on `void <symbol>(...) {` so a doc comment naming the function cannot match.
     With a non-greedy `(.*?)` that anchor introduced the opposite failure: the dot backtracks ACROSS a

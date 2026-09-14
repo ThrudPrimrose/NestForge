@@ -12,35 +12,47 @@ from pathlib import Path
 
 import pytest
 
-from nestforge.build.arena import compile_object
-from nestforge.build.flags import FP_LEVELS
+from nestforge.build.flags import FP_LEVELS, lane_flags
 from nestforge.build.dedup import (asm_bodies, asm_body_key, collapse, cpp_body_key, function_bodies, needed_libraries,
                                    parse_disassembly, representatives, variant_key)
+from nestforge.build.sdfg import BuildOptions, build_archive
+from nestforge.build.toolchain import VECTOR_LIBS, compiler_family
 
 SYMBOL = "k_fp64"
 #: A transcendental so the veclib axis has something to substitute, in a loop the back end will vectorize.
 SIN_KERNEL = f"""#include <math.h>
-void {SYMBOL}(double *restrict a, const double *restrict b, int n) {{
+extern "C" void {SYMBOL}(double *__restrict__ a, const double *__restrict__ b, int n) {{
   for (int i = 0; i < n; ++i) a[i] = sin(b[i]);
 }}
 """
 #: A reduction: reassociation is exactly what separates fast-math from the strict rungs.
-SUM_KERNEL = f"""void {SYMBOL}(double *restrict a, const double *restrict b, int n) {{
+SUM_KERNEL = f"""extern "C" void {SYMBOL}(double *__restrict__ a, const double *__restrict__ b, int n) {{
   double s = 0.0;
   for (int i = 0; i < n; ++i) s += b[i] * b[i];
   a[0] = s;
 }}
 """
 
-needs_gcc = pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc not on PATH")
-needs_clang = pytest.mark.skipif(shutil.which("clang") is None, reason="clang not on PATH")
+needs_gcc = pytest.mark.skipif(shutil.which("g++") is None, reason="g++ not on PATH")
+needs_clang = pytest.mark.skipif(shutil.which("clang++") is None, reason="clang++ not on PATH")
 needs_objdump = pytest.mark.skipif(shutil.which("objdump") is None, reason="objdump not on PATH")
 
 
-def build(tmp_path: Path, source: str, fp_mode: str, veclib: str = "none", tag: str = "v") -> Path:
-    src = tmp_path / f"{tag}.c"
+def build(tmp_path: Path,
+          source: str,
+          fp_mode: str,
+          veclib: str = "none",
+          tag: str = "v",
+          compiler: str = "g++") -> Path:
+    """Build ``source`` the way a phase-4 variant is built and return the object the keys read."""
+    src = tmp_path / f"{tag}.cpp"
     src.write_text(source)
-    return compile_object("gcc", fp_mode, src, tag, tmp_path / tag, veclib=veclib)
+    composed, reason = lane_flags(compiler_family(compiler), fp_mode, "default", "c", compiler=compiler)
+    assert composed is not None, reason
+    out = tmp_path / tag
+    opts = BuildOptions(compiler=compiler, flags=composed, veclib=VECTOR_LIBS.get(veclib))
+    build_archive([src], out, out / f"lib{tag}.a", out / f"lib{tag}.so", opts)
+    return out / f"{tag}.o"
 
 
 # ---------------------------------------------------------------- the C++ key and its blind spot
@@ -68,7 +80,7 @@ def test_the_cpp_key_separates_sources_that_differ_in_the_body():
 def test_the_cpp_key_ignores_layout_and_the_includes_that_follow_the_build_dir():
     """clang-format normalizes spelling, and only BODIES are hashed -- an emitted TU's include paths and
     name comments follow the build directory, so hashing the whole file would never match twice."""
-    reflowed = SIN_KERNEL.replace("  for", "\n\n      for").replace("*restrict a", "*restrict  a")
+    reflowed = SIN_KERNEL.replace("  for", "\n\n      for").replace("*__restrict__ a", "*__restrict__  a")
     relocated = "#include <math.h>\n// generated into /tmp/build-abc123\n" + SIN_KERNEL.split("\n", 1)[1]
     assert cpp_body_key(SIN_KERNEL) == cpp_body_key(reflowed)
     assert cpp_body_key(SIN_KERNEL) == cpp_body_key(relocated)
@@ -117,10 +129,8 @@ def test_the_asm_key_keeps_a_veclib_cell_that_does_emit_one(tmp_path):
     """The other direction, so the test above cannot pass by collapsing everything. clang, because there
     the veclib IS a compile flag (-fveclib=): at the rung where the packed call is emitted the two
     objects differ and both must be measured."""
-    src = tmp_path / "sin.c"
-    src.write_text(SIN_KERNEL)
-    plain = compile_object("clang", "assume-finite", src, "plain_c", tmp_path / "plain_c", veclib="none")
-    veclib = compile_object("clang", "assume-finite", src, "veclib_c", tmp_path / "veclib_c", veclib="libmvec")
+    plain = build(tmp_path, SIN_KERNEL, "assume-finite", veclib="none", tag="plain_c", compiler="clang++")
+    veclib = build(tmp_path, SIN_KERNEL, "assume-finite", veclib="libmvec", tag="veclib_c", compiler="clang++")
     assert asm_body_key(plain, SYMBOL) != asm_body_key(veclib, SYMBOL)
 
 
@@ -216,7 +226,8 @@ def test_needed_libraries_reads_the_link_axis_the_object_key_misses(tmp_path):
 
 
 #: No FMA to contract, no math call to relax, nothing to reassociate: the fp ladder cannot reach it.
-ADD_KERNEL = f"""void {SYMBOL}(double *restrict c, const double *restrict a, const double *restrict b, long n) {{
+ADD_KERNEL = f"""extern "C" void {SYMBOL}(double *__restrict__ c, const double *__restrict__ a, const double *__restrict__ b,
+    long n) {{
   for (long i = 0; i < n; ++i) c[i] = a[i] + b[i];
 }}
 """

@@ -3,9 +3,9 @@
 [../README.md](../README.md) · related: [4 Optimize Kernels](phases/4-optimize-kernels.md) ·
 [5 Sweep Configurations](phases/5-sweep-configurations.md)
 
-NestForge does not call `dace.compile()` for the arena: `nestforge/build/sdfg.py`,
-`toolchain.py` and `arena.py` generate the SDFG's source, compile and link it with one chosen
-compiler and flag set, and call the result directly. This keeps the DaCe-backend competitor and
+NestForge does not call `dace.compile()` for kernels: `nestforge/build/sdfg.py` and
+`toolchain.py` generate the SDFG's source, compile and link it with one chosen compiler and flag
+set, and `arena.py` calls the result directly. This keeps the DaCe-backend competitor and
 the offloaded kernels on the same compiler and flags, so phase 5's timings compare codegen against
 codegen rather than against `CompiledSDFG`'s own marshaling overhead.
 
@@ -34,12 +34,13 @@ finish in time.
 
 ## Static archives and shared objects
 
-`nestforge/build/arena.py` offers two ways to hand a winning kernel to a parent build:
-`archive_objects` bundles one nest's objects into `lib<name>_nest.a`, and `link_shared` links them
-into `lib<name>_nest.so` instead. A `.so` resolves symbols at `dlopen` time and survives DaCe
-sorting the parent's link flags; a static archive does not, so several nests never share one
-archive. `build_winner_archive` recompiles a winning cell's source with its chosen compiler and FP
-mode into a fresh static archive for that purpose.
+`build_archive` in `sdfg.py` is the one archive path: it compiles translation units to objects,
+archives them, and links a shared twin from the archive with `--whole-archive`. Kernel optimization
+(`nestforge/phases/kernel.py`) builds `lib<kernel>.a` from DaCe's frame plus a generated wrapper TU
+that defines the kernel's single `extern "C"` entry (init, run, exit). The twin `lib<kernel>.so`
+exists only for ctypes validation and timing; the parent links the archive through `ExternalCall`.
+Each kernel gets its own archive, since DaCe sorts the parent's link flags and a shared archive
+would lose members.
 
 ## One OpenMP runtime
 

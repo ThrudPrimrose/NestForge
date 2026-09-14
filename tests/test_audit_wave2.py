@@ -4,7 +4,7 @@
 
 Covers the contract/robustness bugs that silently mislead rather than crash -- ``can_fuse`` disagreeing
 with ``enumerate_fusions``, a read view mutating session state, a documented FP level crashing flag
-composition, an auto-par lane reporting parallel without verifying, a runtime linked without an rpath,
+composition, a runtime linked without an rpath,
 a rank>=2 size-1 buffer indexed as a sub-array, and extern-call ABI args with no connector.
 """
 import re
@@ -86,27 +86,13 @@ def test_lane_flags_accepts_every_documented_fp_level():
     # ExternalOptimizer/Proposal document fp_mode as FP_LEVELS, but anything except 'strict-ieee' fell into
     # the REDUCED table and raised KeyError during optimizer construction.
     for level in flags.FP_LEVELS:
-        out, reason = flags.lane_flags("gnu", level, "none", "sequential", "c", 1)
+        out, reason = flags.lane_flags("gnu", level, "none", "c")
         assert out is not None, f"{level} declined: {reason}"
 
 
 def test_lane_flags_declines_an_unknown_fp_mode():
-    out, reason = flags.lane_flags("gnu", "not-a-mode", "none", "sequential", "c", 1)
+    out, reason = flags.lane_flags("gnu", "not-a-mode", "none", "c")
     assert out is None and "unknown fp_mode" in reason  # declines like any unsupported axis, never KeyError
-
-
-def test_autopar_declines_when_the_backend_is_absent():
-    # nvidia/intel used to return their flags UNPROBED, so a compiler that accepts the flag but emits no
-    # parallel loop was still labelled 'auto-par'. Every family now goes through the same probes.
-    for family in ("gnu", "llvm", "nvidia", "intel"):
-        out, reason = flags.autopar_flags(family, 4, compiler="/nonexistent/cc")
-        assert out is None and reason, f"{family} claimed auto-par with no working compiler"
-
-
-def test_autopar_pure_composition_still_works_without_a_compiler():
-    for family in ("gnu", "llvm", "nvidia", "intel"):
-        out, reason = flags.autopar_flags(family, 4, compiler=None)
-        assert out and reason is None  # unprobed composition (for tests/figures) is unchanged
 
 
 def test_openmp_link_flags_carry_an_rpath_for_a_pinned_dir():

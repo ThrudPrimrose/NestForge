@@ -22,9 +22,9 @@ import subprocess
 import numpy as np
 import pytest
 
-from nestforge.build import flags
-from nestforge.build.isolation import (ERROR_CHARS, OMP_PAUSE_MODES, OMP_PAUSE_SOFT, OMP_RUNTIME_SONAMES, pause_openmp_pools,
-                                 run_isolated)
+from nestforge.build.toolchain import OpenMPRuntime, lib_linkable
+from nestforge.build.isolation import (ERROR_CHARS, OMP_PAUSE_MODES, OMP_PAUSE_SOFT, OMP_RUNTIME_SONAMES,
+                                       pause_openmp_pools, run_isolated)
 
 OMP_SRC = """#include <omp.h>
 void kern(double *a, int n) {
@@ -60,29 +60,27 @@ def thread_count():
 def build(tmp_path, runtime):
     """A kernel with an OpenMP region, linked against ``runtime`` ("gomp" or "omp").
 
-    libomp is located with the SAME helper the product uses (:func:`~nestforge.perf.flags.runtime_dir`)
-    rather than a bare ``gcc -print-file-name``. That is not a nicety: on the CI runner gcc does not know
-    where libomp lives (libomp-18-dev puts it under /usr/lib/llvm-18/lib, off gcc's path -- the exact
-    split runtime_dir exists to bridge), so the bare probe returns "libomp.so" and a hand-rolled check
-    either wrongly skips or wrongly fails. If runtime_dir cannot find it AND gcc cannot link it, the
-    runtime genuinely is not installed -- a hard requirement missing, which ASSERTS (a red test), never a
-    silent skip (the unit set runs under NESTFORGE_CI_NO_SKIP, where a skip fails the session anyway)."""
+    libomp is pinned with the SAME flags the owned build uses (:meth:`~nestforge.build.toolchain.OpenMPRuntime.
+    link_flags`) rather than a bare ``gcc -print-file-name``. That is not a nicety: on the CI runner gcc does
+    not know where libomp lives (libomp-18-dev puts it under /usr/lib/llvm-18/lib, off gcc's path), so the bare
+    probe returns "libomp.so" and a hand-rolled check either wrongly skips or wrongly fails. If gcc cannot link
+    it, the runtime genuinely is not installed -- a hard requirement missing, which ASSERTS (a red test), never
+    a silent skip (the unit set runs under NESTFORGE_CI_NO_SKIP, where a skip fails the session anyway)."""
     assert shutil.which("gcc"), "gcc is required to build the OpenMP kernel this file's regression needs"
     src = tmp_path / "k.c"
     src.write_text(OMP_SRC)
     so = tmp_path / f"k_{runtime}.so"
     extra = []
-    if runtime != "gomp":  # gcc's default IS libgomp; anything else must be pinned at link
-        lib_dir = flags.runtime_dir(runtime, "gcc")
-        assert lib_dir is not None or flags.lib_linkable(runtime, "gcc"), (
-            f"lib{runtime}.so is a hard requirement of this regression but is not installed / linkable by "
-            f"gcc here -- install it (e.g. libomp-dev); an absent second runtime is a broken env to surface "
-            f"loudly, not a skip to hide behind (the unit set runs under NESTFORGE_CI_NO_SKIP anyway)")
-        search = [f"-L{lib_dir}", f"-Wl,-rpath,{lib_dir}"] if lib_dir else []
-        extra = [*search, f"-Wl,--push-state,--no-as-needed,-l{runtime},--pop-state"]
+    if runtime != "gomp":  # gcc's default IS libgomp; anything else must be pinned at link, after the source
+        assert lib_linkable(
+            runtime,
+            "gcc"), (f"lib{runtime}.so is a hard requirement of this regression but is not installed / linkable by "
+                     f"gcc here -- install it (e.g. libomp-dev); an absent second runtime is a broken env to surface "
+                     f"loudly, not a skip to hide behind (the unit set runs under NESTFORGE_CI_NO_SKIP anyway)")
+        extra = OpenMPRuntime(name=f"lib{runtime}", soname=runtime).link_flags("gcc")
     proc = subprocess.run(
-        ["gcc", "-O2", "-fPIC", "-shared", "-fopenmp", *extra,
-         str(src), "-o", str(so)], capture_output=True, text=True)
+        ["gcc", "-O2", "-fPIC", "-shared", "-fopenmp",
+         str(src), *extra, "-o", str(so)], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr[-800:]
     needed = subprocess.run(["readelf", "-d", str(so)], capture_output=True, text=True).stdout
     # DT_NEEDED may show libomp.so.5 for a libiomp5 request (ABI-compat symlink); accept the resolved one.

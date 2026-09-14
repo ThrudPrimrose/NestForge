@@ -17,4 +17,4 @@ kernel's NumPy reference is the correctness oracle for every implementation.
 | default | DaCe vectorizer + `finalize_for_target(device)` |
 | output | kernel source for phase 5, or a finished `lib<kernel>.a` |
 | code | `nestforge/phases/kernel.py`, `nestforge/build/sdfg.py` |
-| status | planned |
+| status | CPU default implemented (`schedule_kernel`, `build_kernel_library`, `validate_kernel`); GPU waits for offloading |

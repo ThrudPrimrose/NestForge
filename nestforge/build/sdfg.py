@@ -20,7 +20,7 @@ import time
 import warnings
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -29,9 +29,9 @@ from dace.codegen import codegen
 from dace.codegen import compiler as dace_compiler
 from dace.transformation.auto.auto_optimize import set_fast_implementations
 
-from nestforge.build.toolchain import (CXX_STD, DEFAULT_COMPILER, DEFAULT_FLAGS, OpenMPRuntime, Param, VectorMathLib, ar_for,
-                                 ccache_prefix, fastest_linker, fat_lto_flags, parse_params, run, signature,
-                                 support_rpath_flags, usable_openmp)
+from nestforge.build.toolchain import (CXX_STD, DEFAULT_COMPILER, DEFAULT_FLAGS, OpenMPRuntime, Param, VectorMathLib,
+                                       ar_for, ccache_prefix, fastest_linker, fat_lto_flags, parse_params, run,
+                                       signature, support_rpath_flags, usable_openmp)
 
 # TODO(blas): a BLAS/LAPACK axis (openblas/mkl/blis/nvpl/accelerate) the same way -- discovery exists
 # (arena.discover_blas_libraries); missing is threading a chosen BLAS into the link line + a prune step.
@@ -234,19 +234,21 @@ def set_fast_libnodes(sdfg: dace.SDFG) -> None:
     set_fast_implementations(sdfg, dace.dtypes.DeviceType.CPU)
 
 
-def compile(frame: Path, folder: Path, name: str, opts: BuildOptions) -> Tuple[Path, float]:
-    """Compile the generated frame into ``lib<name>.so``; return (path, toolchain wall_seconds only).
-    Two link modes: ``link_external=False`` (monolithic, single TU) or ``=True`` (archive to a static
-    ``.a`` then link via ``--whole-archive``); see the branches below.
+@dataclass(slots=True)
+class BuildCommands:
+    """The argument groups every compile and link of one build shares, resolved before any clock starts."""
+    compiler: str
+    ccache: List[str]
+    cflags: List[str]  # resolved flags minus the link-only -shared
+    compile_extra: List[str]  # OpenMP + veclib compile halves, then the include path
+    ld: List[str]
+    link_libs: List[str]  # after the object: ld resolves left to right
 
-    Compiling and linking are always separate commands: a compile is cacheable, a link is not, and ccache
-    declines any command that does both."""
+
+def build_commands(folder: Path, opts: BuildOptions) -> BuildCommands:
+    """Resolve the compiler, OpenMP runtime, veclib, linker and cache for one build of ``folder``."""
     compiler = opts.compiler
-    flags = opts.resolved_flags()
-    inc = include_flags(folder)
-    # OpenMP is REQUIRED for CPU: dace emits `#pragma omp parallel for` for every multicore map, and a
-    # build without it drops the pragma and runs the schedule serially. An explicit opts.openmp pins the
-    # runtime; otherwise resolve one (never a bare -fopenmp -- see toolchain.usable_openmp).
+    # dace emits `#pragma omp parallel for` for every multicore map; a build without OpenMP runs it serially.
     omp = opts.openmp or usable_openmp(compiler)
     if omp is None:
         warnings.warn(f"{Path(compiler).name} can link no OpenMP runtime; building SERIAL -- any parallel "
@@ -255,52 +257,54 @@ def compile(frame: Path, folder: Path, name: str, opts: BuildOptions) -> Tuple[P
     omp_l = omp.link_flags(compiler) if omp else []
     vec_c = opts.veclib.compile_flags(compiler) if opts.veclib else []
     vec_l = opts.veclib.link_flags(compiler) if opts.veclib else []
-    blas_l = list(opts.blas_link or [])  # link the chosen BLAS (fast_libnodes)
-    extra_l = list(opts.extra_link or [])  # extern nest-variant libs (differential swap), after the frame
-    # The DRIVER's own auto-linked support libs (icx: libsvml/libimf/libirng/libintlc) sit off the loader
-    # path with no RUNPATH of their own. Without this the link succeeds and the ctypes.CDLL below raises
-    # "libsvml.so: cannot open shared object file" -- the whole intel lane, dead at dlopen.
-    sup_l = list(support_rpath_flags(compiler))
-    # AUTO-detected compiler cache. Only the COMPILE steps are cached (a link is not cacheable), and any
-    # path that reports compile_seconds as a measurement passes use_ccache=False.
-    cc = ccache_prefix(opts.use_ccache)
+    # icx auto-links libsvml/libimf off the loader path with no RUNPATH; without this dlopen fails.
+    libs = [*omp_l, *vec_l, *(opts.blas_link or []), *(opts.extra_link or []), *support_rpath_flags(compiler)]
+    return BuildCommands(compiler=compiler,
+                         ccache=ccache_prefix(opts.use_ccache),
+                         cflags=[f for f in opts.resolved_flags() if f != "-shared"],
+                         compile_extra=[*omp_c, *vec_c, *include_flags(folder)],
+                         ld=fastest_linker(compiler),
+                         link_libs=libs)
+
+
+def build_archive(sources: Sequence[Path], folder: Path, archive: Path, shared: Path, opts: BuildOptions) -> float:
+    """Compile ``sources`` to ``<archive dir>/<stem>.o`` against ``folder``'s headers, archive them, and link
+    ``shared`` from the whole archive; returns toolchain wall seconds."""
+    cmds = build_commands(folder, opts)
+    lto_c = fat_lto_flags(opts.compiler) if opts.lto else []
+    ar = ar_for(opts.compiler)
+    objs = [archive.parent / f"{src.stem}.o" for src in sources]
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    if archive.exists():
+        archive.unlink()  # ar r APPENDS; start clean so a rebuild doesn't stack stale members
+    t0 = time.perf_counter()
+    for src, obj in zip(sources, objs):
+        run([*cmds.ccache, cmds.compiler, *cmds.cflags, *lto_c, "-c", *cmds.compile_extra, str(src), "-o", str(obj)])
+    run([ar, "rcs", str(archive), *[str(obj) for obj in objs]])
+    # link the objects' real code (not -flto, so no compile flags: clang warns on unused FP ones)
+    run([
+        cmds.compiler, "-shared", *cmds.ld, "-Wl,--export-dynamic", "-Wl,--whole-archive",
+        str(archive), "-Wl,--no-whole-archive", *cmds.link_libs, "-o",
+        str(shared)
+    ])
+    return time.perf_counter() - t0
+
+
+def compile(frame: Path, folder: Path, name: str, opts: BuildOptions) -> Tuple[Path, float]:
+    """Compile the generated frame into ``lib<name>.so``; return (path, toolchain wall_seconds only).
+    ``link_external=False`` builds one TU monolithically; ``True`` goes through :func:`build_archive`.
+
+    Compiling and linking are always separate commands: a compile is cacheable, a link is not, and ccache
+    declines any command that does both."""
     so = folder / f"lib{name}.so"
-    cflags = [f for f in flags if f != "-shared"]  # -shared is a link-only flag; drop it for any -c step
+    if opts.link_external:
+        return so, build_archive([frame], folder, folder / f"lib{name}_nest.a", so, opts)
+    cmds = build_commands(folder, opts)
     obj = folder / f"{name}.o"
     lto_f = ["-flto"] if opts.lto else []
-    ld = fastest_linker(compiler)  # probe before the clock: a linker choice is not toolchain work
-
-    if not opts.link_external:
-        # libs go AFTER the object: ld resolves left-to-right, a -l before it contributes nothing
-        compile_cmd = [*cc, compiler, *cflags, *lto_f, "-c", *omp_c, *vec_c, *inc, str(frame), "-o", str(obj)]
-        link_cmd = [
-            compiler, "-shared", *cflags, *lto_f, *ld,
-            str(obj), *omp_l, *vec_l, *blas_l, *extra_l, *sup_l, "-o",
-            str(so)
-        ]
-        t0 = time.perf_counter()
-        run(compile_cmd)
-        run(link_cmd)
-    else:
-        # external static-node-library path; resolve non-toolchain work (LTO probe, archiver, linker,
-        # stale-archive cleanup) BEFORE the clock starts, so compile_seconds is compile+archive+link only
-        lto_c = fat_lto_flags(compiler) if opts.lto else []
-        ar = ar_for(compiler)
-        archive = folder / f"lib{name}_nest.a"
-        if archive.exists():
-            archive.unlink()  # ar r APPENDS; start clean so a rebuild doesn't stack stale members
-        compile_cmd = [*cc, compiler, *cflags, *lto_c, "-c", *omp_c, *vec_c, *inc, str(frame), "-o", str(obj)]
-        ar_cmd = [ar, "rcs", str(archive), str(obj)]
-        # link from the object's REAL code (NOT -flto) so the entry points survive + export
-        link_cmd = [
-            compiler, "-shared", *cflags, *ld, "-Wl,--export-dynamic", "-Wl,--whole-archive",
-            str(archive), "-Wl,--no-whole-archive", *omp_l, *vec_l, *blas_l, *extra_l, *sup_l, "-o",
-            str(so)
-        ]
-        t0 = time.perf_counter()
-        run(compile_cmd)
-        run(ar_cmd)
-        run(link_cmd)
+    t0 = time.perf_counter()
+    run([*cmds.ccache, cmds.compiler, *cmds.cflags, *lto_f, "-c", *cmds.compile_extra, str(frame), "-o", str(obj)])
+    run([cmds.compiler, "-shared", *cmds.cflags, *lto_f, *cmds.ld, str(obj), *cmds.link_libs, "-o", str(so)])
     return so, time.perf_counter() - t0
 
 
