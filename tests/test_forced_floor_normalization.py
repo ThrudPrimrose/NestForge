@@ -45,7 +45,8 @@ def floors_in(sdfg):
 def test_the_detector_can_actually_fail():
     """Guard against a vacuous suite: floors_in must SEE a floor when one is present."""
     sdfg = dace.SDFG("injected")
-    sdfg.add_array("a", [dace.symbolic.symbol("N") // 2], dace.float64)
+    # Built explicitly: dace symbols now floor-divide to int_floor, which is not the residue under test.
+    sdfg.add_array("a", [sympy.floor(dace.symbolic.symbol("N") / 2)], dace.float64)
     assert floors_in(sdfg), "floors_in reports nothing on an SDFG that provably holds a floor"
 
 
