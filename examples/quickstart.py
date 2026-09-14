@@ -52,6 +52,9 @@ def run_phases_0_to_3(session: Session, out: Path) -> list[dict]:
     save(session, out, "2-define-scopes")
     kernels = ", ".join(f"{k['name']} (reads {', '.join(k['reads'])}; writes {', '.join(k['writes'])})" for k in scopes)
     print(f"2 define scopes     {len(scopes)} kernel(s): {kernels}; {nests(session)} left")
+    deps = session.kernel_graph().lines()
+    (out / "kernel_deps.txt").write_text("\n".join(deps) + "\n")
+    print("\n".join(f"  {line}" for line in deps))
     placement = session.offload()
     if session.targets.gpu:
         save(session, out, "3-offload")

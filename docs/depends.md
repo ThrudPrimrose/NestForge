@@ -37,6 +37,16 @@ and the binding edge itself moves no data.
 - Refused with `UnsupportedProgram`: `Reference` containers, a view that binds no container, an
   `ExternalCall` inside a nested SDFG, an `ExternalCall` without a manifest.
 
+## Session
+
+- `kernel_graph()`: the graph, computed once per epoch.
+- `list_kernels()`: per kernel its id, device (after phase 3), inputs, outputs, symbols, `depends`
+  (`arg -> producer labels`) and `carried` (`arg -> loop labels`).
+- `describe(deps=True)`: each kernel's line under its row in the tree.
+- `define_scopes()` and `offload()` write `<work_dir>/kernel_deps/e<epoch>.json`; nothing reads it back.
+- `offload()` also returns `transfers` (`phases/offload.py`): every edge whose producer and consumer sit
+  in different memory spaces, beside the `copies` phase 3 inserted.
+
 ## Output
 
 `KernelGraph.lines()` prints one line per kernel in program order, then `exit:`. `to_json()` is

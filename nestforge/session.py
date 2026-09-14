@@ -8,8 +8,10 @@ epoch, so an id from before it raises :class:`StaleHandle` instead of acting on 
 
 from __future__ import annotations
 
+import json
 import re
 import tempfile
+from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
@@ -18,7 +20,9 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 
 from nestforge.corpus.translate import Prepared, emit_sources, prepare
+from nestforge.ir.depends import OUTPUT_PREFIX, KernelGraph, kernel_dependencies
 from nestforge.ir.extract import Boundary, detach, extract_map_nest, find_state_of_node
+from nestforge.ir.libnode import ExternalCall
 from nestforge.ir.introspect import describe_graph, kernel_body, kernel_source, nest_reads_writes
 from nestforge.phases.feedback import run_feedback_loop
 from nestforge.phases.kernel import (
@@ -30,7 +34,7 @@ from nestforge.phases.kernel import (
     use_kernel_library,
 )
 from nestforge.phases.normalize import Targets, normalize
-from nestforge.phases.offload import offload
+from nestforge.phases.offload import external_calls, offload, transfers
 from nestforge.phases.schedule import (
     FissionMove,
     FusionMove,
@@ -67,7 +71,18 @@ class StaleHandle(KeyError):
 class Session:
     """Owner of one program SDFG and the ids callers drive it through."""
 
-    __slots__ = ("sdfg", "name", "targets", "epoch", "handles", "work_dir", "prepared", "kernel_sources")
+    __slots__ = (
+        "sdfg",
+        "name",
+        "targets",
+        "epoch",
+        "handles",
+        "work_dir",
+        "prepared",
+        "kernel_sources",
+        "kernel_deps",
+        "devices",
+    )
 
     def __init__(
         self,
@@ -84,6 +99,9 @@ class Session:
         self.work_dir = Path(work_dir) if work_dir else Path(tempfile.mkdtemp(prefix="nfsession_"))
         self.prepared: Dict[str, Prepared] = {}
         self.kernel_sources: Dict[str, KernelSource] = {}
+        self.kernel_deps: Optional[KernelGraph] = None
+        # phase 3's placement outlives its epoch: the device lives on the kernel node
+        self.devices: Dict[str, str] = {}
 
     # Ids
 
@@ -110,6 +128,7 @@ class Session:
         self.handles = {}
         self.prepared = {}
         self.kernel_sources = {}
+        self.kernel_deps = None
 
     # Phase 0: normalize
 
@@ -121,11 +140,20 @@ class Session:
 
     # Phase 1: inter-kernel schedule
 
-    def describe(self, bodies: bool = False, metrics: bool = False) -> str:
-        """The program as a text tree; nest lines carry :meth:`can_fuse` ids, and scope metrics if ``metrics``."""
+    def describe(self, bodies: bool = False, metrics: bool = False, deps: bool = False) -> str:
+        """The program as a text tree; nest lines carry :meth:`can_fuse` ids, scope metrics if ``metrics``, and each
+        kernel row its :meth:`kernel_graph` line underneath if ``deps``."""
         return describe_graph(
-            self.sdfg, handle=self.tree_handle, bodies=bodies, metrics=self.metrics_suffix if metrics else None
+            self.sdfg,
+            handle=self.tree_handle,
+            bodies=bodies,
+            metrics=self.metrics_suffix if metrics else None,
+            notes=self.deps_line if deps else None,
         )
+
+    def deps_line(self, node: nodes.LibraryNode) -> Optional[str]:
+        graph = self.kernel_graph()
+        return graph.line(node.label) if node.label in graph.kernels else None
 
     def metrics_suffix(self, entry: nodes.MapEntry) -> str:
         return scope_metrics(self.sdfg, entry).suffix()
@@ -262,7 +290,7 @@ class Session:
         lowered = lower_nests_to_external_call(self.sdfg)
         if lowered:
             self.bump()
-        return [
+        kernels = [
             {
                 "id": self.mint("kernel", (ext, boundary)),
                 "name": ext.name,
@@ -272,6 +300,43 @@ class Session:
             }
             for ext, boundary in lowered
         ]
+        self.save_kernel_graph()
+        return kernels
+
+    def kernel_graph(self) -> KernelGraph:
+        """What can reach every kernel argument and program output (:func:`kernel_dependencies`), once per epoch."""
+        if self.kernel_deps is None:
+            self.kernel_deps = kernel_dependencies(self.sdfg)
+        return self.kernel_deps
+
+    def save_kernel_graph(self) -> str:
+        """Write :meth:`kernel_graph` to ``<work_dir>/kernel_deps/e<epoch>.json``, byte-stable; returns the path."""
+        path = self.work_dir / "kernel_deps" / f"e{self.epoch}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.kernel_graph().to_json(), indent=2, sort_keys=True) + "\n")
+        return str(path)
+
+    def list_kernels(self) -> List[dict]:
+        """Every kernel with an id, its device once phase 3 placed it, its arguments, the producer labels reaching
+        each argument (``depends``), and the loops a reaching value crossed (``carried``)."""
+        graph = self.kernel_graph()
+        calls = {ext.name: ext for ext in external_calls(self.sdfg)}
+        lowered = {id(obj[0]): obj for hid, obj in self.handles.items() if hid.split(":", 2)[1] == "kernel"}
+        return [self.kernel_entry(graph, calls[name], lowered) for name in graph.kernels]
+
+    def kernel_entry(self, graph: KernelGraph, ext: ExternalCall, lowered: Dict[int, tuple]) -> dict:
+        arguments = graph.arguments(ext.name)
+        return {
+            # the handle define_scopes minted, so the id drives phases 4 and 5 too
+            "id": self.mint("kernel", lowered.get(id(ext), (ext, None))),
+            "name": ext.name,
+            "device": self.devices.get(ext.name),
+            "inputs": [edge.arg for edge in arguments if edge.role == "input"],
+            "outputs": sorted(conn.removeprefix(OUTPUT_PREFIX) for conn in ext.out_connectors),
+            "symbols": [edge.arg for edge in arguments if edge.role == "symbol"],
+            "depends": {edge.arg: edge.labels() for edge in arguments},
+            "carried": {edge.arg: edge.loops() for edge in arguments if edge.loops()},
+        }
 
     def kernel_boundary(self, kernel_id: str) -> dict:
         """The kernel's interface; ``boundary_order`` is the argument order a library must accept."""
@@ -304,11 +369,14 @@ class Session:
         if self.targets.gpu:
             self.bump()
             kernels = [(self.mint("kernel", obj), obj) for _, obj in kernels]
+        self.devices = dict(placement.devices)
+        self.save_kernel_graph()
         return {
             "kernels": [
                 {"id": hid, "name": ext.name, "device": placement.devices[ext.name]} for hid, (ext, _) in kernels
             ],
             "copies": [list(pair) for pair in placement.copies],
+            "transfers": list(map(asdict, transfers(self.kernel_graph(), placement.devices))),
         }
 
     # Phase 4: optimize kernels

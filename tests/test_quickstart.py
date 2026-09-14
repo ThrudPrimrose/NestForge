@@ -80,6 +80,15 @@ def test_cpu_quickstart_prints_one_line_per_phase_and_saves_every_artifact(quick
     assert len(linking_frames) == 1
 
 
+def test_cpu_quickstart_prints_and_saves_the_kernel_dependency_lines(quickstart_run):
+    out, stdout = quickstart_run
+
+    lines = (out / "kernel_deps.txt").read_text().splitlines()
+
+    assert lines[0].startswith("extcall_0: ")
+    assert all(f"  {line}" in stdout.splitlines() for line in lines)
+
+
 def test_cpu_quickstart_shows_four_loop_nests_becoming_one_map_in_its_saved_trees(quickstart_run):
     out, stdout = quickstart_run
 

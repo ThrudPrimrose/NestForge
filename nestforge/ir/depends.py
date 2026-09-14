@@ -85,6 +85,14 @@ class ArgEdge:
         via = " via " + "; ".join(f'"{text}"' for text in self.via) if self.via else ""
         return f"{self.arg} <- {producers}{via}"
 
+    def labels(self) -> List[str]:
+        """The distinct producer labels, carried or not, in producer order."""
+        return list(dict.fromkeys(reach.producer.label() for reach in self.producers))
+
+    def loops(self) -> List[str]:
+        """The distinct loops whose back edge a reaching value crossed."""
+        return list(dict.fromkeys(loop for reach in self.producers for loop in reach.carried_by))
+
     def to_json(self) -> dict:
         """A plain, key-ordered dictionary."""
         producers = [
@@ -121,11 +129,17 @@ class KernelGraph:
             if any(reach.producer.kind == "kernel" and reach.producer.name == kernel for reach in edge.producers)
         )
 
+    def arguments(self, kernel: str) -> Tuple[ArgEdge, ...]:
+        """The argument edges of ``kernel``, inputs then symbols."""
+        return tuple(edge for edge in self.edges if edge.consumer == kernel)
+
+    def line(self, kernel: str) -> str:
+        """``kernel: arg <- producers, ...``."""
+        return f"{kernel}: " + ", ".join(edge.text() for edge in self.arguments(kernel))
+
     def lines(self) -> List[str]:
-        """One ``kernel: arg <- producers, ...`` line per kernel, then one ``exit:`` line."""
-        out = [
-            f"{kernel}: " + ", ".join(e.text() for e in self.edges if e.consumer == kernel) for kernel in self.kernels
-        ]
+        """One :meth:`line` per kernel, then one ``exit:`` line."""
+        out = [self.line(kernel) for kernel in self.kernels]
         if self.exits:
             out.append("exit: " + ", ".join(edge.text() for edge in self.exits))
         return out

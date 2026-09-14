@@ -13,6 +13,7 @@ from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import nodes
 from dace.transformation.passes.offloading.offload_to_accelerator import OffloadToAccelerator
 
+from nestforge.ir.depends import ArgEdge, KernelGraph
 from nestforge.ir.libnode import ExternalCall
 from nestforge.phases.normalize import Targets
 
@@ -56,3 +57,36 @@ def offload(sdfg: dace.SDFG, targets: Targets) -> Placement:
         OffloadToAccelerator().apply_pass(sdfg, {})
     devices = {ext.name: kernel_device(ext) for ext in external_calls(sdfg)}
     return Placement(devices, tuple(device_copies(sdfg)))
+
+
+@dataclass(frozen=True, slots=True)
+class Transfer:
+    """A value crossing memory spaces on one dependency edge: ``producer`` feeds ``consumer``'s ``arg``."""
+
+    direction: str
+    arg: str
+    producer: str
+    consumer: str
+
+
+def edge_transfers(edge: ArgEdge, consumer_device: str, devices: Dict[str, str]) -> List[Transfer]:
+    moves: List[Transfer] = []
+    # a producer reaching both carried and not moves once
+    for producer in dict.fromkeys(reach.producer for reach in edge.producers):
+        source_device = devices[producer.name] if producer.kind == "kernel" else "cpu"
+        if source_device != consumer_device:
+            direction = "to_gpu" if consumer_device == "gpu" else "to_host"
+            moves.append(Transfer(direction, edge.arg, producer.label(), edge.consumer))
+    return moves
+
+
+def transfers(graph: KernelGraph, devices: Dict[str, str]) -> List[Transfer]:
+    """Every kernel input and program exit whose producer sits in the other memory space. ``program`` and ``host``
+    producers, and the program exit, are host memory; ``devices`` maps each kernel to ``cpu`` or ``gpu``."""
+    moves: List[Transfer] = []
+    for edge in graph.edges:
+        if edge.role == "input":
+            moves += edge_transfers(edge, devices[edge.consumer], devices)
+    for edge in graph.exits:
+        moves += edge_transfers(edge, "cpu", devices)
+    return moves
