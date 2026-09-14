@@ -1,10 +1,9 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Compile-free unit tests for the perf/arena plumbing: signature parsing and FP-precision x cost-model
+"""Compile-free unit tests for the build/arena plumbing: signature parsing and FP-precision x cost-model
 flag composition -- pure logic on synthetic inputs, so no compiler needed.
 """
 import ctypes
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +15,6 @@ from nestforge.corpus import tsvc
 from nestforge.build.isolation import run_isolated
 from nestforge.build import flags
 from nestforge.build import harness
-from nestforge.perf import tsvc_full
 
 
 # --- native-baseline signature parsing (tsvc.native_signature) ----------------------------------------
@@ -114,73 +112,6 @@ def test_lane_flags_threads_veclib_and_rejects_incompatible():
     assert r is None and "-fveclib=libmvec" in ok and any("-lsleefgnuabi" in a for a in ok)
     bad, reason = flags.lane_flags("gnu", "default-fp", "default", "sequential", "c", 4, compiler="g++", veclib="svml")
     assert bad is None and "incompatible" in reason  # unsupported cell recorded, never silently emitted
-
-
-def test_source_has_math_gates_the_veclib_axis():
-    from nestforge.perf import tsvc_full
-    assert tsvc_full.source_has_math("y[i] = sin(x[i]) + 1.0;")
-    assert tsvc_full.source_has_math("z = pow(a, b);")
-    assert not tsvc_full.source_has_math("c[i] = a[i] + b[i] * 2.0;")  # arithmetic-only nest -> no veclib
-
-
-def test_veclibs_for_gates_on_math_and_compatibility():
-    from nestforge.perf import tsvc_full
-    # veclibs_for takes the PRECOMPUTED per-lang has_math flag (source scanned once at ctx-build time).
-    assert tsvc_full.veclibs_for(True, ("none", "libmvec"), "gcc") == ("none", "libmvec")  # math + compatible
-    assert tsvc_full.veclibs_for(True, ("none", "sleef"), "g++") == ("none", "sleef")  # gcc DOES sleef (gnuabi)
-    assert tsvc_full.veclibs_for(True, ("none", "svml"), "g++") == ("none", )  # svml incompatible w/ gcc
-    assert tsvc_full.veclibs_for(False, ("none", "libmvec"), "gcc") == ("none", )  # no math -> none only
-
-
-def test_resolve_veclibs_spec_and_auto():
-    from nestforge.perf import tsvc_full
-    assert tsvc_full.resolve_veclibs(["none"]) == ("none", )
-    assert tsvc_full.resolve_veclibs(["libmvec"]) == ("none", "libmvec")  # 'none' ensured present
-    assert tsvc_full.resolve_veclibs(["sleef", "libmvec"])[0] == "none"
-    auto = tsvc_full.resolve_veclibs(["auto"])  # none + characterized winner, or none if nothing installed
-    assert auto[0] == "none" and 1 <= len(auto) <= 2
-
-
-@pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc not on PATH")
-def test_enumerate_cells_gates_veclib_cells_by_nest_math(tmp_path):
-    """The veclib axis fans lane-3 cells off the PRECOMPUTED per-lang ``has_math`` flag: a math nest gets
-    both none and libmvec timing cells, a plain-arithmetic nest gets none only. Dummy paths -- no source I/O."""
-    from nestforge.perf import tsvc_full
-    from nestforge.build.toolchain import discover_toolchains
-    tcs = discover_toolchains("gcc")
-    axes = {
-        "opt_mode": "simplify-parallel",
-        "parallelism": ["sequential"],
-        "cost_models": ["default"],
-        "fp_modes": ["default-fp"],
-        "gate": False,
-        "matrix_preset": "lean",
-        "veclibs": ("none", "libmvec")
-    }
-    pend, _ = tsvc_full.enumerate_cells(
-        {
-            "lang_src": {
-                "c": (Path("m_fp64.c"), ["a", "b"], [None, None])
-            },
-            "has_math": {
-                "c": True
-            },
-            "symbol": "m_fp64",
-            "nest_idx": 0
-        }, tcs, {}, axes, 4, flags.CXX_STD, tmp_path)
-    assert {p.cell.veclib for p in pend if p.cell.role == "timing"} == {"none", "libmvec"}
-    pend2, _ = tsvc_full.enumerate_cells(
-        {
-            "lang_src": {
-                "c": (Path("p_fp64.c"), ["a", "b"], [None, None])
-            },
-            "has_math": {
-                "c": False
-            },
-            "symbol": "p_fp64",
-            "nest_idx": 0
-        }, tcs, {}, axes, 4, flags.CXX_STD, tmp_path)
-    assert {p.cell.veclib for p in pend2 if p.cell.role == "timing"} == {"none"}
 
 
 def test_family_of_maps_labels_to_fp_families():
@@ -335,33 +266,6 @@ def test_rewind_snapshot_writes_through_to_the_bound_buffer():
     assert snapshot[0][0] is a
 
 
-def test_collect_samples_restores_the_snapshot_before_every_rep():
-    """tsvc_full's nest, native and DaCe-cpp lanes all time through collect_samples. Passing no snapshot
-    let each of them measure a decaying buffer -- and the lanes are divided by each other, so the bias did
-    not cancel."""
-    a = np.full(4, 0.25)
-    boundary = FakeBoundary(["a"], inputs=["a"])
-    snapshot = arena.rewind_snapshot(boundary, {"a": a})
-    seen = []
-
-    def fn(*_args):
-        seen.append(a.copy())  # what THIS call was handed
-        a[...] *= 0.25  # in-place decay, the shape of the bug
-
-    tsvc_full.collect_samples(fn, (), reps=3, snapshot=snapshot)
-    assert len(seen) == 4, "warm call plus one per rep"
-    for values in seen:
-        np.testing.assert_array_equal(values, np.full(4, 0.25))
-
-
-def test_collect_samples_without_a_snapshot_still_times_the_reps():
-    """A nest that writes nothing it reads needs no rewind; the default must not become mandatory
-    plumbing for those lanes."""
-    calls = []
-    tsvc_full.collect_samples(lambda *_: calls.append(1), (), reps=3)
-    assert len(calls) == 4 and len(tsvc_full.collect_samples(lambda *_: None, (), reps=3)) == 3
-
-
 def test_the_native_signature_type_set_matches_what_the_arena_can_bind():
     """`native_signature` produces base-type STRINGS that `harness.C_BASE` turns into ctypes types. A type
     accepted by the parser but absent from that mapping would KeyError mid-bind, and one accepted by the
@@ -394,22 +298,6 @@ def test_native_signature_accepts_a_namespace_qualified_type():
     cpp = 'extern "C" void ext_gather_load_d(double* dst, const std::int64_t* __restrict__ idx, int len) {'
     assert tsvc.native_signature(cpp, "ext_gather_load_d") == [("dst", "double", True), ("idx", "int64_t", True),
                                                                ("len", "int", False)]
-
-
-def test_every_foundation_baseline_signature_parses():
-    """The parser's real input is the shipped corpus, and both defects above were invisible to hand-written
-    fixtures. Parse all 245 for real: a kernel whose signature will not parse is one no sweep can measure."""
-    from nestforge.build.harness import native_symbol
-    failed = {}
-    kernels = tsvc.iter_tsvc_kernels(corpus="foundation")
-    assert kernels, "the foundation corpus came back empty; this test would prove nothing"
-    for kernel in kernels:
-        text = kernel.native_cpp.read_text()
-        try:
-            tsvc.native_signature(text, native_symbol(text, kernel.native_symbol))
-        except (LookupError, ValueError) as e:
-            failed[kernel.key] = f"{type(e).__name__}: {e}"
-    assert not failed, f"{len(failed)} of {len(kernels)} baselines do not parse: {sorted(failed)[:10]}"
 
 
 def test_native_signature_does_not_eat_a_name_containing_const():

@@ -4,25 +4,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Dict, Iterator, List, Optional, Type
+from typing import Dict, Iterator, List, Optional, Tuple, Type
+
 import dace
 from dace.sdfg import nodes
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, SDFGState
+from dace.transformation.dataflow.map_fission import MapFission
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.interstate.loop_fusion import LoopFusion as FuseLoops
-from nestforge.ir.extract import find_state_of_node
-from typing import List, Tuple
-from dace.transformation.dataflow.map_fission import MapFission
+from dace.transformation.interstate.state_fusion import StateFusion
+from dace.transformation.passes.canonicalize import canonicalize, stage_labels
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.loop_fission import LoopFission
-from typing import Dict, List, Type
-from dace.sdfg.state import SDFGState
-from dace.transformation.interstate.state_fusion import StateFusion
-from typing import Callable, Dict, List
-from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
-from dace.transformation.interstate import LoopToMap
+
+from nestforge.ir.extract import find_state_of_node
 from nestforge.ir.names import inline_top_level_nsdfgs
+from nestforge.phases.normalize import FUSE_STAGE, Targets
 
 
 @dataclass(slots=True)
@@ -324,62 +322,24 @@ def apply_region_fusion(sdfg: dace.SDFG, move: RegionMove) -> None:
     move.xform.apply_to(sdfg, verify=True, annotate=False, save=False, **move.where)
 
 
-#: A Phase-1 strategy: mutate the SDFG in place to a granularity, returning the step count.
-FusionStrategy = Callable[[dace.SDFG], int]
-
-_REGISTRY: Dict[str, FusionStrategy] = {}
-
-
-def register_fusion_strategy(name: str, fn: FusionStrategy) -> None:
-    _REGISTRY[name] = fn
+def post_fusion_stages(targets: Targets) -> List[str]:
+    """Canonicalization stages after :data:`FUSE_STAGE`; they run once the granularity is chosen."""
+    labels = stage_labels(targets.canon_target)
+    return labels[labels.index(FUSE_STAGE) + 1:]
 
 
-def get_fusion_strategy(name: str) -> FusionStrategy:
-    if name not in _REGISTRY:
-        raise KeyError(f"unknown fusion strategy {name!r}; known: {sorted(_REGISTRY)}")
-    return _REGISTRY[name]
+def full_fusion(sdfg: dace.SDFG, targets: Targets) -> dace.SDFG:
+    """Deterministic phase-1 default: canonicalization's own fusion stage, then the post-fusion stages.
 
-
-def fusion_strategy_names() -> List[str]:
-    return sorted(_REGISTRY)
-
-
-def maximal_fusion(sdfg: dace.SDFG) -> int:
-    """Fuse everything legal: ``LoopToMap`` (loops -> parallel maps where sound) then ``MapFusion``
-    (V+H) to a fixed point, then ``simplify``. The deterministic Phase-1 default -- the maximally-fused
-    baseline granularity the agent fissions down from. Returns the number of transformation steps.
-
-    The map-fusion fixed point is exactly what draining :func:`enumerate_fusions` reaches move-by-move;
-    the batch form here is the deterministic policy, the arm surface the agent's per-move equivalent.
+    :param sdfg: A normalized SDFG (phase 0 output), possibly with re-inlined kernels.
+    :param targets: Picks the canonicalization preset.
+    :returns: The same SDFG, fused.
     """
-    # MapFusion never descends into a NestedSDFG, so inlining is a PRECONDITION of fusing, not cleanup
-    # after it: a nest re-inlined from an ``ExternalCall`` (phase IV) arrives nested, and leaving the
-    # inline to the trailing simplify() fuses nothing while reporting success. Inlining then SPLITS the
-    # nest across states (measured: one state -> five), and horizontal siblings only match inside one
-    # state, so the states it created must be re-fused before fusing maps.
-    steps = inline_top_level_nsdfgs(sdfg)
-    if steps:
-        sdfg.simplify()
-    steps += sdfg.apply_transformations_repeated([LoopToMap]) or 0
-    steps += sdfg.apply_transformations_repeated([MapFusionVertical, MapFusionHorizontal]) or 0
-    sdfg.simplify()
-    return steps
+    # Map fusion never descends into a NestedSDFG, and a kernel re-inlined for feedback arrives nested.
+    inline_top_level_nsdfgs(sdfg)
+    return canonicalize(sdfg, target=targets.canon_target, stages=[FUSE_STAGE, *post_fusion_stages(targets)])
 
 
-register_fusion_strategy("maximal-fusion", maximal_fusion)
-
-__all__ = [
-    "FusionStrategy",
-    "register_fusion_strategy",
-    "get_fusion_strategy",
-    "fusion_strategy_names",
-    "maximal_fusion",
-    # agent per-move surface (re-exported)
-    "FusionMove",
-    "enumerate_fusions",
-    "first_fusion",
-    "apply_fusion",
-    "can_fuse",
-    "fission_to_statements",
-    "map_fission_moves",
-]
+def finish_schedule(sdfg: dace.SDFG, targets: Targets) -> dace.SDFG:
+    """Run the post-fusion stages after a hand-chosen (agent or human) granularity."""
+    return canonicalize(sdfg, target=targets.canon_target, stages=post_fusion_stages(targets))

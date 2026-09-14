@@ -9,9 +9,8 @@ import numpy as np
 import pytest
 
 import dace
-from nestforge.build.sdfg import BuildOptions
-from nestforge.phases.feedback import (FeedbackResult, best_outcome, default_fuse_step, improved, run_feedback_loop)
-from nestforge.optimizers import Outcome, Proposal
+from nestforge.phases.feedback import (FeedbackResult, Outcome, best_outcome, default_fuse_step, improved,
+                                       run_feedback_loop)
 from nestforge.phases.scopes import outer
 
 N = dace.symbol("N")
@@ -27,11 +26,8 @@ def two_nests(a: f64[N], c: f64[N]):
         c[i] = tmp[i] + 1.0
 
 
-BASELINE = Proposal("fb", "dace", opt_mode="simplify-parallel", build=BuildOptions())
-
-
 def oc(median_us: float, ok: bool = True) -> Outcome:
-    return Outcome(proposal=BASELINE, ok=ok, median_us=median_us)
+    return Outcome(name="fb", ok=ok, median_us=median_us)
 
 
 def nest_count(sdfg: dace.SDFG) -> int:

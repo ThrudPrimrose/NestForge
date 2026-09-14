@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The manifest's stated invariant: ``input_args`` IS the emitted numpy kernel's positional signature.
 
-The two are consumed together (``translate.prepare`` / ``prepare_whole_program`` write the numpy source and
-the manifest side by side), and the translator derives its C parameter list -- which names are array
-pointers, which are scalars -- by walking ``input_args``. A name in the numpy signature but missing from
-``input_args`` is therefore never declared, and the emitted C references an undeclared identifier.
+The two are consumed together (``translate.prepare`` writes the numpy source and the manifest side by
+side), and the translator derives its C parameter list -- which names are array pointers, which are
+scalars -- by walking ``input_args``. A name in the numpy signature but missing from ``input_args`` is
+therefore never declared, and the emitted C references an undeclared identifier.
 
 Scratch transients are the case that breaks the tie: the C-style memory model makes every non-scalar
 transient a caller-allocated parameter, so it sits in the numpy signature between the outputs and the size
@@ -19,7 +19,7 @@ import dace
 
 from nestforge.ir.emit_numpy import scratch_arrays, sdfg_to_numpy
 from nestforge.ir.emit_yaml import manifest_dict
-from nestforge.whole_program import whole_program_boundary
+from nestforge.ir.extract import whole_program_boundary
 
 N = dace.symbol("N")
 
