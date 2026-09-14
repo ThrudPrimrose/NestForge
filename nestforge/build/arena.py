@@ -5,9 +5,7 @@ NumPy oracle, the FP-rung gate, and the bind-once / rewind-per-rep ctypes call."
 from __future__ import annotations
 
 import ctypes
-import os
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -16,7 +14,6 @@ import numpy as np
 import dace
 from dace import symbolic
 
-from nestforge.build.toolchain import ldconfig_output
 from nestforge.build import flags
 from nestforge.ir.emit_numpy import load_emitted, maxsize_loop_scratch, scratch_arrays
 from nestforge.ir.extract import Boundary
@@ -33,53 +30,6 @@ CTYPE = {
     "int32": ctypes.c_int32,
     "bool": ctypes.c_bool
 }
-
-
-@dataclass(slots=True)
-class BlasBackend:
-    """An installed BLAS implementation and the link flags that select it."""
-    name: str
-    link_flags: List[str]
-
-
-#: BLAS backend -> candidate ``lib<soname>.so`` names, most specific first.
-_BLAS_SONAMES = {
-    "openblas": ["openblas"],
-    "blis": ["blis"],
-    "atlas": ["tatlas", "satlas"],
-    "mkl": ["mkl_rt"],
-    "blas": ["blas"],
-}
-
-
-def ldconfig_sonames() -> set:
-    out = ldconfig_output()
-    names = set()
-    for line in out.splitlines():
-        token = line.strip().split(" ", 1)[0]
-        if token.startswith("lib") and ".so" in token:
-            names.add(token[3:token.index(".so")])
-    return names
-
-
-def discover_blas_libraries() -> Dict[str, BlasBackend]:
-    """Discover installed BLAS backends (OpenBLAS/MKL/BLIS/ATLAS/netlib) and their link flags."""
-    sonames = ldconfig_sonames()
-    found: Dict[str, BlasBackend] = {}
-    for name, candidates in _BLAS_SONAMES.items():
-        for so in candidates:
-            if so in sonames:
-                found[name] = BlasBackend(name, [f"-l{so}"])
-                break
-    mklroot = os.environ.get("MKLROOT")
-    if "mkl" not in found and mklroot:
-        # oneAPI 2024+ puts the libraries directly under lib/; older layouts use lib/intel64.
-        for libdir in (Path(mklroot) / "lib", Path(mklroot) / "lib" / "intel64"):
-            if (libdir / "libmkl_rt.so").exists():
-                # -rpath paired with -L: an MKLROOT install is off the loader path.
-                found["mkl"] = BlasBackend("mkl", [f"-L{libdir}", f"-Wl,-rpath,{libdir}", "-lmkl_rt"])
-                break
-    return found
 
 
 def resolve_shape(shape: Sequence[Any], sizes: Dict[str, int]) -> Tuple[int, ...]:

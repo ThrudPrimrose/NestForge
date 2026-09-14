@@ -1,6 +1,6 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Configuration sweep: build a kernel per compiler x FP mode x cost model x veclib, keep the fastest correct build."""
+"""Configuration sweep: build a kernel per compiler x FP mode x cost model, keep the fastest correct build."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from nestforge.build import flags
 from nestforge.build.arena import make_inputs, run_oracle
 from nestforge.build.dedup import collapse, representatives, variant_key
-from nestforge.build.toolchain import VECTOR_LIBS, Toolchain, vectorlib_installed
+from nestforge.build.toolchain import Toolchain
 from nestforge.corpus.translate import Prepared
 from nestforge.phases.kernel import (KernelSource, KernelVerdict, at_rung, build_kernel_library, failed_verdict,
                                      measure_kernel)
@@ -22,12 +22,11 @@ class Variant:
     compiler: str
     fp_mode: str
     cost_model: str
-    veclib: str
     flags: Tuple[str, ...]
 
     @property
     def label(self) -> str:
-        return f"{Path(self.compiler).name}:{self.fp_mode}:{self.cost_model}:{self.veclib}"
+        return f"{Path(self.compiler).name}:{self.fp_mode}:{self.cost_model}"
 
 
 @dataclass(slots=True)
@@ -53,29 +52,16 @@ class VariantResult:
         return self.winner.archive if self.winner is not None else None
 
 
-def usable_veclibs(compiler: str) -> List[str]:
-    """``none`` plus every vector math library ``compiler`` can target and this machine has installed."""
-    return [
-        "none", *[name for name, lib in VECTOR_LIBS.items() if lib.compatible(compiler) and vectorlib_installed(lib)]
-    ]
-
-
 def enumerate_variants(toolchains: Sequence[Toolchain]) -> List[Variant]:
-    """Every compiler x FP mode x cost model x veclib cell the toolchains support, one per distinct flag set."""
-    variants: Dict[Tuple[str, str, str, Tuple[str, ...]], Variant] = {}
+    """Every compiler x FP mode x cost model cell the toolchains support, one per distinct flag set."""
+    variants: Dict[Tuple[str, str, Tuple[str, ...]], Variant] = {}
     for tc in toolchains:
         if tc.cxx is None:
             continue
-        veclibs = usable_veclibs(tc.cxx)
-        for fp_mode in flags.FP_LEVELS:
-            for cost_model in flags.COST_MODELS:
-                composed, _ = flags.lane_flags(tc.fp_family, fp_mode, cost_model, "c", compiler=tc.cxx)
-                if composed is None:
-                    continue
-                for veclib in veclibs:
-                    # a cost model the family has no knob for composes the same flags: one build, not two
-                    variants.setdefault((tc.cxx, fp_mode, veclib, tuple(composed)),
-                                        Variant(tc.cxx, fp_mode, cost_model, veclib, tuple(composed)))
+        # flag_matrix already dedups a cost model the family has no knob for onto its default flags
+        for fp_mode, cost_model, composed in flags.flag_matrix(tc.fp_family, "c"):
+            variants.setdefault((tc.cxx, fp_mode, tuple(composed)), Variant(tc.cxx, fp_mode, cost_model,
+                                                                            tuple(composed)))
     return list(variants.values())
 
 
@@ -87,8 +73,7 @@ def build_variants(src: KernelSource, variants: Sequence[Variant],
     for index, variant in enumerate(variants):
         cell_id = f"{index}:{variant.label}"
         try:
-            archive = build_kernel_library(src, variant.compiler, list(variant.flags), out_dir / f"v{index}",
-                                           VECTOR_LIBS.get(variant.veclib))
+            archive = build_kernel_library(src, variant.compiler, list(variant.flags), out_dir / f"v{index}")
         except RuntimeError as err:
             cells[cell_id] = VariantCell(variant, failed_verdict(variant.fp_mode, str(err)))
             continue

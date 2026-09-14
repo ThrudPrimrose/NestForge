@@ -20,7 +20,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from nestforge.build.arena import call_native, diff_stats, dtype_floor, make_inputs, rung_atol, run_oracle
 from nestforge.build.isolation import run_isolated
 from nestforge.build.sdfg import BuildOptions, GeneratedProgram, build_archive, generate_program
-from nestforge.build.toolchain import VectorMathLib, parse_params, raw_signature, signature, split_params
+from nestforge.build.toolchain import parse_params, raw_signature, signature, split_params
 from nestforge.corpus.translate import Prepared
 from nestforge.ir.extract import Boundary
 from nestforge.ir.libnode import ExternalCall
@@ -144,14 +144,10 @@ def schedule_kernel(ext: ExternalCall, boundary: Boundary, targets: Targets, out
     return KernelSource(ext.name, program, wrapper, abi_order, boundary)
 
 
-def build_kernel_library(src: KernelSource,
-                         compiler: str,
-                         flags: Optional[List[str]],
-                         out_dir: Path,
-                         veclib: Optional[VectorMathLib] = None) -> Path:
+def build_kernel_library(src: KernelSource, compiler: str, flags: Optional[List[str]], out_dir: Path) -> Path:
     """Build ``<out_dir>/lib<kernel>.a`` from frame and wrapper, plus its shared twin for validation."""
     archive = out_dir / f"lib{src.name}.a"
-    opts = BuildOptions(compiler=compiler, flags=flags, veclib=veclib, link_external=True)
+    opts = BuildOptions(compiler=compiler, flags=flags, link_external=True)
     build_archive([src.program.frame, src.wrapper], src.program.folder, archive, archive.with_suffix(".so"), opts)
     return archive
 

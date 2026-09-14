@@ -1,14 +1,13 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""What the machine's toolchains can actually do: compiler families, OpenMP runtimes, vector-math
-libraries, linkers, ccache, and C-signature parsing. No DaCe. Every answer is discovered rather than
-assumed, and subprocess probes are cached (``typed=True``)."""
+"""What the machine's toolchains can actually do: compiler families, OpenMP runtimes, and
+C-signature parsing. No DaCe. Every answer is discovered rather than assumed, and subprocess probes
+are cached (``typed=True``)."""
 from __future__ import annotations
 
 import ctypes
 import ctypes.util  # a SUBMODULE: `import ctypes` alone does not bind it, and lib_findable needs it
 import functools
-import glob
 import os
 import re
 import shutil
@@ -40,19 +39,17 @@ DEFAULT_FLAGS = ["-O3", "-march=native", f"-std={CXX_STD}", "-fPIC", "-shared"]
 @functools.lru_cache(maxsize=None, typed=True)
 def compiler_family(compiler: str) -> str:
     """OpenMP-relevant compiler family: ``llvm`` (clang/flang, icx/icpx/ifx), ``intel-classic``
-    (icc/icpc/ifort), ``nvidia`` (nvc/nvc++/nvfortran), or ``gnu`` (gcc/gfortran, default)."""
+    (icc/icpc/ifort), or ``gnu`` (gcc/gfortran, default)."""
     b = Path(compiler).name.lower()
     if "clang" in b or "flang" in b or b.startswith(("icx", "icpx", "ifx")):
         return "llvm"
     if b.startswith(("icc", "icpc", "ifort")):
         return "intel-classic"
-    if b.startswith(("nvc", "nvfortran", "pgcc", "pgfortran")):
-        return "nvidia"
     return "gnu"
 
 
-#: OpenMP ABI a family emits -- ``gomp`` (GCC ``GOMP_*``) or ``kmpc`` (LLVM/Intel ``__kmpc_*``, incl. nvc/nvc++).
-_COMPILER_ABI = {"gnu": "gomp", "llvm": "kmpc", "intel-classic": "kmpc", "nvidia": "kmpc"}
+#: OpenMP ABI a family emits -- ``gomp`` (GCC ``GOMP_*``) or ``kmpc`` (LLVM/Intel ``__kmpc_*``).
+_COMPILER_ABI = {"gnu": "gomp", "llvm": "kmpc", "intel-classic": "kmpc"}
 
 #: Runtimes selectable via -fopenmp=<name> on clang/flang/icx; gcc links any runtime explicitly via -l<soname>.
 _LLVM_SELECTABLE = frozenset({"libomp", "libgomp", "libiomp5"})
@@ -70,11 +67,9 @@ class OpenMPRuntime:
     provides: frozenset = frozenset({"kmpc", "gomp"})
 
     def compatible(self, compiler: str) -> bool:
-        """True if ``compiler`` can LINK this runtime: nvidia/intel-classic hard-link their own native
-        runtime only; llvm selects by name from the LLVM-selectable set; gnu links any gomp-ABI runtime."""
+        """True if ``compiler`` can LINK this runtime: intel-classic hard-links its own native runtime
+        only; llvm selects by name from the LLVM-selectable set; gnu links any gomp-ABI runtime."""
         fam = compiler_family(compiler)
-        if fam == "nvidia":
-            return self.name == "libnvomp"
         if fam == "intel-classic":
             return self.name == "libiomp5"
         if fam == "llvm":
@@ -85,10 +80,6 @@ class OpenMPRuntime:
         if self.compatible(compiler):
             return
         fam = compiler_family(compiler)
-        if fam == "nvidia":
-            raise ValueError(f"{Path(compiler).name} (NVIDIA HPC) links OpenMP only through '-mp', which uses its "
-                             f"native libnvomp; it cannot link {self.name}. Use the libnvomp runtime for nvc/nvc++, "
-                             f"or drop the NVIDIA compiler from this runtime's sweep.")
         if fam == "intel-classic":
             raise ValueError(f"{Path(compiler).name} (classic Intel) links OpenMP through '-qopenmp', which uses its "
                              f"native libiomp5; it cannot link {self.name}. Use the libiomp5 runtime for icc/icpc, "
@@ -103,7 +94,7 @@ class OpenMPRuntime:
                              f"Use libomp/libiomp5, or build with gcc (which links {self.name} via -l{self.soname}).")
         raise ValueError(f"{Path(compiler).name} emits the 'gomp' OpenMP ABI, which {self.name} does not implement "
                          f"(it provides {sorted(self.provides)}). Use a gomp-capable runtime "
-                         f"(libomp/libiomp5/libnvomp carry a GOMP-compat layer; libgomp is gomp-only).")
+                         f"(libomp/libiomp5 carry a GOMP-compat layer; libgomp is gomp-only).")
 
     def compile_flags(self, compiler: str) -> List[str]:
         """Flags to compile a translation unit with OpenMP against this runtime."""
@@ -113,8 +104,6 @@ class OpenMPRuntime:
             return [f"-fopenmp={self.name}"]
         if fam == "intel-classic":
             return ["-qopenmp"]
-        if fam == "nvidia":
-            return ["-mp"]  # hard-links native libnvomp; no -fopenmp=<lib> switch
         return ["-fopenmp"]  # gnu: runtime fixed at link, not by this flag
 
     def link_flags(self, compiler: str) -> List[str]:
@@ -129,8 +118,6 @@ class OpenMPRuntime:
             return [f"-fopenmp={self.name}", *libdir]
         if fam == "intel-classic":
             return ["-qopenmp", *libdir]
-        if fam == "nvidia":
-            return ["-mp", *libdir]
         # gnu: link the runtime EXPLICITLY (bare -fopenmp would pull libgomp instead)
         return [*libdir, f"-l{self.soname}"]
 
@@ -146,7 +133,7 @@ def support_rpath_flags(compiler: str) -> Tuple[str, ...]:
     return ("-Wl,-rpath,%s" % found.parent, ) if found else ()
 
 
-#: Ready-made OpenMP runtimes; libomp/libgomp/libiomp5 share the GOMP ABI, libnvomp only via nvc -mp.
+#: Ready-made OpenMP runtimes; libomp/libgomp/libiomp5 share the GOMP ABI.
 LIBOMP = OpenMPRuntime(name="libomp", soname="omp")
 
 LIBGOMP = OpenMPRuntime(name="libgomp", soname="gomp",
@@ -154,10 +141,8 @@ LIBGOMP = OpenMPRuntime(name="libgomp", soname="gomp",
 
 LIBIOMP5 = OpenMPRuntime(name="libiomp5", soname="iomp5")
 
-LIBNVOMP = OpenMPRuntime(name="libnvomp", soname="nvomp")
-
 #: name -> runtime, for a config/CLI knob.
-OPENMP_RUNTIMES = {"libomp": LIBOMP, "libgomp": LIBGOMP, "libiomp5": LIBIOMP5, "libnvomp": LIBNVOMP}
+OPENMP_RUNTIMES = {"libomp": LIBOMP, "libgomp": LIBGOMP, "libiomp5": LIBIOMP5}
 
 
 def env_library_dirs() -> List[str]:
@@ -315,8 +300,7 @@ def lib_findable(soname: str, lib_dir: Optional[str]) -> bool:
 
 
 def runtime_installed(rt: OpenMPRuntime) -> bool:
-    """True if the runtime's shared object can be found; libnvomp lives off the default path, so without
-    a lib_dir it reads as not-installed."""
+    """True if the runtime's shared object can be found."""
     return lib_findable(rt.soname, rt.lib_dir)
 
 
@@ -328,170 +312,9 @@ def usable_openmp(compiler: str) -> Optional[OpenMPRuntime]:
     for rt in OPENMP_RUNTIMES.values():  # deliberately libomp-first
         if not rt.compatible(compiler):
             continue
-        # intel-classic/nvidia hard-link their own runtime through -qopenmp/-mp; there is no -l to resolve.
-        if compiler_family(compiler) in ("intel-classic", "nvidia") or lib_linkable(rt.soname, compiler):
+        # intel-classic hard-links its own runtime through -qopenmp; there is no -l to resolve.
+        if compiler_family(compiler) == "intel-classic" or lib_linkable(rt.soname, compiler):
             return rt
-    return None
-
-
-#: clang/icx -fveclib token per veclib; sleef reuses libmvec's token (x86 has no -fveclib=SLEEF), svml is __svml_*.
-_CLANG_VECLIB = {"sleef": "libmvec", "libmvec": "libmvec", "svml": "SVML"}
-
-#: Intel oneAPI roots holding libsvml (+ libintlc/libimf/libirng), off the default path; globbed for */lib.
-_INTEL_ONEAPI_ROOTS = ("/opt/intel/oneapi/compiler", "/opt/intel/oneapi")
-
-
-@functools.lru_cache(maxsize=None, typed=True)
-def veclib_lib_dir(soname: str, compiler: str) -> Optional[str]:
-    """Directory holding lib<soname> for -L/-rpath, or None on the default path (driver, oneAPI, SLEEF prefix)."""
-    found = driver_lib_path(soname, compiler)
-    if found is not None:
-        return str(found.parent)
-    dirs: List[str] = []
-    for root in _INTEL_ONEAPI_ROOTS:
-        dirs += sorted((str(p) for p in Path(root).glob("*/lib")), reverse=True)
-    prefix = os.environ.get("NF_SLEEF_PREFIX")
-    if prefix:
-        dirs.append(str(Path(prefix) / "lib"))
-    dirs += [str(Path.home() / ".local" / "lib"), "/usr/local/lib"]
-    for d in dirs:
-        if any(Path(d).glob(f"lib{soname}.so*")):
-            return d
-    return None
-
-
-@dataclass(slots=True)
-class VectorMathLib:
-    """SIMD elementary-math library an autovec loop calls (libmvec/sleef emit _ZGV*, svml emits __svml_*)."""
-    name: str
-    soname: Optional[str]  # -l<soname> for the vector symbols (None: toolchain/glibc provides)
-    lib_dir: Optional[str] = None  # explicit -L override; None resolves via veclib_lib_dir
-
-    def compatible(self, compiler: str) -> bool:
-        fam = compiler_family(compiler)
-        if fam == "llvm":  # -fveclib=libmvec (also SLEEF's path) or -fveclib=SVML
-            return self.name in ("libmvec", "sleef", "svml")
-        if fam == "gnu":  # gcc emits _ZGV* under fast-math; libmvec/SLEEF satisfy it
-            return self.name in ("libmvec", "sleef")  # NOT svml: gcc never emits __svml_*
-        if fam == "intel-classic":
-            return self.name == "svml"  # classic icc emits SVML natively
-        return False  # nvidia: uses its own -Mvect
-
-    def check(self, compiler: str) -> None:
-        if not self.compatible(compiler):
-            raise ValueError(f"{Path(compiler).name} ({compiler_family(compiler)}) cannot use the {self.name} "
-                             f"vector math library; try a compatible compiler or a different veclib.")
-
-    def compile_flags(self, compiler: str) -> List[str]:
-        self.check(compiler)
-        if compiler_family(compiler) == "llvm":  # SVML -> __svml_*, else glibc _ZGV*
-            return [f"-fveclib={_CLANG_VECLIB[self.name]}"]
-        return []  # gnu: -ffast-math autovec already emits _ZGV*; intel-classic: SVML native
-
-    def link_flags(self, compiler: str) -> List[str]:
-        self.check(compiler)
-        if not self.soname:
-            return []
-        libdir = self.lib_dir or veclib_lib_dir(self.soname, compiler)
-        search = [f"-L{libdir}", f"-Wl,-rpath,{libdir}"] if libdir else []
-        if self.name == "svml":
-            search.append("-Wl,--disable-new-dtags")  # transitive libintlc needs DT_RPATH, not RUNPATH
-        # pin NEEDED regardless of link-line position (else a veclib -l before the object is dropped)
-        return [*search, f"-Wl,--push-state,--no-as-needed,-l{self.soname},--pop-state"]
-
-
-SLEEF = VectorMathLib(name="sleef", soname="sleefgnuabi")  # GNU-ABI lib, exports _ZGV* symbols
-
-LIBMVEC = VectorMathLib(name="libmvec", soname="mvec")
-
-SVML = VectorMathLib(name="svml", soname="svml")  # Intel SVML runtime
-
-#: name -> vector-math library, for a config/CLI knob.
-VECTOR_LIBS = {"sleef": SLEEF, "libmvec": LIBMVEC, "svml": SVML}
-
-
-def vectorlib_installed(vl: VectorMathLib) -> bool:
-    """True if the vector library is findable; soname-less entries are always present."""
-    if not vl.soname:
-        return True
-    return lib_findable(vl.soname, vl.lib_dir) or veclib_lib_dir(vl.soname, DEFAULT_COMPILER) is not None
-
-
-#: glibc vector-ABI prefixes: ``_ZGV<isa><mask><lanes>v_``. x86 ``b/c/d/e`` = SSE/AVX/AVX2/AVX512,
-#: aarch64 ``n/s`` = NEON/SVE; ``N`` unmasked, ``M`` masked (what ``omp simd`` emits).
-GLIBC_VECTOR_PREFIXES: Tuple[str, ...] = ("_ZGVbN2v_", "_ZGVcN4v_", "_ZGVdN4v_", "_ZGVeN8v_", "_ZGVbM2v_", "_ZGVcM4v_",
-                                          "_ZGVdM4v_", "_ZGVeM8v_", "_ZGVnN2v_", "_ZGVsMxv_")
-
-#: Two-arg elementals: glibc mangles the extra operand as an extra v (_ZGVbN2vv_pow), missing a unary prefix.
-BINARY_VECTOR_OPS: frozenset = frozenset({"pow", "atan2", "hypot", "fmod"})
-
-#: Elementals the veclib probe exercises; a library is only credited for the ones it actually serves.
-VECLIB_PROBE_OPS: Tuple[str, ...] = ("sin", "cos", "pow", "log", "exp", "tan", "atan")
-
-
-def veclib_symbol_candidates(veclib: str, op: str) -> Tuple[str, ...]:
-    """Every packed symbol veclib could emit for op; libmvec/sleef are indistinguishable on purpose (the
-    link line decides who serves the call); SVML suffixes the lane count, so the stem matches as a prefix."""
-    if veclib == "svml":
-        return (f"__svml_{op}", )
-    if veclib in ("libmvec", "sleef"):
-        prefixes = GLIBC_VECTOR_PREFIXES
-        if op in BINARY_VECTOR_OPS:
-            prefixes = tuple(p[:-1] + "v_" for p in prefixes)  # trailing `v_` -> `vv_`
-        return tuple(prefix + op for prefix in prefixes)
-    return ()
-
-
-def nm_symbols(path: str, dynamic_only: bool) -> str:
-    """nm output for path: undefined imports, or exports when dynamic_only; both spellings are tried."""
-    flavours = (["-D", "--defined-only"], ["--defined-only"]) if dynamic_only else (["-u"], ["-Du"])
-    for extra in flavours:
-        try:
-            done = subprocess.run(["nm", *extra, path], capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.SubprocessError):
-            return ""
-        if done.returncode == 0 and done.stdout.strip():
-            return done.stdout
-    return ""
-
-
-def nm_symbol_names(path: str, dynamic_only: bool) -> frozenset:
-    """Symbol names from nm, version suffix stripped (_ZGVdN4v_sin@@GLIBC_2.22 -> _ZGVdN4v_sin)."""
-    names = set()
-    for line in nm_symbols(path, dynamic_only).splitlines():
-        parts = line.split()
-        if len(parts) >= 2:  # a bare ``file.o:`` header has one field
-            names.add(parts[-1].split("@", 1)[0])
-    return frozenset(names)
-
-
-def serves_op(names: frozenset, veclib: str, op: str) -> bool:
-    """Whether ``names`` holds a packed entry point of veclib for op. Whole-name match, not substring
-    (``tan`` matched ``_ZGVdN4v_tanh``); SVML is the exception, so only digits may follow its stem."""
-    if veclib == "svml":
-        stem = f"__svml_{op}"
-        return any(n.startswith(stem) and (len(n) == len(stem) or n[len(stem)].isdigit()) for n in names)
-    return bool(names & frozenset(veclib_symbol_candidates(veclib, op)))
-
-
-def packed_ops_called(veclib: str, obj_path: str, ops: Tuple[str, ...] = VECLIB_PROBE_OPS) -> Tuple[str, ...]:
-    """Which of ``ops`` ``obj_path`` actually calls through ``veclib``'s packed entry points."""
-    names = nm_symbol_names(obj_path, dynamic_only=False)
-    return tuple(op for op in ops if serves_op(names, veclib, op))
-
-
-def veclib_library_path(vl: VectorMathLib, compiler: str) -> Optional[str]:
-    """The library file the link would resolve, so its exports can be inspected."""
-    if not vl.soname:
-        return None
-    found = driver_lib_path(vl.soname, compiler)
-    if found is not None:
-        return str(found)
-    lib_dir = vl.lib_dir or veclib_lib_dir(vl.soname, compiler)
-    if lib_dir:
-        candidates = sorted(Path(lib_dir).glob(f"lib{vl.soname}.so*"))
-        if candidates:
-            return str(candidates[0])
     return None
 
 
@@ -601,15 +424,15 @@ def compiler_version(compiler: str) -> Tuple[int, int]:
     return (0, 0)
 
 
-# whole-toolchain discovery (PATH + spack + vendor install roots); lives here, not a perf driver, so
-# querying "which compilers does this box have" does not drag in a dace import via perf/tsvc_arena
+# whole-toolchain discovery, PATH only; lives here, not a perf driver, so querying "which compilers does
+# this box have" does not drag in a dace import via perf/tsvc_arena
 @dataclass(slots=True)
 class Toolchain:
     """One discovered toolchain family: C compiler, optional C++ compiler, and where it was found."""
     name: str
     cc: str
     cxx: Optional[str]  # None -> no native column
-    source: str  # "path" | "spack"
+    source: str  # always "path"
 
     @property
     def family(self) -> str:
@@ -626,106 +449,19 @@ class Toolchain:
 _FAMILY_EXES = {
     "gcc": ("gcc", "g++"),
     "clang": ("clang", "clang++"),
-    "nvhpc": ("nvc", "nvc++"),
-    "intel": ("icx", "icpx")
+    "intel": ("icx", "icpx"),
 }
 #: user tokens (compiler names/aliases) -> family label.
 _ALIASES = {
     "gcc": "gcc", "g++": "gcc", "gnu": "gcc",
     "clang": "clang", "clang++": "clang", "llvm": "clang",
-    "nvc": "nvhpc", "nvc++": "nvhpc", "nvhpc": "nvhpc", "nvidia": "nvhpc",
     "icx": "intel", "icpx": "intel", "intel": "intel", "oneapi": "intel",
 }  # yapf: disable
 
 
-def spack_bin_dirs() -> List[Path]:
-    """bin dirs of spack-installed gcc/llvm/nvhpc, so an installed-but-unloaded compiler is still discoverable."""
-    if not shutil.which("spack"):
-        return []
-    dirs: List[Path] = []
-    try:
-        out = subprocess.run(["spack", "find", "--paths", "--no-groups"], capture_output=True, text=True,
-                             timeout=25).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) >= 2 and parts[0].split("@")[0] in ("gcc", "llvm", "nvhpc"):
-            bindir = Path(parts[-1]) / "bin"
-            if bindir.is_dir():
-                dirs.append(bindir)
-    return dirs
-
-
-def spack_compiler_bin_dirs() -> List[Path]:
-    """bin dirs of every compiler spack has REGISTERED, distinct from installed packages."""
-    if not shutil.which("spack"):
-        return []
-    try:
-        listing = subprocess.run(["spack", "compiler", "list"], capture_output=True, text=True, timeout=25).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
-    specs = []
-    for line in listing.splitlines():
-        line = line.strip()
-        if not line or line.startswith("==>") or line.startswith("--"):
-            continue
-        specs += [tok for tok in line.split() if "@" in tok]
-    dirs: List[Path] = []
-    for spec in specs[:12]:
-        try:
-            info = subprocess.run(["spack", "compiler", "info", spec], capture_output=True, text=True,
-                                  timeout=15).stdout
-        except (OSError, subprocess.SubprocessError):
-            continue
-        for line in info.splitlines():
-            if "=" not in line:
-                continue
-            path = line.split("=", 1)[1].strip()
-            if path and os.path.isabs(path):
-                d = Path(path).parent
-                if d.is_dir() and d not in dirs:
-                    dirs.append(d)
-    return dirs
-
-
-#: Install roots of vendor toolchains off PATH; NF_EXTRA_COMPILER_DIRS (colon-separated) prepends a site prefix.
-_VENDOR_COMPILER_GLOBS = (
-    "/opt/intel/oneapi/compiler/*/bin",  # icx/icpx/ifx; NOT 'latest' -- can point at an ifx-only version
-    "/opt/nvidia/hpc_sdk/Linux_x86_64/*/compilers/bin",  # nvc / nvc++ / nvfortran
-)
-
-
-def vendor_compiler_bin_dirs() -> List[Path]:
-    """bin dirs of vendor toolchains at their default location but not on PATH (Intel oneAPI, NVIDIA
-    HPC). setvars.sh is deliberately not sourced: the arena dlopens libraries in-process, so a shell
-    LD_LIBRARY_PATH would not reach the loader (rpath is baked in instead). Newest version first."""
-    dirs: List[Path] = []
-    for d in os.environ.get("NF_EXTRA_COMPILER_DIRS", "").split(os.pathsep):
-        p = Path(d)
-        if d and p.is_dir():
-            dirs.append(p)
-    for pattern in _VENDOR_COMPILER_GLOBS:
-        for d in sorted((Path(x) for x in glob.glob(pattern)), reverse=True):
-            if d.is_dir() and d not in dirs:
-                dirs.append(d)
-    return dirs
-
-
-def which_on_path(exe: str, extra_dirs: List[Path]) -> Optional[str]:
-    """exe on PATH, else under one of extra_dirs (the spack + vendor install bins)."""
-    found = shutil.which(exe)
-    if found:
-        return found
-    for d in extra_dirs:
-        cand = d / exe
-        if cand.is_file() and os.access(cand, os.X_OK):
-            return str(cand)
-    return None
-
-
 def discover_toolchains(requested: str = "auto") -> List[Toolchain]:
-    """Discover toolchain families ("auto"/"all" -> gcc/clang/nvhpc); C compiler required, C++ optional."""
+    """Discover toolchain families on PATH ("auto"/"all" -> gcc/clang/intel); C compiler required, C++
+    optional."""
     tokens = list(_FAMILY_EXES) if requested.strip() in ("", "auto", "all") else requested.split()
     families: List[str] = []
     for t in tokens:
@@ -734,24 +470,17 @@ def discover_toolchains(requested: str = "auto") -> List[Toolchain]:
             warnings.warn(f"unknown compiler token {t!r}; known: {sorted(_ALIASES)}")
         elif fam not in families:
             families.append(fam)
-    # installed AND registered: a spack-default host may register a compiler outside `spack find`'s prefix
-    extra_dirs = spack_bin_dirs()
-    for d in spack_compiler_bin_dirs() + vendor_compiler_bin_dirs():
-        if d not in extra_dirs:
-            extra_dirs.append(d)
     out: List[Toolchain] = []
     for fam in families:
         cc_exe, cxx_exe = _FAMILY_EXES[fam]
-        cc = which_on_path(cc_exe, extra_dirs)
+        cc = shutil.which(cc_exe)
         if cc is None:
-            warnings.warn(f"{fam}: C compiler {cc_exe!r} not found (PATH, spack or vendor default); skipping "
-                          f"this family")
+            warnings.warn(f"{fam}: C compiler {cc_exe!r} not found on PATH; skipping this family")
             continue
-        cxx = which_on_path(cxx_exe, extra_dirs)
+        cxx = shutil.which(cxx_exe)
         if cxx is None:
             warnings.warn(f"{fam}: C++ compiler {cxx_exe!r} not found; native-baseline column disabled for {fam}")
-        source = "path" if shutil.which(cc_exe) else "vendor/spack"
-        out.append(Toolchain(name=fam, cc=cc, cxx=cxx, source=source))
+        out.append(Toolchain(name=fam, cc=cc, cxx=cxx, source="path"))
     return out
 
 
@@ -760,45 +489,6 @@ def ar_for(compiler: str) -> str:
     """The LTO-plugin-aware ar (gcc-ar/llvm-ar) when present, so an -flto object stays linkable; plain ar otherwise."""
     cand = {"gnu": "gcc-ar", "llvm": "llvm-ar"}.get(compiler_family(compiler), "ar")
     return cand if shutil.which(cand) else "ar"
-
-
-#: Minimum compiler version accepting -fuse-ld=<linker>, per family (icx/icpx report as modern LLVM).
-_LINKER_MIN: Dict[str, Dict[str, Tuple[int, int]]] = {
-    "mold": {
-        "gnu": (12, 1),
-        "llvm": (12, 0)
-    },
-    "lld": {
-        "gnu": (9, 0),
-        "llvm": (3, 0),
-        "intel-classic": (0, 0)
-    },
-    "gold": {
-        "gnu": (0, 0),
-        "llvm": (3, 0),
-        "intel-classic": (0, 0)
-    },
-}
-
-
-def linker_supported(compiler: str, linker: str) -> bool:
-    fam = compiler_family(compiler)
-    floor = _LINKER_MIN.get(linker, {}).get(fam)
-    return floor is not None and compiler_version(compiler) >= floor
-
-
-def fat_lto_flags(compiler: str) -> List[str]:
-    """Flags for a FAT-LTO object (bitcode + real code), or [] if this compiler cannot (warns, skips LTO)."""
-    fam = compiler_family(compiler)
-    if fam == "gnu":
-        return ["-flto", "-ffat-lto-objects"]
-    if fam == "llvm" and compiler_version(compiler) >= (18, 0):
-        return ["-flto", "-ffat-lto-objects"]
-    reason = ("clang < 18 has no -ffat-lto-objects" if fam == "llvm" else
-              "classic icc uses -ipo, not fat LTO" if fam == "intel-classic" else "no fat-LTO support")
-    warnings.warn(f"{Path(compiler).name}: {reason}; archiving the node library without LTO "
-                  f"(the .so still links from real machine code and runs correctly).")
-    return []
 
 
 #: Wall-clock ceiling for a single compile/link/archive command; a stuck compile freezes the whole sweep rank.
@@ -856,49 +546,3 @@ def run(cmd: List[str], timeout: Optional[float] = COMPILE_TIMEOUT_S) -> None:
         raise RuntimeError(f"command failed: {' '.join(cmd[:2])} ...\n{p.stderr[-2000:]}")
     if p.stderr.strip():
         warn_once(Path(cmd[0]).name, p.stderr)
-
-
-#: Fast alternative linkers, FASTEST FIRST. Default ``bfd`` ``ld`` is always the fallback (not listed).
-_FAST_LINKERS = ("mold", "lld", "gold")
-
-
-@functools.lru_cache(maxsize=None, typed=True)
-def ccache_available() -> bool:
-    """Whether a compiler cache is installed and not disabled. ccache keys on PREPROCESSED SOURCE, not
-    path, so the same generated kernel recompiled from a fresh temp dir is a cache hit. NF_NO_CCACHE=1
-    forces it off."""
-    if os.environ.get("NF_NO_CCACHE"):
-        return False
-    return shutil.which("ccache") is not None
-
-
-def ccache_prefix(use_ccache: Optional[bool]) -> List[str]:
-    """Launcher prefix for a compiler invocation: ["ccache"] or []. None means AUTO. Pass False from any
-    path that MEASURES compile time: a cache hit returns in ~0s, making the toolchain-cost measurement
-    meaningless rather than merely faster."""
-    if use_ccache is False:
-        return []
-    return ["ccache"] if ccache_available() else []
-
-
-@functools.lru_cache(maxsize=None, typed=True)
-def available_linkers() -> Dict[str, str]:
-    """Fast alternative linkers installed, fastest first: name -> backing binary path."""
-    found: Dict[str, str] = {}
-    for ld in _FAST_LINKERS:
-        p = shutil.which(ld) or shutil.which(f"ld.{ld}")
-        if p:
-            found[ld] = p
-    return found
-
-
-def fastest_linker(compiler: str) -> List[str]:
-    """-fuse-ld=<linker> for the fastest installed linker this compiler accepts (mold > lld > gold), or
-    []. NVIDIA has no -fuse-ld switch. NOT cached: the result depends on compiler_version, which tests
-    monkeypatch."""
-    if compiler_family(compiler) == "nvidia":
-        return []
-    for ld in available_linkers():  # dict preserves the fastest-first order of _FAST_LINKERS
-        if linker_supported(compiler, ld):
-            return [f"-fuse-ld={ld}"]
-    return []
