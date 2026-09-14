@@ -20,7 +20,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 
 from nestforge.corpus.translate import Prepared, emit_sources, prepare
-from nestforge.ir.depends import OUTPUT_PREFIX, KernelGraph, kernel_dependencies
+from nestforge.ir.depends import OUTPUT_PREFIX, KernelGraph, UnsupportedProgram, kernel_dependencies
 from nestforge.ir.extract import Boundary, detach, extract_map_nest, find_state_of_node
 from nestforge.ir.libnode import ExternalCall
 from nestforge.ir.introspect import describe_graph, kernel_body, kernel_source, nest_reads_writes
@@ -53,8 +53,10 @@ from nestforge.phases.schedule import (
 )
 from nestforge.phases.scopes import (
     is_parallel_nest,
+    kernel_arguments,
     label_nest,
     lower_nests_to_external_call,
+    node_boundary,
     offload_candidates,
     top_level_map_entries,
 )
@@ -292,7 +294,7 @@ class Session:
             self.bump()
         kernels = [
             {
-                "id": self.mint("kernel", (ext, boundary)),
+                "id": self.kernel_id(ext),
                 "name": ext.name,
                 "reads": list(boundary.inputs),
                 "writes": list(boundary.outputs),
@@ -300,8 +302,16 @@ class Session:
             }
             for ext, boundary in lowered
         ]
-        self.save_kernel_graph()
+        self.snapshot_kernel_graph()
         return kernels
+
+    def kernel_id(self, ext: ExternalCall) -> str:
+        """This epoch's id for the kernel node ``ext``, minted on first use; the node alone is what it names."""
+        # describe() stamps the same node with a nest id, so match the kind too
+        known = next(
+            (hid for hid, obj in self.handles.items() if obj is ext and hid.split(":", 2)[1] == "kernel"), None
+        )
+        return known if known is not None else self.mint("kernel", ext)
 
     def kernel_graph(self) -> KernelGraph:
         """What can reach every kernel argument and program output (:func:`kernel_dependencies`), once per epoch."""
@@ -316,19 +326,27 @@ class Session:
         path.write_text(json.dumps(self.kernel_graph().to_json(), indent=2, sort_keys=True) + "\n")
         return str(path)
 
+    def snapshot_kernel_graph(self) -> Optional[KernelGraph]:
+        """Phases 2 and 3 save :meth:`kernel_graph` when the analysis accepts the program. A refused program still
+        completes the phase: no snapshot, and ``None``."""
+        try:
+            graph = self.kernel_graph()
+        except UnsupportedProgram:
+            return None
+        self.save_kernel_graph()
+        return graph
+
     def list_kernels(self) -> List[dict]:
         """Every kernel with an id, its device once phase 3 placed it, its arguments, the producer labels reaching
         each argument (``depends``), and the loops a reaching value crossed (``carried``)."""
         graph = self.kernel_graph()
         calls = {ext.name: ext for ext in external_calls(self.sdfg)}
-        lowered = {id(obj[0]): obj for hid, obj in self.handles.items() if hid.split(":", 2)[1] == "kernel"}
-        return [self.kernel_entry(graph, calls[name], lowered) for name in graph.kernels]
+        return [self.kernel_entry(graph, calls[name]) for name in graph.kernels]
 
-    def kernel_entry(self, graph: KernelGraph, ext: ExternalCall, lowered: Dict[int, tuple]) -> dict:
+    def kernel_entry(self, graph: KernelGraph, ext: ExternalCall) -> dict:
         arguments = graph.arguments(ext.name)
         return {
-            # the handle define_scopes minted, so the id drives phases 4 and 5 too
-            "id": self.mint("kernel", lowered.get(id(ext), (ext, None))),
+            "id": self.kernel_id(ext),
             "name": ext.name,
             "device": self.devices.get(ext.name),
             "inputs": [edge.arg for edge in arguments if edge.role == "input"],
@@ -340,13 +358,14 @@ class Session:
 
     def kernel_boundary(self, kernel_id: str) -> dict:
         """The kernel's interface; ``boundary_order`` is the argument order a library must accept."""
-        ext, boundary = self.resolve(kernel_id, "kernel")
+        ext = self.resolve(kernel_id, "kernel")
+        inputs, outputs, symbols = kernel_arguments(ext)
         return {
             "name": ext.name,
-            "inputs": list(boundary.inputs),
-            "outputs": list(boundary.outputs),
-            "symbols": list(boundary.symbols),
-            "boundary_order": [*boundary.inputs, *boundary.outputs, *boundary.symbols],
+            "inputs": inputs,
+            "outputs": outputs,
+            "symbols": symbols,
+            "boundary_order": [*inputs, *outputs, *symbols],
         }
 
     def emit_reference(self, kernel_id: str) -> str:
@@ -355,8 +374,8 @@ class Session:
 
     def prepare_kernel(self, kernel_id: str) -> Prepared:
         if kernel_id not in self.prepared:
-            ext, boundary = self.resolve(kernel_id, "kernel")
-            self.prepared[kernel_id] = prepare(boundary, ext.name, self.work_dir / ext.name)
+            ext = self.resolve(kernel_id, "kernel")
+            self.prepared[kernel_id] = prepare(node_boundary(ext), ext.name, self.work_dir / ext.name)
         return self.prepared[kernel_id]
 
     # Phase 3: offload
@@ -364,19 +383,19 @@ class Session:
     def offload(self) -> dict:
         """Give every kernel a device and insert the host/device copies. With a GPU target the graph
         changes, so every earlier id goes stale and the kernels come back under fresh ids."""
-        kernels = [(hid, obj) for hid, obj in self.handles.items() if hid.split(":", 2)[1] == "kernel"]
         placement = offload(self.sdfg, self.targets)
         if self.targets.gpu:
             self.bump()
-            kernels = [(self.mint("kernel", obj), obj) for _, obj in kernels]
         self.devices = dict(placement.devices)
-        self.save_kernel_graph()
+        graph = self.snapshot_kernel_graph()
         return {
             "kernels": [
-                {"id": hid, "name": ext.name, "device": placement.devices[ext.name]} for hid, (ext, _) in kernels
+                {"id": self.kernel_id(ext), "name": ext.name, "device": placement.devices[ext.name]}
+                for ext in external_calls(self.sdfg)
             ],
             "copies": [list(pair) for pair in placement.copies],
-            "transfers": list(map(asdict, transfers(self.kernel_graph(), placement.devices))),
+            # None when the analysis refuses the program
+            "transfers": None if graph is None else list(map(asdict, transfers(graph, placement.devices))),
         }
 
     # Phase 4: optimize kernels
@@ -384,14 +403,16 @@ class Session:
     def scheduled_kernel(self, kernel_id: str) -> KernelSource:
         """The kernel's CPF unit for the device phase 3 placed it on, rendered once per epoch."""
         if kernel_id not in self.kernel_sources:
-            ext, boundary = self.resolve(kernel_id, "kernel")
-            self.kernel_sources[kernel_id] = schedule_kernel(ext, boundary, self.work_dir / ext.name / "kernel")
+            ext = self.resolve(kernel_id, "kernel")
+            self.kernel_sources[kernel_id] = schedule_kernel(
+                ext, node_boundary(ext), self.work_dir / ext.name / "kernel"
+            )
         return self.kernel_sources[kernel_id]
 
     def optimize_kernel(self, kernel_id: str) -> dict:
         """Phase 4 default: render the kernel's CPF unit, build it with the first configuration phase 5 sweeps for
         its device, and bind that library, with the runtimes it needs, to the kernel's ``ExternalCall``."""
-        ext, _ = self.resolve(kernel_id, "kernel")
+        ext = self.resolve(kernel_id, "kernel")
         src = self.scheduled_kernel(kernel_id)
         variants = device_variants(src.device)
         if not variants:
@@ -420,15 +441,16 @@ class Session:
     ) -> dict:
         """Point a kernel at a compiled library exposing ``symbol``; ``abi_order`` must match its signature.
         ``runtime_libraries`` are the link items its runtimes need; libomp alone when ``None``."""
-        ext, boundary = self.resolve(kernel_id, "kernel")
+        ext = self.resolve(kernel_id, "kernel")
         runtime = runtime_libraries if runtime_libraries is not None else process_runtime_libraries()
         use_kernel_library(ext, Path(lib_path), symbol, abi_order, runtime)
         if fp_mode:
             ext.fp_mode = fp_mode
+        inputs, outputs, symbols = kernel_arguments(ext)
         return {
             "kernel": ext.name,
             "abi_order": list(ext.abi_order),
-            "boundary_order": [*boundary.inputs, *boundary.outputs, *boundary.symbols],
+            "boundary_order": [*inputs, *outputs, *symbols],
         }
 
     # Phase 5: sweep configurations
@@ -444,7 +466,7 @@ class Session:
             ones for the kernel's device when ``None``.
         """
         src = self.scheduled_kernel(kernel_id)
-        ext, _ = self.resolve(kernel_id, "kernel")
+        ext = self.resolve(kernel_id, "kernel")
         result = select_variant(
             src,
             self.prepare_kernel(kernel_id),

@@ -50,13 +50,37 @@ def test_optimize_kernel_binds_its_default_library_and_the_program_still_compute
 
     info = session.optimize_kernel(kernel_id)
 
-    ext, _ = session.resolve(kernel_id, "kernel")
+    ext = session.resolve(kernel_id, "kernel")
     assert ext.implementation == "ExternCall"
     assert ext.lib_path == info["library"] and Path(info["library"]).name == f"lib{info['kernel']}.a"
     assert ext.runtime_libraries and info["variant"].count(":") == 2
     a, b, c = np.random.rand(256), np.random.rand(256), np.zeros(256)
     session.sdfg(a=a, b=b, c=c, N=256)
     np.testing.assert_allclose(c, 2.0 * a + b)
+
+
+def test_a_kernel_another_session_lowered_can_be_optimized_by_a_fresh_session(tmp_path):
+    sdfg = scaled_sum.to_sdfg(simplify=True)
+    Session(sdfg, work_dir=str(tmp_path / "lowering")).define_scopes()
+    fresh = Session(sdfg, work_dir=str(tmp_path / "fresh"))
+    (kernel,) = fresh.list_kernels()
+
+    info = fresh.optimize_kernel(kernel["id"])
+
+    ext = fresh.resolve(kernel["id"], "kernel")
+    assert ext.implementation == "ExternCall" and ext.lib_path == info["library"]
+    assert sorted(info["abi_order"]) == sorted(fresh.kernel_boundary(kernel["id"])["boundary_order"])
+    a, b, c = np.random.rand(256), np.random.rand(256), np.zeros(256)
+    sdfg(a=a, b=b, c=c, N=256)
+    np.testing.assert_allclose(c, 2.0 * a + b)
+
+
+def test_a_kernel_without_its_standalone_sdfg_is_refused_before_it_is_scheduled(tmp_path):
+    session, kernel_id = one_kernel_session(tmp_path)
+    session.resolve(kernel_id, "kernel").standalone_sdfg = None
+
+    with pytest.raises(ValueError, match="ExternalCall 'extcall_0' has no standalone SDFG"):
+        session.optimize_kernel(kernel_id)
 
 
 def test_sweep_links_the_fastest_correct_variant_into_the_program(tmp_path):
@@ -69,7 +93,7 @@ def test_sweep_links_the_fastest_correct_variant_into_the_program(tmp_path):
     assert config["compiler"] == "g++"
     assert result["winner"] == f"g++:{config['fp_mode']}:{config['cost_model']}"
     assert "-O3" in config["flags"] and config["time_us"] > 0.0
-    ext, _ = session.resolve(kernel_id, "kernel")
+    ext = session.resolve(kernel_id, "kernel")
     assert ext.implementation == "ExternCall"
     assert ext.lib_path.endswith(".a")
 
@@ -84,7 +108,7 @@ def test_sweep_without_matching_compilers_reports_no_winner(tmp_path):
     result = session.sweep_configurations(kernel_id, sizes={"N": 64}, reps=1, compilers=["no-such-compiler"])
     assert result["winner"] is None
     assert result["config"] == dict.fromkeys(("compiler", "fp_mode", "cost_model", "flags", "time_us"))
-    ext, _ = session.resolve(kernel_id, "kernel")
+    ext = session.resolve(kernel_id, "kernel")
     assert ext.implementation != "ExternCall"
 
 
@@ -100,5 +124,5 @@ def test_a_gpu_sweep_reports_an_nvcc_configuration_without_a_cost_model(tmp_path
     config = result["config"]
     assert config["compiler"].startswith("nvcc-") and config["cost_model"] == flags.NO_COST_MODEL
     assert config["fp_mode"] in flags.CUDA_FP_LEVELS and "-arch=native" in config["flags"]
-    ext, _ = session.resolve(kernel["id"], "kernel")
+    ext = session.resolve(kernel["id"], "kernel")
     assert ext.implementation == "ExternCall" and ext.lib_path.endswith(".a")

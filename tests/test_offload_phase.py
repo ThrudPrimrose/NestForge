@@ -64,7 +64,7 @@ def test_gpu_target_schedules_the_kernel_on_the_device_over_device_memory(tmp_pa
 
     (kernel,) = session.offload()["kernels"]
 
-    ext, _ = session.resolve(kernel["id"], "kernel")
+    ext = session.resolve(kernel["id"], "kernel")
     state = next(s for s in session.sdfg.all_states() if ext in s.nodes())
     operands = [e.src.data for e in state.in_edges(ext)] + [e.dst.data for e in state.out_edges(ext)]
     assert kernel["device"] == "gpu"

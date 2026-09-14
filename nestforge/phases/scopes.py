@@ -15,6 +15,7 @@ from nestforge.ir.emit_numpy import nest_to_numpy
 from nestforge.ir.emit_yaml import manifest_dict
 from nestforge.ir.extract import Boundary, NestNode, extract_nest_to_sdfg, find_state_of_node
 from nestforge.ir.introspect import nest_reads_writes
+from nestforge.ir.depends import kernel_symbols
 from nestforge.ir.libnode import ExternalCall, in_conn, out_conn
 
 
@@ -81,6 +82,34 @@ def reference_sdfg(boundary: Boundary) -> "dace.SDFG":
     for name in sorted(inplace):
         ref.add_datadesc(in_conn(name), copy.deepcopy(ref.arrays[out_conn(name)]))
     return ref
+
+
+def kernel_arguments(ext: ExternalCall) -> Tuple[List[str], List[str], List[str]]:
+    """``(inputs, outputs, symbols)`` read off the kernel node: its connectors in boundary order, and the manifest's
+    non-array inputs."""
+    inputs = [conn.removeprefix(in_conn("")) for conn in ext.in_connectors]
+    outputs = [conn.removeprefix(out_conn("")) for conn in ext.out_connectors]
+    return inputs, outputs, kernel_symbols(ext)
+
+
+def node_boundary(ext: ExternalCall) -> Boundary:
+    """The :class:`Boundary` phases 4 and 5 need, rebuilt from the kernel node alone by inverting
+    :func:`reference_sdfg` on a copy of its standalone SDFG; refused for a node that carries none."""
+    if ext.standalone_sdfg is None:
+        raise ValueError(
+            f"ExternalCall {ext.name!r} has no standalone SDFG (a kernel reloaded from disk does not carry one); "
+            "phases 4 and 5 need the nest it replaced"
+        )
+    inputs, outputs, symbols = kernel_arguments(ext)
+    nest = copy.deepcopy(ext.standalone_sdfg)
+    for name in inputs:
+        if name in outputs:
+            nest.remove_data(in_conn(name))  # the in-place twin reference_sdfg added; the body uses _out_
+        else:
+            nest.replace(in_conn(name), name)
+    for name in outputs:
+        nest.replace(out_conn(name), name)
+    return Boundary(inputs, outputs, symbols, nsdfg_node=None, state=None, standalone_sdfg=nest)
 
 
 def kernel_connector(prefixed: Callable[[str], str], conn: Optional[str]) -> Optional[str]:

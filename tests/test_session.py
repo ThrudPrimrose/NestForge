@@ -196,7 +196,7 @@ def test_set_kernel_selects_the_extern_call_expansion():
     agent's. The outputs would still be correct and the number still plausible -- nothing else catches it."""
     s = make_session()
     kernel_id = s.define_scopes()[0]["id"]
-    ext, _ = s.resolve(kernel_id, "kernel")
+    ext = s.resolve(kernel_id, "kernel")
     # None, not "DaceReference": dace leaves the field unset and falls back to default_implementation at
     # expand time. Either way the agent's kernel is not the one that runs, so the guard is on "not chosen".
     assert ext.implementation != "ExternCall", "fixture already selects the expansion; test would be vacuous"
