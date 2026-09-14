@@ -16,16 +16,19 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 
+from nestforge.build.toolchain import discover_toolchains
 from nestforge.corpus.translate import Prepared, emit_sources, prepare
 from nestforge.ir.extract import Boundary, detach, extract_map_nest, find_state_of_node
 from nestforge.ir.introspect import describe_graph, kernel_body, kernel_source, nest_reads_writes
 from nestforge.phases.feedback import run_feedback_loop
+from nestforge.phases.kernel import KernelSource, schedule_kernel, use_kernel_library
 from nestforge.phases.normalize import Targets, normalize
 from nestforge.phases.schedule import (FusionMove, RegionMove, apply_fusion, apply_region_fusion, can_fuse,
                                        enumerate_fusions, enumerate_region_fusions, finish_schedule,
                                        fission_to_statements, full_fusion)
 from nestforge.phases.scopes import (DEFAULT_GRANULARITY, is_parallel_nest, label_nest, lower_nests_to_external_call,
                                      offload_candidates, top_level_map_entries)
+from nestforge.phases.variants import enumerate_variants, select_variant
 
 #: kernel_source language -> (translator target, generated file suffix). C and C++ come from one C emit.
 LANG_LOWERING = {"c": ("c", ".c"), "cpp": ("c", ".cpp"), "fortran": ("fortran", ".f90")}
@@ -38,7 +41,7 @@ class StaleHandle(KeyError):
 class Session:
     """Owner of one program SDFG and the ids callers drive it through."""
 
-    __slots__ = ("sdfg", "name", "targets", "epoch", "handles", "work_dir", "prepared")
+    __slots__ = ("sdfg", "name", "targets", "epoch", "handles", "work_dir", "prepared", "kernel_sources")
 
     def __init__(self,
                  sdfg: dace.SDFG,
@@ -52,6 +55,7 @@ class Session:
         self.handles: Dict[str, object] = {}
         self.work_dir = Path(work_dir) if work_dir else Path(tempfile.mkdtemp(prefix="nfsession_"))
         self.prepared: Dict[str, Prepared] = {}
+        self.kernel_sources: Dict[str, KernelSource] = {}
 
     # Ids
 
@@ -77,6 +81,7 @@ class Session:
         self.epoch += 1
         self.handles = {}
         self.prepared = {}
+        self.kernel_sources = {}
 
     # Phase 0: normalize
 
@@ -241,20 +246,56 @@ class Session:
             self.prepared[kernel_id] = prepare(boundary, ext.name, self.work_dir / ext.name)
         return self.prepared[kernel_id]
 
-    # Phase 3: kernel optimization
+    # Phase 4: optimize kernels
+
+    def optimize_kernel(self, kernel_id: str) -> dict:
+        """Apply the default kernel schedule and generate its source with one C entry."""
+        ext, boundary = self.resolve(kernel_id, "kernel")
+        src = schedule_kernel(ext, boundary, self.targets, self.work_dir / ext.name / "kernel")
+        self.kernel_sources[kernel_id] = src
+        return {"kernel": ext.name, "symbol": src.symbol, "abi_order": list(src.abi_order)}
 
     def set_kernel(self, kernel_id: str, lib_path: str, symbol: str, abi_order: List[str], fp_mode: str = "") -> dict:
         """Point a kernel at a compiled library exposing ``symbol``; ``abi_order`` must match its signature."""
         ext, boundary = self.resolve(kernel_id, "kernel")
-        ext.lib_path, ext.symbol, ext.abi_order = lib_path, symbol, list(abi_order)
-        # The default expansion is the DaCe reference; without this the library is never called.
-        ext.implementation = "ExternCall"
+        use_kernel_library(ext, Path(lib_path), symbol, abi_order)
         if fp_mode:
             ext.fp_mode = fp_mode
         return {
             "kernel": ext.name,
             "abi_order": list(ext.abi_order),
             "boundary_order": [*boundary.inputs, *boundary.outputs, *boundary.symbols]
+        }
+
+    # Phase 5: sweep configurations
+
+    def sweep_configurations(self,
+                             kernel_id: str,
+                             sizes: Dict[str, int],
+                             reps: int = 10,
+                             compilers: Optional[List[str]] = None) -> dict:
+        """Build and time the kernel's variants, link the fastest correct one, and summarize the sweep.
+
+        :param sizes: Value of every symbol the kernel needs, used for validation and timing.
+        :param compilers: Toolchain names to keep (``gcc``, ``clang``, ...); all discovered ones when ``None``.
+        """
+        if kernel_id not in self.kernel_sources:
+            self.optimize_kernel(kernel_id)
+        src = self.kernel_sources[kernel_id]
+        ext, _ = self.resolve(kernel_id, "kernel")
+        toolchains = [tc for tc in discover_toolchains() if compilers is None or tc.name in compilers]
+        result = select_variant(src, self.prepare_kernel(kernel_id), sizes, reps, enumerate_variants(toolchains),
+                                self.work_dir / ext.name / "variants")
+        winner = result.winner
+        if winner is not None and result.library is not None:
+            use_kernel_library(ext, result.library, result.symbol, result.abi_order)
+            ext.fp_mode = winner.variant.fp_mode
+        return {
+            "kernel": ext.name,
+            "cells": len(result.cells),
+            "collapsed": list(result.collapsed),
+            "winner": winner.variant.label if winner is not None else None,
+            "time_us": winner.verdict.time_us if winner is not None else None,
         }
 
     # Feedback

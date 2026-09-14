@@ -17,5 +17,6 @@ runtime.
 | | |
 |---|---|
 | default | brute force over all axes the toolchain supports |
+| session | `sweep_configurations(kernel_id, sizes, reps, compilers)` links the winner |
 | code | `nestforge/phases/variants.py`, `nestforge/build/arena.py`, `nestforge/build/flags.py` |
 | status | CPU sweep over DaCe C++ implemented (`enumerate_variants`, `select_variant`); CUDA pending |
