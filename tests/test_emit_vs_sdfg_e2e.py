@@ -4,8 +4,8 @@
 
 nest-forge lowers a DaCe SDFG to standalone numpy (:func:`sdfg_to_numpy`), which hpcagent_bench's ``numpyto``
 then turns into C / C++ / Fortran. This suite checks that whole pipeline is a FAITHFUL translation of the
-SDFG, on the hardest TSVC + level-3 corpus kernels (control flow, reductions, recurrences, multi-nest,
-linear algebra).
+SDFG, on the hardest loop_level_reasoning + level-3 scientific_computing kernels (control flow, reductions,
+recurrences, multi-nest, linear algebra). loop_level_reasoning is a superset of TSVC-2.
 
 The oracle is the SDFG built through nest-forge's OWN build (``dace.codegen`` -> our compiler, NEVER
 ``dace.compile()`` -- see :mod:`nestforge.build.sdfg`), so this is literally "the emitted code vs the DaCe
@@ -31,8 +31,8 @@ import pytest
 pytest.importorskip("hpcagent_bench")
 
 from dace import symbolic
+from dace.transformation.passes.canonicalize import canonicalize
 
-from nestforge.corpus import tsvc
 from nestforge.build.sdfg import BuildOptions, build_sdfg
 from nestforge.corpus.bench import iter_dace_kernels
 from nestforge.ir.emit_numpy import load_emitted, maxsize_loop_scratch, sdfg_to_numpy
@@ -42,72 +42,58 @@ ATOL = 1e-8
 
 # ---- the most complex corpus kernels that build + emit faithfully (from the emit-vs-SDFG sweep) --------
 # level-3 (the hardest dwarf tier) + complex level-2 dense-linear-algebra / stencils.
-DACE_L1 = [
+SC_L1 = [
     # level 3
-    "hpc/graphical_models/hmm_forward/hmm_forward",
-    "hpc/map_reduce/xsbench/xsbench",
-    "hpc/map_reduce/azimint_hist/azimint_hist",
-    "hpc/structured_grids/deriche/deriche",
-    "hpc/structured_grids/harris_corner/harris_corner",
-    "hpc/dynamic_programming/pathfinder/pathfinder",
-    "hpc/graph_traversal/bfs/bfs",
-    "hpc/dense_linear_algebra/gaussian/gaussian",
-    "hpc/dense_linear_algebra/scattering_self_energies/scattering_self_energies",
+    "scientific_computing/graphical_models/hmm_forward/hmm_forward",
+    "scientific_computing/map_reduce/xsbench/xsbench",
+    "scientific_computing/map_reduce/azimint_hist/azimint_hist",
+    "scientific_computing/structured_grids/deriche/deriche",
+    "scientific_computing/structured_grids/harris_corner/harris_corner",
+    "scientific_computing/dynamic_programming/pathfinder/pathfinder",
+    "scientific_computing/graph_traversal/bfs/bfs",
+    "scientific_computing/dense_linear_algebra/gaussian/gaussian",
+    "scientific_computing/dense_linear_algebra/scattering_self_energies/scattering_self_energies",
     # level 2 (linear algebra + stencils)
-    "hpc/dense_linear_algebra/k2mm/k2mm",
-    "hpc/dense_linear_algebra/k3mm/k3mm",
-    "hpc/dense_linear_algebra/gemm/gemm",
-    "hpc/dense_linear_algebra/cholesky/cholesky",
-    "hpc/dense_linear_algebra/lu/lu",
-    "hpc/dense_linear_algebra/ludcmp/ludcmp",
-    "hpc/dense_linear_algebra/gramschmidt/gramschmidt",
-    "hpc/dense_linear_algebra/syr2k/syr2k",
-    "hpc/dense_linear_algebra/mvt/mvt",
-    "hpc/dense_linear_algebra/atax/atax",
-    "hpc/dense_linear_algebra/bicg/bicg",
-    "hpc/dense_linear_algebra/trisolv/trisolv",
-    "hpc/structured_grids/heat_3d/heat_3d",
-    "hpc/structured_grids/fdtd_2d/fdtd_2d",
-    "hpc/structured_grids/jacobi_2d/jacobi_2d",
-    "hpc/structured_grids/adi/adi",
-    "hpc/graph_traversal/pagerank/pagerank",  # normalised power iteration -> well-conditioned for any input
+    "scientific_computing/dense_linear_algebra/k2mm/k2mm",
+    "scientific_computing/dense_linear_algebra/k3mm/k3mm",
+    "scientific_computing/dense_linear_algebra/gemm/gemm",
+    "scientific_computing/dense_linear_algebra/cholesky/cholesky",
+    "scientific_computing/dense_linear_algebra/lu/lu",
+    "scientific_computing/dense_linear_algebra/ludcmp/ludcmp",
+    "scientific_computing/dense_linear_algebra/gramschmidt/gramschmidt",
+    "scientific_computing/dense_linear_algebra/syr2k/syr2k",
+    "scientific_computing/dense_linear_algebra/mvt/mvt",
+    "scientific_computing/dense_linear_algebra/atax/atax",
+    "scientific_computing/dense_linear_algebra/bicg/bicg",
+    "scientific_computing/dense_linear_algebra/trisolv/trisolv",
+    "scientific_computing/structured_grids/heat_3d/heat_3d",
+    "scientific_computing/structured_grids/fdtd_2d/fdtd_2d",
+    "scientific_computing/structured_grids/jacobi_2d/jacobi_2d",
+    "scientific_computing/structured_grids/adi/adi",
+    "scientific_computing/graph_traversal/pagerank/pagerank",  # normalised power iteration -> well-conditioned
 ]
-# hardest TSVC: multi-nest, control flow (break), conditional reductions, running max/argmax, recurrences.
-TSVC_L1 = [
-    "s1113",
-    "s1221",
-    "s1244",
-    "s152",
-    "s2275",
-    "s13110",
-    "s3111",
-    "s3113",
-    "s331",
-    "s481",
-    "s118",
-    "s1213",
-    "s1351",
-    "s126",
-    "s161",
-    "s241",
-    "s2711",
-    "s112",
-    "s114",
+# hardest loop_level_reasoning: multi-nest, control flow (break), conditional reductions, running
+# max/argmax, recurrences. loop_level_reasoning is a superset of TSVC-2 (the ``tsvc_2_<key>`` stems) and
+# of TSVC-2.5 (the descriptively-named kernels). s13110 is excluded: the installed corpus ships its
+# ``_dace.py`` with no co-located manifest, so it cannot be loaded as a registered kernel at all.
+LLR_L1 = [
+    "tsvc_2_s1113", "tsvc_2_s1221", "tsvc_2_s1244", "tsvc_2_s152", "tsvc_2_s2275", "tsvc_2_s3111", "tsvc_2_s3113",
+    "tsvc_2_s331", "tsvc_2_s481", "tsvc_2_s118", "tsvc_2_s1213", "tsvc_2_s1351", "tsvc_2_s126", "tsvc_2_s161",
+    "tsvc_2_s241", "tsvc_2_s2711", "tsvc_2_s112", "tsvc_2_s114", "cond_reduce_sym", "cond_reduce_sum",
+    "ext_break_capture", "ext_break_find_first"
 ]
-TSVC25_L1 = ["cond_reduce_sym", "cond_reduce_sum", "ext_break_capture", "ext_break_find_first"]
 
 # cross-compiler subset: kernels whose nests lower + translate + compile cleanly in every language.
 # numpyto has no C++ target (the C++ lane would recompile the C, same toolchain), so the distinct
 # compilers are covered by C x {gcc, clang} + Fortran x {gfortran}.
-DACE_L2 = [
-    "hpc/dense_linear_algebra/gemm/gemm", "hpc/dense_linear_algebra/k3mm/k3mm", "hpc/dense_linear_algebra/mvt/mvt",
-    "hpc/dense_linear_algebra/atax/atax"
+SC_L2 = [
+    "scientific_computing/dense_linear_algebra/gemm/gemm", "scientific_computing/dense_linear_algebra/k3mm/k3mm",
+    "scientific_computing/dense_linear_algebra/mvt/mvt", "scientific_computing/dense_linear_algebra/atax/atax"
 ]
 # Only straight-line nests translate + compile identically in EVERY language across gcc/clang/gfortran; a
 # nest carrying loop state (recurrence / masked reduction) diverges at the artificial nest boundary or hits
 # a numpyto Fortran emit gap -- those kernels get their full cross-check from L1 (the whole-kernel oracle).
-TSVC_L2 = ["s000"]
-TSVC25_L2 = []
+LLR_L2 = ["tsvc_2_s000"]
 COMPILERS = {"c": ["gcc", "clang"], "fortran": ["gfortran"]}
 
 
@@ -130,17 +116,28 @@ def dace_sizes(kernel, base=6):
     return {k: base + ranks[v] for k, v in preset.items()}
 
 
+def find_llr_kernel(key):
+    for kernel in iter_dace_kernels("loop_level_reasoning"):
+        if kernel.short_name.rsplit("/", 1)[-1] == key:
+            return kernel
+    raise AssertionError(f"{key} is not in the loop_level_reasoning track -- the corpus this test pins has changed")
+
+
 def make_dace(short):
     kernel = {k.short_name: k for k in iter_dace_kernels()}[short]
     return (lambda: kernel.to_sdfg(simplify=True)), dace_sizes(kernel), 0.0  # linear algebra: inputs in [0,1)
 
 
-def make_tsvc(short, corpus):
-    kernel = tsvc.iter_tsvc_kernels(only=[short], corpus=corpus)[0]
-    probe = tsvc.build_sdfg(kernel, opt_mode="simplify-parallel")
-    sizes = {str(s): 8 for s in probe.free_symbols}
-    return (
-        lambda: tsvc.build_sdfg(kernel, opt_mode="simplify-parallel")), sizes, 0.5  # centered: exercise sign branches
+def make_llr(key):
+    kernel = find_llr_kernel(key)
+
+    def build():
+        sdfg = kernel.to_sdfg(simplify=True)
+        canonicalize(sdfg, target="cpu")
+        return sdfg
+
+    sizes = {str(s): 8 for s in build().free_symbols}
+    return build, sizes, 0.5  # centered: exercise sign branches
 
 
 def base_inputs(sdfg, sizes, center, seed=0):
@@ -206,7 +203,7 @@ def max_abs_diff(oracle, cand):
 
 
 def builder_for(kind, short):
-    return make_dace(short) if kind == "dace" else make_tsvc(short, kind)
+    return make_dace(short) if kind == "scientific_computing" else make_llr(short)
 
 
 def test_maxdiff_scores_nan_mismatch_as_divergence():
@@ -222,8 +219,7 @@ def test_maxdiff_scores_nan_mismatch_as_divergence():
 
 # ---- L1: emitted numpy == the SDFG --------------------------------------------------------------------
 @pytest.mark.parametrize("kind,short",
-                         [("dace", s) for s in DACE_L1] + [("tsvc2", s) for s in TSVC_L1] + [("tsvc2_5", s)
-                                                                                             for s in TSVC25_L1])
+                         [("scientific_computing", s) for s in SC_L1] + [("loop_level_reasoning", s) for s in LLR_L1])
 def test_emit_numpy_matches_sdfg(kind, short):
 
     def work():
@@ -240,11 +236,12 @@ def test_emit_numpy_matches_sdfg(kind, short):
 
 
 # ---- L2: emitted code compiled across compilers == the SDFG (per nest) --------------------------------
-@pytest.mark.parametrize("kind,short,lang,compiler",
-                         [("dace", s, lang, cc) for s in DACE_L2 for lang, ccs in COMPILERS.items()
-                          for cc in ccs] + [("tsvc2", s, lang, cc) for s in TSVC_L2 for lang, ccs in COMPILERS.items()
-                                            for cc in ccs] + [("tsvc2_5", s, lang, cc) for s in TSVC25_L2
-                                                              for lang, ccs in COMPILERS.items() for cc in ccs])
+@pytest.mark.parametrize("kind,short,lang,compiler", [("scientific_computing", s, lang, cc) for s in SC_L2
+                                                      for lang, ccs in COMPILERS.items()
+                                                      for cc in ccs] + [("loop_level_reasoning", s, lang, cc)
+                                                                        for s in LLR_L2
+                                                                        for lang, ccs in COMPILERS.items()
+                                                                        for cc in ccs])
 def test_emit_compiled_matches_sdfg_across_compilers(kind, short, lang, compiler):
     import shutil
     tool = compiler if lang == "c" else "gfortran"

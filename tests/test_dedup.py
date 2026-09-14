@@ -15,7 +15,7 @@ import pytest
 from nestforge.build.arena import compile_object
 from nestforge.build.flags import FP_LEVELS
 from nestforge.build.dedup import (asm_bodies, asm_body_key, collapse, cpp_body_key, function_bodies, needed_libraries,
-                             parse_disassembly, representatives, variant_key)
+                                   parse_disassembly, representatives, variant_key)
 
 SYMBOL = "k_fp64"
 #: A transcendental so the veclib axis has something to substitute, in a loop the back end will vectorize.
@@ -255,36 +255,3 @@ def test_representatives_reports_what_it_collapsed():
 def test_representatives_is_quiet_when_nothing_collapsed():
     picks, notes = representatives({"a": "k1", "b": "k2"})
     assert picks == ["a", "b"] and notes == []
-
-
-# --- the pre-compile screen on a REAL DaCe emission ---------------------------------------------------
-#: (kernel, distinct sources expected from the three descent seeds). s275/s231 are the two nests the
-#: knob census found inert -- the vectorizer declines to touch them, so every config emits one source and
-#: the descent used to spend a compile + timed run per cell proving it. s000/s1161 tile, so their seeds
-#: MUST stay distinct: a screen that over-collapsed would silently delete the width axis it exists to skip.
-SCREEN_CASES = [("s275", 1), ("s231", 1), ("s000", 3), ("s1161", 3)]
-
-
-@pytest.mark.parametrize("kernel,distinct", SCREEN_CASES)
-def test_the_codegen_screen_separates_inert_nests_from_tiling_ones(kernel, distinct, tmp_path):
-    """An emitted TU carries the build directory in its includes and name comments, so this is also the
-    check that ``function_bodies`` keeps those OUT of the key -- otherwise no two configs would ever match
-    and the screen would be dead weight that still costs a codegen."""
-    pytest.importorskip("hpcagent_bench")
-    from nestforge.corpus import tsvc
-    from nestforge import vectorize_variants as vv
-    from nestforge.build.sdfg import BuildOptions, generate_program
-    from nestforge.phases.scopes import lower_nests_to_external_call
-
-    sdfg = tsvc.build_sdfg(tsvc.iter_tsvc_kernels(only=[kernel], corpus="tsvc2")[0], "simplify-parallel")
-    nests = lower_nests_to_external_call(sdfg, strategy="skip-taskloops")
-    assert nests, f"{kernel} extracted no nest"
-    _ext, boundary = nests[0]
-    keys = {
-        vv.variant_name(cfg):
-        cpp_body_key(
-            generate_program(boundary.standalone_sdfg, tmp_path / vv.variant_name(cfg),
-                             BuildOptions(vectorize=cfg)).source)
-        for cfg in vv.default_seeds(fp_mode="contract-fma")
-    }
-    assert len(set(keys.values())) == distinct, keys

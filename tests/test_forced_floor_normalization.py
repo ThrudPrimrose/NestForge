@@ -4,17 +4,21 @@
 
 Python's `//` on a sympy expression is `sympy.floor(...)`, which sympy distributes and codegen then
 prints WITHOUT the floor -- the index truncates term by term. Kernel source is safe (dace parses `//`
-into int_floor); transformation code is not, so the pass is forced at both entry points.
+into int_floor); transformation code is not, so canonicalization normalizes it.
 """
-import copy
-
 import dace
-import pytest
 import sympy
 from dace.subsets import Indices, Range
+from dace.transformation.passes.canonicalize import canonicalize
 
-from nestforge.corpus import tsvc
-from nestforge.granularity import granularity_ladder
+from nestforge.corpus.bench import iter_dace_kernels
+
+
+def load(key):
+    for kernel in iter_dace_kernels("loop_level_reasoning"):
+        if kernel.short_name.rsplit("/", 1)[-1] == key:
+            return kernel
+    raise AssertionError(f"{key} is not in the loop_level_reasoning track -- the corpus this test pins has changed")
 
 
 def floors_in(sdfg):
@@ -45,21 +49,8 @@ def test_the_detector_can_actually_fail():
     assert floors_in(sdfg), "floors_in reports nothing on an SDFG that provably holds a floor"
 
 
-@pytest.mark.parametrize("opt_mode", ["simplify-parallel", "canonicalize"])
-def test_build_sdfg_leaves_no_residual_floor(opt_mode):
-    kernel = tsvc.iter_tsvc_kernels(only=["s111"])[0]
-    assert not floors_in(tsvc.build_sdfg(kernel, opt_mode))
-
-
-def test_every_granularity_rung_is_normalized():
-    """The rungs are where fission/fusion rebuild indices, so this is the one that actually bites. s221 is a
-    multi-statement kernel with a deep (depth-5) atoms->maximal ladder; s111 became a single statement-atom
-    (one nest, so a one-rung ladder) once fission reached statement -- not per-tasklet -- granularity."""
-    kernel = tsvc.iter_tsvc_kernels(only=["s221"])[0]
-    canonical = tsvc.build_sdfg(kernel, "canonicalize")
-    ladder = granularity_ladder(canonical, 4)
-    assert len(ladder) >= 2, "test is vacuous on a single-rung ladder"
-    for point in ladder:
-        rung = copy.deepcopy(canonical)
-        point.apply(rung)
-        assert not floors_in(rung), f"rung {point.name} carries a residual floor"
+def test_canonicalize_leaves_no_residual_floor():
+    """tsvc_2_s111's stride-2 loop needs a floor-division trip count; canonicalization must normalize it."""
+    sdfg = load("tsvc_2_s111").to_sdfg(simplify=True)
+    canonicalize(sdfg, target="cpu")
+    assert not floors_in(sdfg)

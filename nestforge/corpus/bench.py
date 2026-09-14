@@ -1,10 +1,11 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Load real npbench/polybench kernels from the installed ``hpcagent_bench`` package as SDFGs.
+"""Load hpcagent_bench's own benchmark tracks as SDFGs -- the entire nest-forge kernel corpus.
 
-optarena ships each kernel as ``<name>_numpy.py`` (oracle) + ``<name>.yaml`` (BenchSpec) and, for the
-HPC/ML tracks, a ``<name>_dace.py`` holding a ``@dace.program`` -- import it, ``to_sdfg`` it, feed it
-to the lowering pass.
+optarena ships each kernel as ``<name>_numpy.py`` (oracle) + ``<name>.yaml`` (BenchSpec) and, for every
+track, a ``<name>_dace.py`` holding a ``@dace.program`` -- import it, ``to_sdfg`` it, feed it to the
+lowering pass. ``loop_level_reasoning`` is a superset of TSVC-2 (every ``s###``/``vXX`` kernel lives there
+under a ``tsvc_2_<key>`` stem, alongside kernels with descriptive names).
 
 Kernels bind hpcagent_bench's ``dc_float`` precision global at import time, so it must be stamped to fp64
 before any kernel module imports.
@@ -15,21 +16,26 @@ import importlib.util
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, List, Optional
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional
+
+import numpy as np
 
 import dace
 
 from hpcagent_bench import autogen
+from hpcagent_bench.initialize import fill_index_array
+from hpcagent_bench.sizing import is_plain_int
 from hpcagent_bench.spec import KERNELS, BenchSpec
+
+from nestforge.build.arena import resolve_shape
+from nestforge.ir.extract import Boundary
 
 if TYPE_CHECKING:
     from types import ModuleType
 
 #: Tracks whose ``_dace.py`` this module materializes on demand (gitignored, never committed --
-#: ``autogen.ensure`` regenerates it here or in :mod:`nestforge.corpus.tsvc`, whichever runs first). foundation
-#: also goes through :mod:`nestforge.corpus.tsvc` for its TSVC subset, which additionally carries the
-#: ``_reference.cpp`` baseline and TSVC-specific sizing that this module has no use for.
-DACE_TRACKS = ("hpc", "ml", "foundation")
+#: ``autogen.ensure`` regenerates it on demand, at most once per kernel per process).
+DACE_TRACKS = ("loop_level_reasoning", "scientific_computing", "machine_learning")
 
 
 def set_precision_fp64() -> None:
@@ -90,7 +96,7 @@ def module_path(short_name: str) -> str:
 def iter_dace_kernels(track: Optional[str] = None) -> Iterator[CorpusKernel]:
     """Yield every corpus kernel that ships a ``_dace.py`` impl, optionally filtered by track.
 
-    :param track: ``"hpc"``, ``"ml"``, ``"foundation"``, or ``None`` for all.
+    :param track: one of :data:`DACE_TRACKS`, or ``None`` for all.
     """
     for short_name in KERNELS:
         if track is not None and not short_name.startswith(f"{track}/"):
@@ -122,3 +128,45 @@ def materialize_dace_corpus(track: Optional[str] = None) -> None:
 
 def dace_kernel_names(track: Optional[str] = None) -> List[str]:
     return [k.short_name for k in iter_dace_kernels(track)]
+
+
+def preset_sizes(kernel: CorpusKernel, preset: str) -> Dict[str, int]:
+    """Concrete shape-symbol sizes for one preset rung (``"S"``, ``"M"``, ``"L"``, ...), read from the
+    kernel's own manifest ``parameters`` block. A rung entry that is not a plain int (a fuzz spec) is
+    skipped -- only ``preset`` rungs carry those, never a named preset."""
+    rung = kernel.spec.parameters.get(preset, {})
+    return {sym: int(size) for sym, size in rung.items() if is_plain_int(size)}
+
+
+def index_fills(manifest_name: Optional[str],
+                boundary: Boundary,
+                sizes: Dict[str, int],
+                seed: Optional[int] = 0) -> Dict[str, np.ndarray]:
+    """Valid-subscript values for the nest's integer INDEX arrays, as the kernel's manifest declares them.
+    Feed the result to :func:`nestforge.build.arena.make_inputs` as ``given``.
+
+    The manifest declares e.g. ``ip: int32`` as a PERMUTATION of ``[0, N)``, whereas the default
+    uniform-float fill cast to int collapses to ALL-ZEROS -- degrading a gather to a cached read of
+    ``b[0]`` and turning a conflict-free scatter into a race on ``a[0]`` once lowered to a ``dace.map``.
+
+    Only MANIFEST-declared integer arrays the nest actually READS are filled, at the SDFG descriptor's
+    dtype -- the width the compiled code reads across the ABI. ``manifest_name`` is a :data:`KERNELS`
+    key's stem (``"S"`` for ``kernel.short_name``); ``None`` -> ``{}``. ``seed=None`` draws fresh entropy
+    (fuzz); an int pins the fill.
+    """
+    if manifest_name is None:
+        return {}
+    spec = BenchSpec.load(manifest_name)
+    if spec.init is None:
+        return {}
+    rng = np.random.default_rng(seed)
+    arrays = boundary.standalone_sdfg.arrays
+    fills: Dict[str, np.ndarray] = {}
+    for name, declared in sorted(spec.init.dtypes.items()):
+        if np.dtype(declared).kind not in "iu" or name not in boundary.inputs:
+            continue
+        dtype = np.dtype(arrays[name].dtype.type)
+        if dtype.kind not in "iu":
+            continue  # the manifest calls it an index but the nest holds it as a float: not a subscript
+        fills[name] = fill_index_array(resolve_shape(arrays[name].shape, sizes), dtype, rng=rng)
+    return fills

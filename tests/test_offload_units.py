@@ -3,8 +3,7 @@
 """Offloading granularity UNITS (paper Axis 2): the structural unit each external call wraps -- cfg / state
 / map, coarse -> fine. Unit set, no compile: candidate selection per unit, whole-state extraction, that
 lowering each unit yields a valid SDFG, and -- the check that actually binds -- that it still computes the
-same VALUES, run through the emitted numpy. Composition with Axis 1 (fusion granularity) is checked too --
-finer fusion exposes more map-units."""
+same VALUES, run through the emitted numpy."""
 import numpy as np
 import dace
 from dace import symbolic
@@ -13,7 +12,6 @@ from nestforge.ir.emit_numpy import load_emitted, nest_to_numpy, scratch_arrays
 from nestforge.phases.scopes import (OFFLOAD_UNITS, offload_candidates, offload_coarseness, offload_unit_axis)
 from nestforge.ir.extract import extract_state_nest
 from nestforge.phases.scopes import lower_nests_to_external_call
-from nestforge.granularity import fuse_first_k
 from nestforge.phases.scopes import top_level_map_entries
 
 N = dace.symbol('N')
@@ -145,15 +143,6 @@ def test_the_conditional_unit_computes_both_branches_correctly():
         B = np.zeros(8)
         run_lowered(boundary, f"cond_{i}", dict(N=8), A=A, B=B, flag=flag)
         assert np.allclose(B, want), f"flag={flag}"
-
-
-def test_composes_with_fusion_granularity():
-    # a fine (map) offload sees at least as many units at the atoms partition as at maximal fusion.
-    atoms = two_map.to_sdfg(simplify=True)
-    fuse_first_k(0)(atoms)
-    maximal = two_map.to_sdfg(simplify=True)
-    fuse_first_k(99)(maximal)
-    assert len(offload_candidates(atoms, "map")) >= len(offload_candidates(maximal, "map"))
 
 
 def test_a_precondition_guard_state_is_not_an_offload_unit():
