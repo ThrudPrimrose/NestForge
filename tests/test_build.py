@@ -418,6 +418,17 @@ def test_parse_params_refuses_an_unmapped_pointer_base_type():
         parse_params("k_state_t *__state, uint64_t *n")
 
 
+def test_int_and_complex_pointers_bind_by_address():
+    """xsbench's entry takes ``int*`` and scattering_self_energies' ``dace::complex128*``. A pointer carries only
+    the buffer address, so each binds as a pointer to its element (or complex component) type."""
+    params = parse_params("const int * __restrict__ index_grid, dace::complex128 * __restrict__ D, int64_t N")
+    assert [(p.name, p.ctype) for p in params] == [
+        ("index_grid", ctypes.POINTER(ctypes.c_int)),
+        ("D", ctypes.POINTER(ctypes.c_double)),
+        ("N", ctypes.c_int64),
+    ]
+
+
 def test_owned_build_reusable_handle_program():
     """After one init, __program can be called repeatedly in place (the timing path) on one handle, and
     every call still computes the right answer (this nest's output does not read its own prior value, so

@@ -28,7 +28,18 @@ C_SCALAR = {
     "bool": ctypes.c_bool,
 }
 
-C_PTR = {"float": ctypes.c_float, "double": ctypes.c_double, "int32_t": ctypes.c_int32, "int64_t": ctypes.c_int64}
+#: Pointer element types. A pointer argument passes only the buffer address, so a complex buffer binds as a
+#: pointer to its component type.
+C_PTR = {
+    "float": ctypes.c_float,
+    "double": ctypes.c_double,
+    "int": ctypes.c_int,
+    "int32_t": ctypes.c_int32,
+    "int64_t": ctypes.c_int64,
+    "bool": ctypes.c_bool,
+    "dace::complex64": ctypes.c_float,
+    "dace::complex128": ctypes.c_double,
+}
 
 DEFAULT_COMPILER = "g++"
 
