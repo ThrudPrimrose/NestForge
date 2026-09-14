@@ -1,11 +1,9 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Compile-free unit tests for the perf/arena plumbing: signature parsing, FP-precision x cost-model flag
-composition, winner selection, and the markdown reporters -- pure logic on synthetic inputs, so no compiler
-needed (unlike the end-to-end ``test_tsvc_arena.py``, which compiles and skips without a toolchain).
+"""Compile-free unit tests for the perf/arena plumbing: signature parsing and FP-precision x cost-model
+flag composition -- pure logic on synthetic inputs, so no compiler needed.
 """
 import ctypes
-import json
 import shutil
 from pathlib import Path
 
@@ -14,7 +12,7 @@ import pytest
 
 from nestforge import arena, tsvc
 from nestforge.isolation import run_isolated
-from nestforge.perf import crosslang_xl, flags, harness, tsvc_arena, tsvc_full
+from nestforge.perf import flags, harness, tsvc_full
 
 
 # --- native-baseline signature parsing (tsvc.native_signature) ----------------------------------------
@@ -32,26 +30,26 @@ def test_native_signature_float_and_missing_symbol():
 
 def test_native_symbol_fallback_to_first_kernel():
     # The convention symbol is used when present; otherwise the first `void <name>(` is taken.
-    assert tsvc_arena.native_symbol("void s000_d(double* a)", "s000_d") == "s000_d"
-    assert tsvc_arena.native_symbol("void renamed_kernel(double* a)", "s000_d") == "renamed_kernel"
+    assert harness.native_symbol("void s000_d(double* a)", "s000_d") == "s000_d"
+    assert harness.native_symbol("void renamed_kernel(double* a)", "s000_d") == "renamed_kernel"
     with pytest.raises(LookupError):
-        tsvc_arena.native_symbol("int not_a_kernel;", "s000_d")
+        harness.native_symbol("int not_a_kernel;", "s000_d")
 
 
-# --- emitted-source signature order (harness.signature_order, re-exported via crosslang_xl) -----------
+# --- emitted-source signature order (harness.signature_order) ------------------------------------------
 def test_signature_order_c_and_fortran_multiline():
     csrc = "void s000_fp64(double* a, double* out, int64_t N) {"
-    assert crosslang_xl.signature_order(csrc, "s000_fp64", "c") == ["a", "out", "N"]
+    assert harness.signature_order(csrc, "s000_fp64", "c") == ["a", "out", "N"]
     # a long Fortran arg list wraps with `&` continuations; they must be stripped, not become arg names.
     ftn = "subroutine s1115_fp64(aa, &\n  & bb_slice, cc, &\n  & LEN_2D) bind(c, name='s1115_fp64')\n"
-    assert crosslang_xl.signature_order(ftn, "s1115_fp64", "fortran") == ["aa", "bb_slice", "cc", "LEN_2D"]
+    assert harness.signature_order(ftn, "s1115_fp64", "fortran") == ["aa", "bb_slice", "cc", "LEN_2D"]
 
 
 def test_fortran_unmunge_multiple_and_no_underscore():
     # a leading `_` munges to `x`; a non-underscore name is unchanged; both reverse cleanly.
     order = ["x_a", "xb", "LEN_1D"]
     names = ["__a", "xb", "LEN_1D"]
-    assert crosslang_xl.fortran_unmunge(order, names) == ["__a", "xb", "LEN_1D"]
+    assert harness.fortran_unmunge(order, names) == ["__a", "xb", "LEN_1D"]
 
 
 def test_abi_order_pointer_star_stripped():
@@ -182,138 +180,11 @@ def test_enumerate_cells_gates_veclib_cells_by_nest_math(tmp_path):
 
 
 def test_family_of_maps_labels_to_fp_families():
-    assert crosslang_xl.family_of("gcc") == "gnu"
-    assert crosslang_xl.family_of("clang") == "llvm"
-    assert crosslang_xl.family_of("nvhpc") == "nvidia"
-    assert crosslang_xl.family_of("intel") == "intel"
-    assert crosslang_xl.family_of("unknown") == "gnu"  # safe default
-
-
-# --- winner selection ---------------------------------------------------------------------------------
-def make_cell(ok, t, fp="strict-ieee", cost="default"):
-    return {"ok": ok, "time_us": t, "fp_level": fp, "cost_model": cost, "maxdiff": 0.0}
-
-
-def test_cells_winner_picks_fastest_ok_only():
-    cells = [make_cell(True, 5.0), make_cell(True, 2.0, "fast-math"), make_cell(False, 1.0)]  # the 1.0 is not ok
-    assert crosslang_xl.cells_winner(cells)["time_us"] == 2.0
-    assert crosslang_xl.cells_winner([make_cell(False, 1.0)]) is None  # nothing valid -> no winner
-    assert crosslang_xl.cells_winner([make_cell(True, float("inf"))]) is None  # inf is not a real time
-
-
-def test_global_winner_across_toolchains_carries_compiler():
-    k = {
-        "rows": [
-            {
-                "compiler": "gcc",
-                "winner": {
-                    "time_us": 9.0,
-                    "flags": ["-O3"],
-                    "label": "a"
-                }
-            },
-            {
-                "compiler": "clang",
-                "winner": {
-                    "time_us": 4.0,
-                    "flags": ["-O3"],
-                    "label": "b"
-                }
-            },
-            {
-                "compiler": "nvhpc",
-                "winner": None
-            },
-        ]
-    }
-    win = tsvc_arena.global_winner(k)
-    assert win["time_us"] == 4.0 and win["compiler"] == "clang"  # compiler label overrides the cell's own
-    assert tsvc_arena.global_winner({"rows": [{"compiler": "gcc", "winner": None}]}) is None
-
-
-# --- report math (render_tables) ----------------------------------------------------------------------
-def make_tsvc_row(nat, win):
-
-    def cell(t, label):
-        return {
-            "ok": True,
-            "time_us": t,
-            "maxdiff": 0.0,
-            "label": label,
-            "flags": [],
-            "compile_us": 0.0,
-            "error": None,
-            "compiler": "gcc"
-        }
-
-    return {
-        "compiler": "gcc",
-        "version": [15, 0],
-        "source": "path",
-        "native": cell(nat, "native"),
-        "default": cell(nat, "default"),
-        "winner": cell(win, "strict-ieee/default"),
-        "cells": []
-    }
-
-
-def test_tsvc_render_tables_geomean_and_skipped(tmp_path):
-    sd = tsvc_arena.ensure_seed_dir(tmp_path, 0)
-    (sd / "sA.json").write_text(
-        json.dumps({
-            "key": "sA",
-            "regime": "1d",
-            "sizes": {
-                "LEN_1D": 4
-            },
-            "rows": [make_tsvc_row(10.0, 2.0)]
-        }))
-    (sd / "sB.json").write_text(
-        json.dumps({
-            "key": "sB",
-            "regime": "1d",
-            "sizes": {
-                "LEN_1D": 4
-            },
-            "rows": [make_tsvc_row(8.0, 4.0)]
-        }))
-    (sd / "sC.json").write_text(json.dumps({"key": "sC", "skipped": "no compute nest"}))
-    rep = tsvc_arena.render_tables(tmp_path, 0)
-    assert "2 kernels measured, 1 skipped" in rep
-    assert "5.00x" in rep and "2.00x" in rep  # per-row speedup = native/best
-    assert "3.162x" in rep  # geomean of {5, 2} = sqrt(10)
-    assert "`sC` — no compute nest" in rep
-    assert (sd / "tables.md").exists()
-
-
-def test_crosslang_render_tables_fp_speedup(tmp_path):
-
-    def cell(fp, t, ok=True):
-        return {
-            "language": "c",
-            "compiler": "gcc",
-            "fp_level": fp,
-            "cost_model": "default",
-            "ok": ok,
-            "maxdiff": 0.0 if fp == "strict-ieee" else 1e-9,
-            "time_us": t,
-            "compile_us": 0.0,
-            "error": None
-        }
-
-    (tmp_path / "tsvc2_sA.json").write_text(
-        json.dumps({
-            "key": "sA",
-            "corpus": "tsvc2",
-            "preset": "XL",
-            "cells": [cell("strict-ieee", 10.0), cell("fast-math", 2.5)]
-        }))
-    (tmp_path / "tsvc2_sB.json").write_text(json.dumps({"key": "sB", "corpus": "tsvc2", "skipped": "no nest"}))
-    rep = crosslang_xl.render_tables(tmp_path)
-    assert "1 kernels measured, 1 skipped" in rep
-    assert "fast-math/default" in rep and "4.00x" in rep  # fp speedup = strict/winner = 10/2.5
-    assert "**c**: 1/1" in rep  # one validating (lang, compiler) pair
-    assert "`sB` (tsvc2) — no nest" in rep
+    assert harness.family_of("gcc") == "gnu"
+    assert harness.family_of("clang") == "llvm"
+    assert harness.family_of("nvhpc") == "nvidia"
+    assert harness.family_of("intel") == "intel"
+    assert harness.family_of("unknown") == "gnu"  # safe default
 
 
 # --- key_seed determinism -----------------------------------------------------------------------------
@@ -550,8 +421,8 @@ def test_family_of_only_ever_names_a_real_fp_family():
     fall back to `-march=native` and the cell would be measured under flags nobody chose."""
     labels = ["gcc", "clang", "nvhpc", "intel", "some-future-toolchain"]
     for label in labels:
-        assert crosslang_xl.family_of(label) in flags._FP, label
-        assert crosslang_xl.family_of(label) in flags._REDUCED_FP, label
+        assert harness.family_of(label) in flags._FP, label
+        assert harness.family_of(label) in flags._REDUCED_FP, label
 
 
 def test_the_two_family_vocabularies_stay_apart():
@@ -562,4 +433,4 @@ def test_the_two_family_vocabularies_stay_apart():
 
     assert compiler_family("icc") == "intel-classic" and compiler_family("icc") not in flags._FP
     assert compiler_family("icx") == "llvm"  # an Intel compiler classified llvm: the ABI, not the FP family
-    assert crosslang_xl.family_of("intel") == "intel"
+    assert harness.family_of("intel") == "intel"

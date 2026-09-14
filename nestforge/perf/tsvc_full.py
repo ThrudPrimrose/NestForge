@@ -79,11 +79,10 @@ from nestforge.dedup import cpp_body_key, variant_key
 from nestforge.extract import extract_nest_to_sdfg
 from nestforge.isolation import run_isolated
 from nestforge.perf import flags, pluto_lane, support_matrix
-from nestforge.perf.crosslang_xl import fortran_unmunge, lang_compilers
 from nestforge.toolchain import Toolchain, discover_toolchains
 from nestforge.perf.harness import (COMPILE_TIMEOUT_S, RUN_TIMEOUT_S, c_argtypes, c_call_args, call_c, finite, fmt_us,
-                                    geomean, jsonable, load_results, my_slice, native_setup, native_symbol,
-                                    rank_and_size, run_compile, signature_order)
+                                    fortran_unmunge, geomean, jsonable, lang_compilers, load_results, my_slice,
+                                    native_setup, native_symbol, rank_and_size, run_compile, signature_order)
 from nestforge.strategies import empty_strategy_reason, get_strategy, is_parallel_nest
 from nestforge.translate import emit_sources, prepare
 

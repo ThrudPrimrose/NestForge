@@ -7,10 +7,6 @@ Two pieces of the optarena dependency are surfaced natively: :mod:`nestforge.tra
 corpus). Everything else is nest-forge's own.
 """
 
-# Must run before any ``hpcagent_bench`` import: puts the pinned corpus submodule on sys.path when the
-# package is not separately installed. See nestforge/vendored.py.
-import nestforge.vendored  # noqa: F401
-
 # Must precede any ``dace.transformation.interstate`` import: extended's
 # passes.canonicalize -> vectorization -> interstate cycle only resolves when ``passes`` loads first.
 import dace.transformation.passes  # noqa: F401

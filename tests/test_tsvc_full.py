@@ -15,7 +15,7 @@ import pytest
 
 from nestforge import tsvc
 from nestforge.perf import flags, tsvc_full
-from nestforge.perf.crosslang_xl import lang_compilers
+from nestforge.perf.harness import lang_compilers
 from nestforge.toolchain import discover_toolchains
 
 

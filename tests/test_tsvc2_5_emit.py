@@ -114,8 +114,7 @@ def test_float_value_scalar_is_double_not_truncated_in_compiled_c(tmp_path):
 
     from nestforge.arena import make_inputs, run_oracle, maxdiff, scalar_ctype
     from nestforge.isolation import run_isolated
-    from nestforge.perf.crosslang_xl import signature_order
-    from nestforge.perf.tsvc_arena import c_argtypes, call_c
+    from nestforge.perf.harness import c_argtypes, call_c, signature_order
     from nestforge.translate import prepare, emit_sources
 
     cc = shutil.which("gcc") or shutil.which("clang")

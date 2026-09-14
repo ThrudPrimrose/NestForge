@@ -1,5 +1,0 @@
-# build artifacts (sources only are tracked); *.o/*.a/*.so already ignored at repo root
-*.mod
-driver
-driver_control
-omp_probe

@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import shutil
 import statistics
 import subprocess
 import time
@@ -21,7 +22,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from nestforge.arena import CTYPE, call_native, scalar_ctype
-from nestforge.toolchain import COMPILE_TIMEOUT_S, raw_signature
+from nestforge.toolchain import COMPILE_TIMEOUT_S, Toolchain, raw_signature
 
 #: Per-kernel *execution* ceiling (s); a runaway kernel would otherwise hold the fork open for the whole
 #: job. Override with ``NF_RUN_TIMEOUT``.
@@ -174,6 +175,67 @@ def native_setup(so: Path, symbol: str, sig, kernel, buffers: Dict[str, np.ndarr
     fn = ctypes.CDLL(str(so))[symbol]
     fn.argtypes, fn.restype = argtypes, None
     return fn, cargs, ptr_names
+
+
+#: language -> (numpyto target, suffix, compiler-exe candidates per family). C and Fortran both emit
+#: the same C-ABI ``<key>_fp64`` symbol (Fortran via ``bind(c)``), so ctypes calls are uniform.
+LANG_EXES = {
+    "c": {
+        "target": "c",
+        "suffix": ".c",
+        "exes": {
+            "gcc": ["gcc"],
+            "clang": ["clang"],
+            "nvhpc": ["nvc"],
+            "intel": ["icx"]
+        }
+    },
+    "fortran": {
+        "target": "fortran",
+        "suffix": ".f90",
+        "exes": {
+            "gcc": ["gfortran"],
+            "clang": ["flang-new", "flang"],
+            "nvhpc": ["nvfortran"],
+            "intel": ["ifx"]
+        }
+    },
+}
+
+
+def lang_compilers(languages: List[str], toolchains: List[Toolchain]) -> Dict[str, Dict[str, str]]:
+    """``{language: {family: compiler_path}}`` for each discovered family x requested language (e.g.
+    gcc compiles C with ``gcc``, Fortran with ``gfortran``). A family missing a compiler is absent."""
+    out: Dict[str, Dict[str, str]] = {}
+    for lang in languages:
+        spec = LANG_EXES[lang]
+        per_family: Dict[str, str] = {}
+        for tc in toolchains:
+            for exe in spec["exes"].get(tc.name, []):  # keyed by family label (gcc/clang/nvhpc)
+                path = shutil.which(exe)
+                if path:
+                    per_family[tc.name] = path
+                    break
+        out[lang] = per_family
+    return out
+
+
+def fortran_unmunge(order: List[str], names: List[str]) -> List[str]:
+    """Map Fortran arg names back to SDFG/size names. Fortran forbids a leading underscore, so the
+    translator rewrites it to ``x`` (``__sym_out_i`` -> ``x_sym_out_i``); reverse via the munge map."""
+    munge = {("x" + n[1:] if n.startswith("_") else n): n for n in names}
+    return [munge.get(a, a) for a in order]
+
+
+def family_of(name: str) -> str:
+    """Toolchain family LABEL (gcc/clang/nvhpc/intel) -> the flag-matrix FP family (gnu/llvm/nvidia/intel).
+
+    Deliberately NOT :func:`nestforge.toolchain.compiler_family`, which looks like the same function and is not:
+    that one classifies a compiler EXECUTABLE for its OpenMP ABI and linker, and speaks a different
+    vocabulary on purpose -- ``icc`` is ``intel-classic`` there and ``icx`` is ``llvm``, neither of which is
+    a key of the FP tables. Feeding one's answer to the other's consumer reads a flag table under the wrong
+    family. `tests/test_perf_units.py` pins this function's codomain to the FP tables' actual keys."""
+    return {"gcc": "gnu", "clang": "llvm", "nvhpc": "nvidia", "intel": "intel"}.get(name, "gnu")
 
 
 # --- numbers + result IO ----------------------------------------------------------------------------

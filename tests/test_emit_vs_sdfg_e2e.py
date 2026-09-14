@@ -258,8 +258,7 @@ def test_emit_compiled_matches_sdfg_across_compilers(kind, short, lang, compiler
         from nestforge.pass_lower import lower_nests_to_external_call
         from nestforge.translate import prepare, emit_sources
         from nestforge.arena import make_inputs
-        from nestforge.perf.crosslang_xl import signature_order
-        from nestforge.perf.tsvc_arena import c_argtypes, call_c
+        from nestforge.perf.harness import c_argtypes, call_c, signature_order
         make_sdfg, sizes, _ = builder_for(kind, short)
         nests = lower_nests_to_external_call(make_sdfg(), strategy="outer")
         suffix = {"c": ".c", "cpp": ".c", "fortran": ".f90"}[lang]

@@ -1,6 +1,0 @@
-[submodule "external/hpcagent-bench"]
-	path = external/hpcagent-bench
-	# HTTPS, not SSH: the repo is public and CI must stay credential-free, so a runner with no
-	# deploy key still checks the corpus out.
-	url = https://github.com/spcl/HPCAgent-Bench.git
-	branch = main
