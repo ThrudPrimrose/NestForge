@@ -290,6 +290,35 @@ def map_fission_moves(sdfg: dace.SDFG) -> List[Tuple[nodes.MapEntry, nodes.Neste
 
 
 @dataclass(slots=True)
+class FissionMove:
+    """One legal single-pair split from :func:`map_fission_moves`: ``map_entry``'s nested-SDFG body,
+    split at ``nested_sdfg`` into its independent output groups."""
+    map_entry: nodes.MapEntry
+    nested_sdfg: nodes.NestedSDFG
+
+    def label(self) -> str:
+        return f"fission-map({self.map_entry}): splits nested body {self.nested_sdfg} into independent output groups"
+
+
+def enumerate_map_fissions(sdfg: dace.SDFG) -> List[FissionMove]:
+    """:func:`map_fission_moves` wrapped as labeled :class:`FissionMove` objects, mirroring how
+    :func:`enumerate_fusions` wraps its arms for the agent-facing API."""
+    return [FissionMove(entry, nsdfg) for entry, nsdfg in map_fission_moves(sdfg)]
+
+
+def apply_map_fission(sdfg: dace.SDFG, move: FissionMove) -> None:
+    """Commit one map-fission split (from a CURRENT :func:`enumerate_map_fissions`). ``expr_index=1`` is
+    MapFission's map-with-nested-SDFG pattern -- see :func:`map_fission_moves`."""
+    MapFission.apply_to(sdfg,
+                        expr_index=1,
+                        verify=True,
+                        annotate=False,
+                        save=False,
+                        map_entry=move.map_entry,
+                        nested_sdfg=move.nested_sdfg)
+
+
+@dataclass(slots=True)
 class RegionMove:
     """One legal region merge. ``where`` maps the transformation's ``PatternNode`` names to the matched
     control-flow blocks."""

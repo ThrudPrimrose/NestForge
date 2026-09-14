@@ -13,8 +13,9 @@ scheduling agent does not edit graph nodes. It reads two views and requests move
   perfectly, a loop caches nothing.
 
 Moves are single-pair DaCe transformations, each legality-checked before it applies: vertical and
-horizontal map fusion, loop fusion, state fusion (to merge the region two nests sit in), and fission
-down to statements.
+horizontal map fusion, loop fusion, state fusion (to merge the region two nests sit in), and
+single-pair map fission (`Session.list_fissions` / `Session.fission`, splitting one map's independent
+output groups). `Session.fission_all` explodes the whole program to statement granularity in one call.
 
 | | |
 |---|---|

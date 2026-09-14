@@ -24,9 +24,10 @@ from nestforge.phases.feedback import run_feedback_loop
 from nestforge.phases.kernel import KernelSource, schedule_kernel, use_kernel_library
 from nestforge.phases.normalize import Targets, normalize
 from nestforge.phases.offload import offload
-from nestforge.phases.schedule import (FusionMove, RegionMove, apply_fusion, apply_region_fusion, can_fuse,
-                                       enumerate_fusions, enumerate_region_fusions, finish_schedule,
-                                       fission_to_statements, full_fusion, scope_metrics)
+from nestforge.phases.schedule import (FissionMove, FusionMove, RegionMove, apply_fusion, apply_map_fission,
+                                       apply_region_fusion, can_fuse, enumerate_fusions, enumerate_map_fissions,
+                                       enumerate_region_fusions, finish_schedule, fission_to_statements, full_fusion,
+                                       scope_metrics)
 from nestforge.phases.scopes import (is_parallel_nest, label_nest, lower_nests_to_external_call, offload_candidates,
                                      top_level_map_entries)
 from nestforge.phases.variants import enumerate_variants, select_variant
@@ -152,6 +153,16 @@ class Session:
     def fission_all(self) -> str:
         """Split the program to statement granularity."""
         fission_to_statements(self.sdfg)
+        self.bump()
+        return self.describe()
+
+    def list_fissions(self) -> List[dict]:
+        """Every legal single-pair map-fission split right now, each naming which nest and where it splits."""
+        return [{"id": self.mint("fission", m), "label": m.label()} for m in enumerate_map_fissions(self.sdfg)]
+
+    def fission(self, move_id: str) -> str:
+        move: FissionMove = self.resolve(move_id, "fission")
+        apply_map_fission(self.sdfg, move)
         self.bump()
         return self.describe()
 
