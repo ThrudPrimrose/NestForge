@@ -33,7 +33,8 @@ dev = [
     # PINNED: yapf's wrapping changes between releases, so an unpinned one fails the CI format gate
     "yapf==0.43.0",
     # the lint pass ([tool.ruff] below); the format gate is yapf + clang-format only
-    "ruff",
+    # PINNED: newer ruff releases widen the default rule set, which turns the lint gate red on unchanged code
+    "ruff==0.15.10",
     "clang-format",
 ]
 
