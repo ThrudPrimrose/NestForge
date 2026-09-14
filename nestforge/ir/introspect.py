@@ -30,6 +30,9 @@ BODY = ": "
 #: What a ``Handle`` is asked to name. ``region`` covers every control-flow block, ``nest`` every map.
 Handle = Callable[[str, object], str]
 
+#: The suffix appended to a top-level map's kernel line, when metrics are asked for.
+Metrics = Callable[[nodes.MapEntry], str]
+
 
 class Substitute(ast.NodeTransformer):
     """Replace each ``Name`` that has a definition with that definition's expression."""
@@ -213,12 +216,16 @@ def render_range(rng: Tuple[Any, Any, Any]) -> str:
     return text if step == 1 else f"{text}:{step}"
 
 
-def describe_graph(sdfg: dace.SDFG, handle: Optional[Handle] = None, bodies: bool = False) -> str:
+def describe_graph(sdfg: dace.SDFG,
+                   handle: Optional[Handle] = None,
+                   bodies: bool = False,
+                   metrics: Optional[Metrics] = None) -> str:
     """The SDFG as an ASCII tree for the agent. Each line is one block or kernel; the guides show
-    nesting. ``handle(kind, obj)``, when given, returns the session id to stamp on that line, and
-    ``bodies=True`` also prints what each leaf kernel computes, as numpy, under its line."""
+    nesting. ``handle(kind, obj)``, when given, returns the session id to stamp on that line,
+    ``bodies=True`` also prints what each leaf kernel computes, as numpy, under its line, and
+    ``metrics(entry)`` is appended to every top-level map's line."""
     lines: List[str] = [f"SDFG '{sdfg.label}'"]
-    walk_regions(sdfg, "", lines, handle, interstate_definitions(sdfg), bodies)
+    walk_regions(sdfg, "", lines, handle, interstate_definitions(sdfg), bodies, metrics)
     return "\n".join(lines)
 
 
@@ -228,7 +235,7 @@ def stamp(text: str, handle: Optional[Handle], kind: str, obj: object) -> str:
 
 
 def walk_regions(cfg: Union[dace.SDFG, ControlFlowRegion], prefix: str, lines: List[str], handle: Optional[Handle],
-                 defs: Dict[str, str], bodies: bool) -> None:
+                 defs: Dict[str, str], bodies: bool, metrics: Optional[Metrics]) -> None:
     """Render one CFG's blocks under ``prefix``, recursing."""
     blocks = in_order(cfg)
     for index, block in enumerate(blocks):
@@ -236,25 +243,26 @@ def walk_regions(cfg: Union[dace.SDFG, ControlFlowRegion], prefix: str, lines: L
         lines.append(prefix + (ELBOW if last else TEE) + stamp(block_line(block, defs), handle, "region", block))
         below = prefix + (BLANK if last else PIPE)
         if isinstance(block, SDFGState):
-            walk_state(block, below, lines, handle, bodies)
+            walk_state(block, below, lines, handle, bodies, metrics)
         elif isinstance(block, ConditionalBlock):
-            walk_branches(block, below, lines, handle, defs, bodies)
+            walk_branches(block, below, lines, handle, defs, bodies, metrics)
         elif isinstance(block, ControlFlowRegion):
-            walk_regions(block, below, lines, handle, defs, bodies)
+            walk_regions(block, below, lines, handle, defs, bodies, metrics)
 
 
 def walk_branches(block: ConditionalBlock, prefix: str, lines: List[str], handle: Optional[Handle],
-                  defs: Dict[str, str], bodies: bool) -> None:
+                  defs: Dict[str, str], bodies: bool, metrics: Optional[Metrics]) -> None:
     """A conditional's branches, in stored order (the first matching one wins, so that is execution order)."""
     for index, (condition, branch) in enumerate(block.branches):
         last = index == len(block.branches) - 1
         tag = "else" if condition is None else f"when {resolve_scalars(condition.as_string, defs)}"
         body = stamp(f"{branch.label}  {tag}", handle, "region", branch)
         lines.append(prefix + (ELBOW if last else TEE) + body)
-        walk_regions(branch, prefix + (BLANK if last else PIPE), lines, handle, defs, bodies)
+        walk_regions(branch, prefix + (BLANK if last else PIPE), lines, handle, defs, bodies, metrics)
 
 
-def walk_state(state: SDFGState, prefix: str, lines: List[str], handle: Optional[Handle], bodies: bool) -> None:
+def walk_state(state: SDFGState, prefix: str, lines: List[str], handle: Optional[Handle], bodies: bool,
+               metrics: Optional[Metrics]) -> None:
     """A state's kernels: every map nest plus any library node, nested scopes recursed into."""
     children = state.scope_children()
     if not any(isinstance(n, (nodes.MapEntry, nodes.LibraryNode)) for n in children[None]):
@@ -269,7 +277,10 @@ def walk_state(state: SDFGState, prefix: str, lines: List[str], handle: Optional
         for index, node in enumerate(kernels):
             last = index == len(kernels) - 1
             below = pad + (BLANK if last else PIPE)
-            lines.append(pad + (ELBOW if last else TEE) + stamp(kernel_line(state, node), handle, "nest", node))
+            text = kernel_line(state, node)
+            if metrics is not None and scope is None and isinstance(node, nodes.MapEntry):
+                text = f"{text}  {metrics(node)}"
+            lines.append(pad + (ELBOW if last else TEE) + stamp(text, handle, "nest", node))
             if isinstance(node, nodes.MapEntry):
                 if bodies:
                     lines.extend(below + BODY + line for line in kernel_body(state, state.sdfg, node, children))

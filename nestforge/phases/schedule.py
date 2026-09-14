@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Dict, Iterator, List, Optional, Tuple, Type
+from typing import Dict, Iterator, List, Optional, Tuple, Type, Union
 
 import dace
+import sympy
 from dace.sdfg import nodes
+from dace.sdfg.performance_evaluation import total_volume, work_depth
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.dataflow.map_fission import MapFission
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
@@ -18,7 +20,7 @@ from dace.transformation.passes.canonicalize import canonicalize, stage_labels
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.loop_fission import LoopFission
 
-from nestforge.ir.extract import find_state_of_node
+from nestforge.ir.extract import detach, extract_cfg_nest, extract_map_nest, find_state_of_node
 from nestforge.ir.names import inline_top_level_nsdfgs
 from nestforge.phases.normalize import FUSE_STAGE, Targets
 
@@ -320,6 +322,53 @@ def apply_region_fusion(sdfg: dace.SDFG, move: RegionMove) -> None:
     """Commit one region merge (from a CURRENT :func:`enumerate_region_fusions`). Re-verifies legality
     before applying, same as :func:`nestforge.fusion_arms.apply_fusion`."""
     move.xform.apply_to(sdfg, verify=True, annotate=False, save=False, **move.where)
+
+
+CACHE_MODEL = "map_perfect_loop_none"
+
+
+@dataclass(slots=True, frozen=True)
+class ScopeMetrics:
+    """Symbolic cost of one scope; ``oi`` is ``work / bytes``, ``None`` when no counted byte moves."""
+    work: sympy.Expr
+    depth: sympy.Expr
+    bytes: sympy.Expr
+    oi: Optional[sympy.Expr]
+
+    def suffix(self) -> str:
+        if self.oi is None:
+            oi = "-"
+        else:
+            oi = f"{float(self.oi):.4g}" if self.oi.is_number else str(self.oi)
+        return f"work={self.work} depth={self.depth} bytes={self.bytes} OI={oi}"
+
+
+def standalone_scope(sdfg: dace.SDFG, node: Union[nodes.MapEntry, LoopRegion]) -> dace.SDFG:
+    twin_sdfg = detach(sdfg)
+    if isinstance(node, nodes.MapEntry):
+        state = find_state_of_node(sdfg, node)
+        if state.entry_node(node) is not None:
+            raise TypeError(f"map {node} is nested in another map; metrics are per top-level map")
+        twin_state = twin_sdfg.states()[sdfg.states().index(state)]
+        return extract_map_nest(twin_sdfg, twin_state.node(state.node_id(node))).standalone_sdfg
+    if isinstance(node, LoopRegion) and node.parent_graph is sdfg:
+        return extract_cfg_nest(twin_sdfg, twin_sdfg.nodes()[sdfg.nodes().index(node)]).standalone_sdfg
+    raise TypeError(f"{node} is neither a top-level map of a state nor a loop at the top of the SDFG")
+
+
+def scope_metrics(sdfg: dace.SDFG, node: Union[nodes.MapEntry, LoopRegion]) -> ScopeMetrics:
+    """Work, depth, bytes moved and operational intensity of one scope, analyzed on a detached copy.
+
+    :param sdfg: The program holding ``node``; never mutated.
+    :param node: A top-level ``MapEntry`` of a state, or a ``LoopRegion`` block of ``sdfg`` itself.
+    :returns: The metrics over ``sdfg``'s symbols, bytes under :data:`CACHE_MODEL`.
+    """
+    scope = standalone_scope(sdfg, node)
+    work, depth = work_depth.analyze_sdfg(scope, {}, work_depth.get_tasklet_work_depth, [], False)
+    read, write = total_volume.analyze_sdfg(scope, cache_model=CACHE_MODEL)
+    moved = dace.symbolic.simplify(read + write)
+    oi = dace.symbolic.simplify(work / moved) if moved != 0 else None
+    return ScopeMetrics(work, depth, moved, oi)
 
 
 def post_fusion_stages(targets: Targets) -> List[str]:

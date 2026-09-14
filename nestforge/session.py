@@ -25,7 +25,7 @@ from nestforge.phases.kernel import KernelSource, schedule_kernel, use_kernel_li
 from nestforge.phases.normalize import Targets, normalize
 from nestforge.phases.schedule import (FusionMove, RegionMove, apply_fusion, apply_region_fusion, can_fuse,
                                        enumerate_fusions, enumerate_region_fusions, finish_schedule,
-                                       fission_to_statements, full_fusion)
+                                       fission_to_statements, full_fusion, scope_metrics)
 from nestforge.phases.scopes import (DEFAULT_GRANULARITY, is_parallel_nest, label_nest, lower_nests_to_external_call,
                                      offload_candidates, top_level_map_entries)
 from nestforge.phases.variants import enumerate_variants, select_variant
@@ -93,9 +93,15 @@ class Session:
 
     # Phase 1: inter-kernel schedule
 
-    def describe(self, bodies: bool = False) -> str:
-        """The program as a text tree; nest lines carry the ids :meth:`can_fuse` accepts."""
-        return describe_graph(self.sdfg, handle=self.tree_handle, bodies=bodies)
+    def describe(self, bodies: bool = False, metrics: bool = False) -> str:
+        """The program as a text tree; nest lines carry :meth:`can_fuse` ids, and scope metrics if ``metrics``."""
+        return describe_graph(self.sdfg,
+                              handle=self.tree_handle,
+                              bodies=bodies,
+                              metrics=self.metrics_suffix if metrics else None)
+
+    def metrics_suffix(self, entry: nodes.MapEntry) -> str:
+        return scope_metrics(self.sdfg, entry).suffix()
 
     def tree_handle(self, kind: str, obj: object) -> str:
         return self.mint("nest", obj) if kind == "nest" else f"region:{obj.label}"
