@@ -27,17 +27,14 @@ import nestforge.build.toolchain as toolchain_mod
 assert shutil.which("g++") is not None, "g++ not on PATH (setup_apt.sh installs it)"
 
 from nestforge.corpus.bench import iter_dace_kernels
-from nestforge.phases.scopes import get_strategy
+from nestforge.phases.scopes import parallel_top_level_maps
 from nestforge.ir.extract import extract_nest_to_sdfg
 from nestforge.corpus.translate import prepare
 from nestforge.build.arena import make_inputs, run_oracle
-from nestforge.build.sdfg import (CODEGEN_IMPLS, BuildOptions, LinkTimings, build_sdfg, codegen_config,
-                                  codegen_impls_available, compare_link_modes, config_has, dace_runtime_include,
-                                  default_codegen_impl)
-from nestforge.build.toolchain import (LIBMVEC, LIBNVOMP, LIBOMP, SLEEF, SVML, VECTOR_LIBS, OpenMPRuntime,
-                                       available_linkers, compiler_family, driver_lib_path, driver_search_dirs,
-                                       fastest_linker, hint_dirs, ldconfig_dirs, linkable_lib_dir, linker_supported,
-                                       llvm_version, parse_params, runtime_installed, vectorlib_installed)
+from nestforge.build.sdfg import BuildOptions, build_sdfg, dace_runtime_include
+from nestforge.build.toolchain import (LIBOMP, OpenMPRuntime, compiler_family, driver_lib_path, driver_search_dirs,
+                                       hint_dirs, ldconfig_dirs, linkable_lib_dir, llvm_version, parse_params,
+                                       runtime_installed)
 
 
 def kernels():
@@ -46,7 +43,7 @@ def kernels():
 
 def first_nest(short):
     sdfg = kernels()[short].to_sdfg(simplify=True)
-    parent, node = get_strategy("skip-taskloops")(sdfg)[0]
+    parent, node = parallel_top_level_maps(sdfg)[0]
     return extract_nest_to_sdfg(parent, node, name="nest")
 
 
@@ -181,12 +178,10 @@ def test_openmp_runtime_is_a_separate_per_compiler_flag_axis():
     assert rt.compile_flags("icx") == ["-fopenmp=libomp"]
     # gnu emits GOMP calls at compile and links the mandated runtime explicitly (not -fopenmp -> libgomp).
     assert rt.compile_flags("g++") == ["-fopenmp"] and without_search_paths(rt.link_flags("g++")) == ["-lomp"]
-    # intel-classic and nvidia link ONLY their native runtimes (icc->libiomp5, nvc->libnvomp), not libomp.
+    # intel-classic links ONLY its native runtime (icc->libiomp5), not libomp.
     from nestforge.build.toolchain import LIBIOMP5
     assert LIBIOMP5.compile_flags("icc") == ["-qopenmp"]
     assert without_search_paths(LIBIOMP5.link_flags("icc")) == ["-qopenmp"]
-    assert LIBNVOMP.compile_flags("nvc") == ["-mp"]
-    assert without_search_paths(LIBNVOMP.link_flags("nvc")) == ["-mp"]
     # a lib_dir threads onto the link line as a -L/-rpath PAIR (so the .so is found at run time too),
     # and both are discovery, not selection -- without_search_paths must drop both.
     pinned = OpenMPRuntime(lib_dir="/opt/omp/lib").link_flags("g++")
@@ -195,10 +190,10 @@ def test_openmp_runtime_is_a_separate_per_compiler_flag_axis():
 
 
 def test_openmp_runtime_registry_covers_the_popular_runtimes():
-    """The four popular runtimes are ready knobs: libgomp (GNU), libomp (LLVM), libiomp5 (Intel, ABI-compat
-    with libomp), libnvomp (NVIDIA, nvc -mp only)."""
+    """The three popular runtimes are ready knobs: libgomp (GNU), libomp (LLVM), libiomp5 (Intel,
+    ABI-compat with libomp)."""
     from nestforge.build.toolchain import LIBGOMP, LIBIOMP5, OPENMP_RUNTIMES
-    assert set(OPENMP_RUNTIMES) == {"libomp", "libgomp", "libiomp5", "libnvomp"}
+    assert set(OPENMP_RUNTIMES) == {"libomp", "libgomp", "libiomp5"}
     # gcc on Intel's runtime (GOMP-compat); search paths filtered (see without_search_paths).
     assert without_search_paths(LIBIOMP5.link_flags("g++")) == ["-liomp5"]
     assert without_search_paths(LIBGOMP.link_flags("g++")) == ["-lgomp"]
@@ -207,22 +202,16 @@ def test_openmp_runtime_registry_covers_the_popular_runtimes():
 def test_openmp_abi_compatibility_is_enforced():
     """A runtime is usable only if the compiler can actually LINK it, which depends on HOW the family
     selects a runtime, not ABI alone: gcc links any gomp-capable runtime by soname; LLVM name-selects only
-    libomp/libiomp5 (kmpc ABI); icc/nvc++ hard-link their native runtime alone. Mismatches raise."""
-    from nestforge.build.toolchain import LIBGOMP, LIBIOMP5, LIBNVOMP, LIBOMP
-    # nvc++ / icc link ONLY their native runtimes.
-    assert LIBNVOMP.compatible("nvc++") and not LIBOMP.compatible("nvc++") and not LIBIOMP5.compatible("nvc++")
+    libomp/libiomp5 (kmpc ABI); icc hard-links its native runtime alone. Mismatches raise."""
+    from nestforge.build.toolchain import LIBGOMP, LIBIOMP5, LIBOMP
     assert LIBIOMP5.compatible("icc") and not LIBOMP.compatible("icc") and not LIBGOMP.compatible("icc")
-    # clang name-selects libomp/libiomp5 but NOT libgomp (no __kmpc_*) and NOT libnvomp (unreachable by name).
+    # clang name-selects libomp/libiomp5 but NOT libgomp (no __kmpc_*).
     assert LIBOMP.compatible("clang++") and LIBIOMP5.compatible("clang++")
-    assert not LIBGOMP.compatible("clang++") and not LIBNVOMP.compatible("clang++")
-    with pytest.raises(ValueError, match="libnvomp"):  # nvidia gets the -mp / libnvomp-only message
-        LIBGOMP.compile_flags("nvc++")
+    assert not LIBGOMP.compatible("clang++")
     with pytest.raises(ValueError, match="kmpc"):  # clang + libgomp: wrong ABI
         LIBGOMP.link_flags("clang++")
-    with pytest.raises(ValueError, match="name-selectable"):  # clang + libnvomp: right ABI, not name-selectable
-        LIBNVOMP.compile_flags("clang++")
-    # gcc (GOMP) works against every runtime, since libomp/libiomp5/libnvomp carry a GOMP-compat layer.
-    for rt in (LIBOMP, LIBGOMP, LIBIOMP5, LIBNVOMP):
+    # gcc (GOMP) works against every runtime, since libomp/libiomp5 carry a GOMP-compat layer.
+    for rt in (LIBOMP, LIBGOMP, LIBIOMP5):
         assert rt.compatible("g++")
 
 
@@ -326,27 +315,24 @@ def test_parallel_map_emits_omp_pragma():
     assert "#pragma omp parallel for" in frame.read_text()
 
 
-# Each compiler builds the SAME parallel nest, linking the ONE runtime it can (libomp for gcc/clang/icx,
-# libnvomp for nvc++) -- the mixed-compiler / single-runtime sanity matrix. nvc++/icpx are vendor
-# compilers, only ever present in a vendor-configured environment (setup_apt.sh --nvhpc/--oneapi).
+# Each compiler builds the SAME parallel nest, linking the ONE mandated runtime (libomp) -- the
+# mixed-compiler / single-runtime sanity matrix. icpx is a vendor compiler, only ever present in a
+# vendor-configured environment (setup_apt.sh --oneapi).
 @pytest.mark.parametrize(
     "compiler",
     [
         "g++",
         "clang++",
-        pytest.param("nvc++", marks=pytest.mark.vendor),  # vendor compiler: absent on the CI runner
         pytest.param("icpx", marks=pytest.mark.vendor),  # vendor compiler: absent on the CI runner
     ])
 def test_parallel_loop_links_openmp_across_compilers(compiler):
     assert shutil.which(compiler) is not None, f"{compiler} not on PATH"
-    # nvc++ links only libnvomp (its -mp native runtime); everyone else uses the mandated libomp.
-    rt = LIBNVOMP if compiler_family(compiler) == "nvidia" else LIBOMP
+    rt = LIBOMP
     assert runtime_installed(rt), f"{rt.name} not installed here (no OpenMP runtime on PATH/LD_LIBRARY_PATH/ldconfig)"
     assert rt.compatible(compiler), f"{compiler} must be able to link {rt.name}"
     n = 256
     x, y = np.random.default_rng(0).random(n), np.random.default_rng(1).random(n)
     buf = {"X": x.copy(), "Y": y.copy(), "Z": np.zeros(n)}
-    # Compiler-neutral flags only (no -march=native: nvc++ spells it -tp); OpenMP is the separate axis.
     built = build_sdfg(parallel_axpy_sdfg(), Path(tempfile.mkdtemp(prefix="nf_par_")),
                        BuildOptions(compiler=compiler, flags=["-O2", "-fPIC", "-shared", "-std=c++20"], openmp=rt))
     built.run(buf, {"N": n})
@@ -369,98 +355,6 @@ def test_external_linking_build_is_correct():
     assert (built.so_path.parent / f"lib{built.name}_nest.a").exists()  # the static node lib was produced
 
 
-def test_compare_link_modes_tracks_compile_time_with_and_without_external_linking():
-    """One codegen pass, then the same frame compiled two ways (monolithic vs. external-linked ``.a`` ->
-    ``.so``); all three times are tracked and positive."""
-    t = compare_link_modes(parallel_axpy_sdfg(), Path(tempfile.mkdtemp(prefix="nf_linkmodes_")))
-    assert isinstance(t, LinkTimings)
-    assert t.codegen_seconds > 0.0
-    assert t.compile_seconds_monolithic > 0.0
-    assert t.compile_seconds_external > 0.0
-
-
-def test_external_linking_with_lto_is_correct():
-    """External linking + ``-flto`` (LTO-aware ``ar``) still matches the oracle -- recovers the cross-TU
-    inlining external linking otherwise costs."""
-    assert shutil.which("gcc-ar") is not None, "gcc-ar (LTO-aware archiver) not on PATH (ships with gcc)"
-    owned_build_matches_oracle("scientific_computing/dense_linear_algebra/gemm/gemm",
-                               opts=BuildOptions(link_external=True, lto=True))
-
-
-def test_available_linkers_and_fastest_pick():
-    """Linker discovery reports installed fast linkers (fastest first); the picker chooses the fastest one
-    the compiler is new enough to accept, and never touches nvc/nvc++ (no -fuse-ld)."""
-    av = available_linkers()
-    assert all(Path(p).exists() for p in av.values())  # every reported linker really is on disk
-    assert set(av) <= {"mold", "lld", "gold"}
-    picked = fastest_linker("g++")
-    if picked:
-        # the pick is the fastest INSTALLED linker g++ actually supports (may skip mold on an old gcc).
-        ld = picked[0].split("=", 1)[1]
-        assert ld in av and linker_supported("g++", ld)
-        supported = [x for x in av if linker_supported("g++", x)]
-        assert ld == supported[0]  # fastest-first among the supported ones
-    else:
-        assert not any(linker_supported("g++", x) for x in av)  # nothing installed is supported
-    assert fastest_linker("nvc++") == []  # NVIDIA keeps its default linker
-
-
-def test_fastest_linker_version_gate_skips_unsupported(monkeypatch):
-    """The pick is VERSION-gated: an old compiler predating -fuse-ld=mold must not get mold even when
-    installed. Forces the version below mold's floor (unlike the host-dependent check above)."""
-    monkeypatch.setattr(toolchain_mod, "compiler_version", lambda c: (9, 0))  # gcc 9 < mold's (12,1) floor; >= lld/gold
-    assert not toolchain_mod.linker_supported("g++", "mold")
-    picked = toolchain_mod.fastest_linker("g++")
-    if picked:  # whatever it fell back to (lld/gold), g++ at v9 must actually support it, and it isn't mold
-        assert picked != ["-fuse-ld=mold"]
-        assert toolchain_mod.linker_supported("g++", picked[0].split("=", 1)[1])
-
-
-def test_veclib_flag_mapping_and_compatibility():
-    """Each vector-math library maps to the right per-compiler-family flag; an incompatible pairing raises
-    rather than silently emitting nothing."""
-    assert set(VECTOR_LIBS) == {"sleef", "libmvec", "svml"}
-    # x86: no -fveclib=SLEEF, so SLEEF emits via the libmvec token (glibc _ZGV*) but LINKS libsleefgnuabi.
-    assert SLEEF.compile_flags("clang++") == ["-fveclib=libmvec"]
-    assert SLEEF.compatible("g++") and SLEEF.compile_flags("g++") == []
-    assert any("-lsleefgnuabi" in a for a in SLEEF.link_flags("clang++"))  # linked lib, pinned via push-state
-    # libmvec: clang names it; gcc uses it automatically (no compile flag) but links -lmvec.
-    assert LIBMVEC.compile_flags("clang++") == ["-fveclib=libmvec"]
-    assert LIBMVEC.compatible("g++") and LIBMVEC.compile_flags("g++") == []
-    assert any("-lmvec" in a for a in LIBMVEC.link_flags("g++"))
-    # SVML: clang/icx use -fveclib=SVML -> __svml_*; gcc always emits _ZGV* (libsvml has none), so it raises.
-    assert SVML.compile_flags("icx") == ["-fveclib=SVML"]
-    assert not SVML.compatible("g++")
-    with pytest.raises(ValueError):
-        SVML.compile_flags("g++")
-    # NVIDIA cannot use any of these.
-    assert not any(vl.compatible("nvc++") for vl in VECTOR_LIBS.values())
-
-
-def test_veclib_link_flags_come_after_the_source_in_every_link_mode(monkeypatch, tmp_path):
-    """The veclib ``-l`` is pinned NEEDED via ``--push-state,--no-as-needed,...,--pop-state``, so unlike a
-    bare ``-l`` its POSITION no longer decides linkage. Still, assert it appears exactly once, after the
-    source/object, in every branch of :func:`compile` (construction hygiene)."""
-    cmds = []
-    monkeypatch.setattr(build_mod, "run", lambda cmd, **kw: cmds.append(list(cmd)))
-    frame = tmp_path / "src" / "cpu" / "k.cpp"
-    frame.parent.mkdir(parents=True)
-    frame.write_text("")
-    for opts in (BuildOptions(compiler="clang++",
-                              veclib=SLEEF), BuildOptions(compiler="clang++", veclib=SLEEF, openmp=LIBOMP),
-                 BuildOptions(compiler="clang++", veclib=SLEEF, link_external=True)):
-        cmds.clear()
-        build_mod.compile(frame, tmp_path, "k", opts)
-        link = [c for c in cmds if any("-lsleefgnuabi" in a for a in c)]
-        assert len(link) == 1, opts
-        cmd = link[0]
-        vec_idx = next(i for i, a in enumerate(cmd) if "-lsleefgnuabi" in a)  # the combined push-state arg
-        # whichever input carries the code that references the veclib symbols (source / object / archive)
-        inputs = [str(frame), str(tmp_path / "k.o"), str(tmp_path / "libk_nest.a")]
-        pos = [cmd.index(i) for i in inputs if i in cmd]
-        assert pos and max(pos) < vec_idx, cmd
-
-
 def test_parse_params_strips_the_const_qualifier_only_as_a_word():
     """``const`` is a QUALIFIER, not a substring: params literally named ``constant``/``const_term`` must
     keep their name, or the ctypes bind looks them up under a mangled key."""
@@ -475,18 +369,6 @@ def test_parse_params_refuses_an_unmapped_by_value_scalar_type():
     ABI), so the callee reads garbage with no ctypes error."""
     with pytest.raises(ValueError, match="uint64_t"):
         parse_params("k_state_t *__state, uint64_t n")
-
-
-def test_veclib_libmvec_build_is_correct():
-    """Building against glibc's libmvec (g++: -lmvec, no compile flag) links + runs correctly."""
-    assert vectorlib_installed(LIBMVEC), "glibc libmvec not found (ships in libc6)"
-    n = 128
-    x, y = np.random.default_rng(2).random(n), np.random.default_rng(3).random(n)
-    buf = {"X": x.copy(), "Y": y.copy(), "Z": np.zeros(n)}
-    built = build_sdfg(parallel_axpy_sdfg(), Path(tempfile.mkdtemp(prefix="nf_vec_")),
-                       BuildOptions(compiler="g++", flags=["-O3", "-march=native", "-fPIC", "-shared"], veclib=LIBMVEC))
-    built.run(buf, {"N": n})
-    np.testing.assert_allclose(buf["Z"], x + y, rtol=1e-12, atol=1e-12)
 
 
 def test_owned_build_reusable_handle_program():
@@ -506,46 +388,6 @@ def test_owned_build_reusable_handle_program():
             built.program(buf, sizes)  # repeated in-place calls on the same state handle
     finally:
         built.close()
-
-
-# --- codegen-implementation axis (legacy | experimental) ---------------------------------------------
-def test_config_has_reflects_schema():
-    """config_has answers whether the running DaCe schema DEFINES a key, without getattr/hasattr, so the
-    codegen axis can degrade on a build lacking the key."""
-    assert config_has("compiler", "build_type")  # a core key every DaCe schema has
-    assert not config_has("compiler", "cpu", "definitely_not_a_real_key_zzz")
-
-
-def test_codegen_impls_available_default_first_and_consistent():
-    """The toggleable axis always offers legacy, lists the default first, and default_codegen_impl agrees
-    with the first entry."""
-    impls = codegen_impls_available()
-    assert "legacy" in impls
-    assert impls[0] == default_codegen_impl()  # default-first ordering
-    assert set(impls) <= set(CODEGEN_IMPLS)
-    # A plain build defaults to whatever is available first -- experimental where the key exists.
-    assert BuildOptions().codegen_impl == default_codegen_impl()
-
-
-def test_codegen_config_degrades_gracefully_without_the_key(monkeypatch):
-    """Without compiler.cpu.implementation (simulated), the default is legacy, a legacy scope is a no-op,
-    and an explicit experimental request RAISES rather than silently mislabelling itself as legacy."""
-    monkeypatch.setattr("nestforge.build.sdfg.config_has", lambda *path: False)
-    assert default_codegen_impl() == "legacy"
-    assert codegen_impls_available() == ("legacy", )
-    with codegen_config("legacy"):
-        pass  # no key to set; the emit_tree_reductions pin is harmless
-    with pytest.raises(ValueError):
-        with codegen_config("experimental"):
-            pass
-
-
-@pytest.mark.parametrize("impl", codegen_impls_available())
-def test_both_codegen_impls_build_and_match_oracle(impl):
-    """Every toggleable codegen impl builds the same nest to a working kernel matching the oracle -- the
-    axis is genuinely selectable, not just a stamped label."""
-    owned_build_matches_oracle("scientific_computing/structured_grids/jacobi_1d/jacobi_1d",
-                               opts=BuildOptions(codegen_impl=impl))
 
 
 def test_vectorized_owned_build_matches_oracle():
@@ -583,7 +425,7 @@ def test_toolchain_is_importable_without_dace():
 # --- compiler diagnostics on the DaCe-generated C++ -------------------------------------------------
 def test_resolved_flags_guarantee_the_standard_and_warnings_without_forcing_them():
     """Both are FILLED IN, not appended blindly: nearly every caller passes its own ``flags`` for one axis
-    (an -O level, a veclib) and would otherwise lose them. ``-Werror`` is deliberately absent -- this
+    (an -O level, an FP mode) and would otherwise lose them. ``-Werror`` is deliberately absent -- this
     compiles generated C++ we do not own, so a warning is a codegen signal, not a failed measurement."""
     assert BuildOptions().resolved_flags()[-1] == "-Wall"
     assert BuildOptions(flags=["-O2"]).resolved_flags() == ["-O2", "-std=c++20", "-Wall"]

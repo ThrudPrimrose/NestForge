@@ -3,8 +3,8 @@
 """Second audit wave: the remaining findings from the full-repo review. Unit set, no compile.
 
 Covers the contract/robustness bugs that silently mislead rather than crash -- ``can_fuse`` disagreeing
-with ``enumerate_fusions``, a documented FP level crashing flag composition, a runtime linked without an
-rpath, a rank>=2 size-1 buffer indexed as a sub-array, and extern-call ABI args with no connector.
+with ``enumerate_fusions``, a runtime linked without an rpath, a rank>=2 size-1 buffer indexed as a
+sub-array, and extern-call ABI args with no connector.
 """
 import re
 from pathlib import Path
@@ -66,19 +66,6 @@ def test_live_output_does_not_mask_a_transient_fusion():
     assert enumerate_fusions(sdfg), "fixture must produce a fusable pair, else it tests nothing"
     verdicts = [can_fuse(sdfg, a, b) for a, b in map_pairs(sdfg)]
     assert any(v == "yes" for v in verdicts), f"a move is offered but no pair says yes: {verdicts}"
-
-
-def test_lane_flags_accepts_every_documented_fp_level():
-    # ExternalOptimizer/Proposal document fp_mode as FP_LEVELS, but anything except 'strict-ieee' fell into
-    # the REDUCED table and raised KeyError during optimizer construction.
-    for level in flags.FP_LEVELS:
-        out, reason = flags.lane_flags("gnu", level, "none", "c")
-        assert out is not None, f"{level} declined: {reason}"
-
-
-def test_lane_flags_declines_an_unknown_fp_mode():
-    out, reason = flags.lane_flags("gnu", "not-a-mode", "none", "c")
-    assert out is None and "unknown fp_mode" in reason  # declines like any unsupported axis, never KeyError
 
 
 def test_openmp_link_flags_carry_an_rpath_for_a_pinned_dir():
@@ -174,31 +161,6 @@ def test_every_link_search_path_is_paired_with_an_rpath():
             if "rpath" not in window:
                 offenders.append(f"{path.name}:{num + 1}: {line.strip()}")
     assert not offenders, "a -L without a paired -Wl,-rpath:\n" + "\n".join(offenders)
-
-
-def test_ccache_is_auto_detected_but_never_used_where_time_is_measured():
-    """The native build pipeline picks up a compiler cache when installed, EXCEPT where compile time is the
-    reported measurement -- a cache hit returns in ~0s and would make that number meaningless."""
-    from nestforge.build.toolchain import ccache_available, ccache_prefix
-    auto = ccache_prefix(None)
-    assert auto == (["ccache"] if ccache_available() else [])  # AUTO follows availability
-    assert ccache_prefix(False) == []  # measurement paths opt out unconditionally
-
-
-def test_ccache_can_be_disabled_by_env(monkeypatch):
-    from nestforge.build import toolchain
-    monkeypatch.setenv("NF_NO_CCACHE", "1")
-    toolchain.ccache_available.cache_clear()
-    assert toolchain.ccache_available() is False
-    toolchain.ccache_available.cache_clear()  # leave the probe clean for other tests
-
-
-def test_compare_link_modes_forces_the_cache_off():
-    # the two compile_seconds it returns ARE the comparison, so it must not be served from a cache.
-    import inspect
-    from nestforge.build import sdfg as build
-    src = inspect.getsource(build.compare_link_modes)
-    assert src.count("use_ccache=False") == 2  # both the monolithic and external compiles
 
 
 def test_relative_maxdiff_accepts_a_reassociated_reduction_that_absolute_rejects():

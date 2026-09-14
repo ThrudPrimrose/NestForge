@@ -32,7 +32,6 @@ def test_abi_order_pointer_star_stripped():
 # --- flag composition (flags.*) -----------------------------------------------------------------------
 def test_base_flags_native_tuning_per_family():
     assert flags.base_flags("gnu") == ["-O3", "-march=native", "-fPIC", "-shared"]
-    assert flags.base_flags("nvidia")[1] == "-tp=native"  # nvc uses -tp=native, not -march=native
 
 
 def test_fortran_fp_flags_strip_unsupported_and_add_gfortran_guards():
@@ -48,7 +47,6 @@ def test_fortran_fp_flags_strip_unsupported_and_add_gfortran_guards():
 def test_cost_flags_no_vec_and_cheap_collapse():
     assert flags.cost_flags("gnu", "no-vec") == ["-fno-tree-vectorize"]
     assert flags.cost_flags("llvm", "no-vec") == ["-fno-vectorize", "-fno-slp-vectorize"]
-    assert flags.cost_flags("nvidia", "no-vec") == ["-Mnovect"]
     assert flags.cost_flags("gnu", "cheap") == ["-fvect-cost-model=cheap"]
     assert flags.cost_flags("llvm", "cheap") == []  # clang has no cheap knob -> collapses to default
     assert flags.cost_flags("gnu", "default") == []
@@ -62,28 +60,6 @@ def test_flag_matrix_atol_covers_every_level():
         assert cflags[:1] == ["-O3"] and level in flags.FP_LEVELS and model in flags.COST_MODELS
 
 
-def test_veclib_flags_compose_and_gate_by_compatibility():
-    # 'none'/empty -> no flags; incompatible (svml on gcc) or missing compiler -> rejected with a reason.
-    # -L/-rpath is machine-dependent, so assert membership, not exact lists.
-    assert flags.veclib_flags("g++", "none") == ([], None)
-    assert flags.veclib_flags("clang++", None) == ([], None)
-    fl, r = flags.veclib_flags("clang++", "sleef")  # x86: emit via libmvec token, link libsleefgnuabi
-    assert r is None and "-fveclib=libmvec" in fl and any("-lsleefgnuabi" in a for a in fl)
-    flg, rg = flags.veclib_flags("g++", "libmvec")  # glibc: no compile flag, -lmvec pinned at link
-    assert rg is None and any("-lmvec" in a for a in flg) and not any("-fveclib" in a for a in flg)
-    bad, reason = flags.veclib_flags("g++", "svml")  # gcc emits _ZGV*, never __svml_* -> unusable
-    assert bad is None and "incompatible" in reason
-    nocc, reason2 = flags.veclib_flags(None, "sleef")
-    assert nocc is None and "without a compiler" in reason2
-
-
-def test_lane_flags_threads_veclib_and_rejects_incompatible():
-    ok, r = flags.lane_flags("llvm", "default-fp", "default", "c", compiler="clang++", veclib="sleef")
-    assert r is None and "-fveclib=libmvec" in ok and any("-lsleefgnuabi" in a for a in ok)
-    bad, reason = flags.lane_flags("gnu", "default-fp", "default", "c", compiler="g++", veclib="svml")
-    assert bad is None and "incompatible" in reason  # unsupported cell recorded, never silently emitted
-
-
 def toolchain_labelled(label, cc):
     return Toolchain(name=label, cc=cc, cxx=None, source="path")
 
@@ -91,7 +67,6 @@ def toolchain_labelled(label, cc):
 def test_toolchain_fp_family_maps_labels_to_fp_families():
     assert toolchain_labelled("gcc", "gcc").fp_family == "gnu"
     assert toolchain_labelled("clang", "clang").fp_family == "llvm"
-    assert toolchain_labelled("nvhpc", "nvc").fp_family == "nvidia"
     assert toolchain_labelled("intel", "icx").fp_family == "intel"
     assert toolchain_labelled("unknown", "some-cc").fp_family == "gnu"  # safe default
 
@@ -237,12 +212,11 @@ def test_rewind_snapshot_writes_through_to_the_bound_buffer():
 
 
 def test_toolchain_fp_family_only_ever_names_a_real_fp_family():
-    """`Toolchain.fp_family` feeds `flags.lane_flags`, which indexes the FP tables by family. A toolchain it
-    maps to a family those tables do not have would decline every cell -- or worse, `base_flags` would
+    """`Toolchain.fp_family` feeds `flags.flag_matrix`, which indexes the FP tables by family. A toolchain
+    it maps to a family those tables do not have would decline every cell -- or worse, `base_flags` would
     silently fall back to `-march=native` and the cell would be measured under flags nobody chose."""
-    for label, cc in (("gcc", "gcc"), ("clang", "clang"), ("nvhpc", "nvc"), ("intel", "icx"), ("future", "fcc")):
+    for label, cc in (("gcc", "gcc"), ("clang", "clang"), ("intel", "icx"), ("future", "fcc")):
         assert toolchain_labelled(label, cc).fp_family in flags._FP, label
-        assert toolchain_labelled(label, cc).fp_family in flags._REDUCED_FP, label
 
 
 def test_the_two_family_vocabularies_stay_apart():

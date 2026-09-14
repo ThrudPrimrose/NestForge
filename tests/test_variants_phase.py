@@ -46,20 +46,15 @@ def gcc_variants(**axes):
 
 
 def vars_of(variant):
-    return {"fp_mode": variant.fp_mode, "cost_model": variant.cost_model, "veclib": variant.veclib}
+    return {"fp_mode": variant.fp_mode, "cost_model": variant.cost_model}
 
 
 def test_gcc_variants_cross_every_fp_rung_with_every_cost_model():
     variants = enumerate_variants([GCC])
 
-    unvectorized = [v for v in variants if v.veclib == "none"]
-    assert {(v.fp_mode, v.cost_model)
-            for v in unvectorized} == {(f, c)
-                                       for f in flags.FP_LEVELS
-                                       for c in flags.COST_MODELS}
-    assert len(unvectorized) == len(flags.FP_LEVELS) * len(flags.COST_MODELS)
+    assert {(v.fp_mode, v.cost_model) for v in variants} == {(f, c) for f in flags.FP_LEVELS for c in flags.COST_MODELS}
+    assert len(variants) == len(flags.FP_LEVELS) * len(flags.COST_MODELS)
     assert all(v.compiler == "g++" for v in variants)
-    assert {v.veclib for v in variants} <= {"none", "sleef", "libmvec"}, "gcc never emits __svml_* calls"
     assert len({v.label for v in variants}) == len(variants)
     for v in variants:
         assert ("-fno-tree-vectorize" in v.flags) == (v.cost_model == "no-vec"), v.label
@@ -72,8 +67,7 @@ def test_a_cost_model_the_family_has_no_knob_for_is_not_a_second_build():
     variants = enumerate_variants([CLANG])
 
     assert {v.cost_model for v in variants} == {"default", "no-vec"}
-    assert len([v for v in variants if v.veclib == "none"]) == len(flags.FP_LEVELS) * 2
-    assert all("-fveclib" not in " ".join(v.flags) for v in variants), "the veclib reaches the build, not the flags"
+    assert len(variants) == len(flags.FP_LEVELS) * 2
 
 
 def test_a_toolchain_without_a_cxx_compiler_contributes_no_variant():
@@ -99,7 +93,7 @@ def test_the_sweep_measures_identical_builds_once_and_the_fastest_correct_build_
     _, ext, boundary = lowered_vadd()
     src = schedule_kernel(ext, boundary, Targets(), tmp_path / "gen")
     prep = prepare(boundary, ext.name, tmp_path / "ref")
-    variants = gcc_variants(cost_model="default", veclib="none")
+    variants = gcc_variants(cost_model="default")
 
     result = select_variant(src, prep, {"N": 1037}, 3, variants, tmp_path / "variants")
 
@@ -133,8 +127,7 @@ def test_the_winning_archive_links_statically_into_the_parent_and_matches_numpy(
     sdfg, ext, boundary = lowered_vadd()
     src = schedule_kernel(ext, boundary, Targets(), tmp_path / "gen")
     prep = prepare(boundary, ext.name, tmp_path / "ref")
-    result = select_variant(src, prep, {"N": 257}, 1,
-                            gcc_variants(fp_mode="strict-ieee", cost_model="default", veclib="none"),
+    result = select_variant(src, prep, {"N": 257}, 1, gcc_variants(fp_mode="strict-ieee", cost_model="default"),
                             tmp_path / "variants")
     assert result.library is not None, [c.verdict.error for c in result.cells]
 

@@ -12,14 +12,15 @@ from pathlib import Path
 
 import pytest
 
-from nestforge.build.flags import FP_LEVELS, lane_flags
+from nestforge.build import flags as flags_mod
+from nestforge.build.flags import FP_LEVELS
 from nestforge.build.dedup import (asm_bodies, asm_body_key, collapse, cpp_body_key, function_bodies, needed_libraries,
                                    parse_disassembly, representatives, variant_key)
 from nestforge.build.sdfg import BuildOptions, build_archive
-from nestforge.build.toolchain import VECTOR_LIBS, compiler_family
+from nestforge.build.toolchain import compiler_family
 
 SYMBOL = "k_fp64"
-#: A transcendental so the veclib axis has something to substitute, in a loop the back end will vectorize.
+#: A transcendental, in a loop the back end will vectorize, for the needed_libraries link-axis test.
 SIN_KERNEL = f"""#include <math.h>
 extern "C" void {SYMBOL}(double *__restrict__ a, const double *__restrict__ b, int n) {{
   for (int i = 0; i < n; ++i) a[i] = sin(b[i]);
@@ -38,19 +39,15 @@ assert shutil.which("clang++") is not None, "clang++ not on PATH (setup_apt.sh i
 assert shutil.which("objdump") is not None, "objdump not on PATH (setup_apt.sh: binutils)"
 
 
-def build(tmp_path: Path,
-          source: str,
-          fp_mode: str,
-          veclib: str = "none",
-          tag: str = "v",
-          compiler: str = "g++") -> Path:
+def build(tmp_path: Path, source: str, fp_mode: str, tag: str = "v", compiler: str = "g++") -> Path:
     """Build ``source`` the way a phase-4 variant is built and return the object the keys read."""
     src = tmp_path / f"{tag}.cpp"
     src.write_text(source)
-    composed, reason = lane_flags(compiler_family(compiler), fp_mode, "default", "c", compiler=compiler)
-    assert composed is not None, reason
+    family = compiler_family(compiler)
+    composed = flags_mod.base_flags(family) + flags_mod.fp_flags(family, fp_mode) + flags_mod.cost_flags(
+        family, "default")
     out = tmp_path / tag
-    opts = BuildOptions(compiler=compiler, flags=composed, veclib=VECTOR_LIBS.get(veclib))
+    opts = BuildOptions(compiler=compiler, flags=composed)
     build_archive([src], out, out / f"lib{tag}.a", out / f"lib{tag}.so", opts)
     return out / f"{tag}.o"
 
@@ -106,33 +103,6 @@ def test_the_asm_key_separates_fp_rungs_the_cpp_key_cannot(tmp_path):
     strict = build(tmp_path, SUM_KERNEL, "strict-ieee", tag="strict")
     fast = build(tmp_path, SUM_KERNEL, "fast-math", tag="fast")
     assert asm_body_key(strict, SYMBOL) != asm_body_key(fast, SYMBOL), "reassociation must change the code"
-
-
-def test_the_asm_key_collapses_a_veclib_cell_that_emits_no_packed_call(tmp_path):
-    """This is the rule ``ExternalOptimizer`` currently hardcodes, DERIVED instead: gcc emits no packed
-    math call without -ffast-math, so a veclib cell at a strict rung is the same object as veclib=none.
-    A hand-written rule is only right about the toolchain it was measured on; this one asks the object."""
-    plain = build(tmp_path, SIN_KERNEL, "strict-ieee", veclib="none", tag="plain")
-    veclib = build(tmp_path, SIN_KERNEL, "strict-ieee", veclib="libmvec", tag="veclib")
-    assert asm_body_key(plain, SYMBOL) == asm_body_key(veclib, SYMBOL)
-
-
-def test_the_asm_key_keeps_a_veclib_cell_that_does_emit_one(tmp_path):
-    """The other direction, so the test above cannot pass by collapsing everything. clang, because there
-    the veclib IS a compile flag (-fveclib=): at the rung where the packed call is emitted the two
-    objects differ and both must be measured."""
-    plain = build(tmp_path, SIN_KERNEL, "assume-finite", veclib="none", tag="plain_c", compiler="clang++")
-    veclib = build(tmp_path, SIN_KERNEL, "assume-finite", veclib="libmvec", tag="veclib_c", compiler="clang++")
-    assert asm_body_key(plain, SYMBOL) != asm_body_key(veclib, SYMBOL)
-
-
-def test_on_gnu_the_veclib_is_a_LINK_axis_the_object_key_cannot_see(tmp_path):
-    """Not a defect in the key -- a fact about gcc, and the reason :func:`needed_libraries` exists. gcc
-    takes no veclib compile flag (``-ffast-math`` alone emits ``_ZGV*``); which library resolves the call
-    is settled at link. Deduping a gnu veclib cell on the OBJECT alone would collapse a real axis."""
-    plain = build(tmp_path, SIN_KERNEL, "fast-math", veclib="none", tag="plain_fm")
-    veclib = build(tmp_path, SIN_KERNEL, "fast-math", veclib="libmvec", tag="veclib_fm")
-    assert asm_body_key(plain, SYMBOL) == asm_body_key(veclib, SYMBOL)
 
 
 #: One objdump body, verbatim shape: an immediate, a rip-relative load with a relocation comment, and a
@@ -195,9 +165,9 @@ def test_an_object_with_no_disassembly_raises_rather_than_hashing_nothing(tmp_pa
 
 
 def test_needed_libraries_reads_the_link_axis_the_object_key_misses(tmp_path):
-    """The other half of a gnu veclib cell: one object, two links. Keying a ``.so`` means composing the
-    two -- same code plus a different resolver is still a different variant to measure."""
-    obj = build(tmp_path, SIN_KERNEL, "fast-math", veclib="none", tag="need")
+    """One object, two links: keying a ``.so`` means composing the two -- same code plus a different
+    resolver is still a different variant to measure."""
+    obj = build(tmp_path, SIN_KERNEL, "fast-math", tag="need")
     bare, withlib = tmp_path / "libbare.so", tmp_path / "libwith.so"
     subprocess.run(["gcc", "-shared", str(obj), "-o", str(bare)], check=True, capture_output=True)
     subprocess.run(["gcc", "-shared", str(obj), "-Wl,--no-as-needed", "-lmvec", "-o",

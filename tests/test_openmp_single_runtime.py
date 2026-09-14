@@ -46,10 +46,10 @@ double kern2(const double *a, int n) {
 """
 
 #: The OpenMP runtimes a linked object can name, by DT_NEEDED soname stem.
-OMP_SONAMES = ("libgomp", "libomp", "libiomp5", "libnvomp")
+OMP_SONAMES = ("libgomp", "libomp", "libiomp5")
 
 #: The C compilers of the families nest-forge sweeps.
-COMPILERS = ("gcc", "clang", "icx", "nvc")
+COMPILERS = ("gcc", "clang", "icx")
 
 
 def linked_openmp_runtimes(so):
@@ -88,7 +88,7 @@ def prune_reason(compiler, runtime):
     """Why ``compiler`` cannot link ``runtime`` (ABI or name selection first, then installation), or None."""
     if not runtime.compatible(compiler):
         return f"{compiler} cannot link {runtime.name} (single-runtime contract)"
-    if compiler_family(compiler) not in ("intel-classic", "nvidia") and not lib_linkable(runtime.soname, compiler):
+    if compiler_family(compiler) != "intel-classic" and not lib_linkable(runtime.soname, compiler):
         return f"{runtime.name} is not linkable by {compiler} (runtime not installed for it)"
     return None
 
@@ -119,8 +119,7 @@ def build_cell(tmp_path, compiler, runtime, src=OMP_SRC, tag="k"):
 def test_every_compiler_links_the_same_single_runtime(tmp_path):
     """THE contract: across every available compiler, a cell links exactly ONE OpenMP runtime, and it is
     the SAME one for all of them. Before the fix gcc's bare -fopenmp linked libgomp while clang's linked
-    libomp. The global runtime is libomp, what the owned build resolves for gcc and clang; a compiler that
-    cannot link it (nvc) is pruned."""
+    libomp. The global runtime is libomp, what the owned build resolves for gcc, clang and icx."""
     assert all(usable_openmp(cc) is LIBOMP for cc in available_compilers() if compiler_family(cc) in ("gnu", "llvm"))
     seen = {}
     for cc in available_compilers():
@@ -178,7 +177,6 @@ def test_libgomp_is_pruned_for_llvm_but_kept_for_gnu():
     assert libomp.compatible("gcc") and libomp.compatible("clang")
     with pytest.raises(ValueError, match="libgomp"):  # refused with a reason, never a silently serial flag
         libgomp.compile_flags("clang")
-    assert not libomp.compatible("nvc") and OPENMP_RUNTIMES["libnvomp"].compatible("nvc")
     assert not libomp.compatible("icc") and OPENMP_RUNTIMES["libiomp5"].compatible("icc")
     assert compiler_family("icx") == "llvm" and libomp.compatible("icx")  # icx is clang-based: name-selects libomp
 
@@ -193,7 +191,7 @@ so_a, so_b, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
 def mapped():
     with open("/proc/self/maps") as fh:
         maps = fh.read()
-    return sorted({x for x in ("libgomp", "libomp", "libiomp5", "libnvomp") if x + ".so" in maps})
+    return sorted({x for x in ("libgomp", "libomp", "libiomp5") if x + ".so" in maps})
 
 before = mapped()
 a = np.arange(n, dtype=np.float64)
