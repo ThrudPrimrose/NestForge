@@ -20,7 +20,6 @@ import numpy as np
 import dace
 from dace.codegen import codegen
 from dace.codegen import compiler as dace_compiler
-from dace.transformation.auto.auto_optimize import set_fast_implementations
 
 from nestforge.build.toolchain import (CXX_STD, DEFAULT_COMPILER, DEFAULT_FLAGS, OpenMPRuntime, Param, VectorMathLib,
                                        ar_for, ccache_prefix, fastest_linker, fat_lto_flags, parse_params, run,
@@ -160,7 +159,6 @@ class BuildOptions:
     compiler: str = DEFAULT_COMPILER
     flags: Optional[List[str]] = None  # None -> DEFAULT_FLAGS
     expand_libnodes: bool = False
-    fast_libnodes: bool = False  # alternative to expand_libnodes: pick the fast OpenBLAS/MKL impl
     blas_link: Optional[List[str]] = None
     openmp: Optional[OpenMPRuntime] = None
     link_external: bool = False  # link the nest as a separate static .a (else a monolithic single TU)
@@ -186,12 +184,6 @@ class BuildOptions:
         if "-Wall" not in flags and "-w" not in flags:
             flags.append("-Wall")
         return flags
-
-
-def set_fast_libnodes(sdfg: dace.SDFG) -> None:
-    """Select the fastest available library-node implementation (OpenBLAS/MKL/LAPACK) for every library
-    node, instead of lowering to naive loops."""
-    set_fast_implementations(sdfg, dace.dtypes.DeviceType.CPU)
 
 
 @dataclass(slots=True)
@@ -288,8 +280,6 @@ def generate_program(sdfg: dace.SDFG, out_dir: Path, opts: Optional[BuildOptions
     sdfg = copy.deepcopy(sdfg)
     if opts.expand_libnodes:
         sdfg.expand_library_nodes()
-    elif opts.fast_libnodes:
-        set_fast_libnodes(sdfg)
     if opts.vectorize is not None:
         apply_vectorizer(sdfg, opts.vectorize)
     frame, name = generate_program_folder(sdfg, out_dir, opts.codegen_impl)

@@ -31,10 +31,9 @@ from nestforge.phases.scopes import get_strategy
 from nestforge.ir.extract import extract_nest_to_sdfg
 from nestforge.corpus.translate import prepare
 from nestforge.build.arena import make_inputs, run_oracle
-from dace.sdfg import nodes
 from nestforge.build.sdfg import (CODEGEN_IMPLS, BuildOptions, LinkTimings, build_sdfg, codegen_config,
                                   codegen_impls_available, compare_link_modes, config_has, dace_runtime_include,
-                                  default_codegen_impl, set_fast_libnodes)
+                                  default_codegen_impl)
 from nestforge.build.toolchain import (LIBMVEC, LIBNVOMP, LIBOMP, SLEEF, SVML, VECTOR_LIBS, OpenMPRuntime,
                                        available_linkers, compiler_family, driver_lib_path, driver_search_dirs,
                                        fastest_linker, hint_dirs, ldconfig_dirs, linkable_lib_dir, linker_supported,
@@ -507,23 +506,6 @@ def test_owned_build_reusable_handle_program():
             built.program(buf, sizes)  # repeated in-place calls on the same state handle
     finally:
         built.close()
-
-
-def test_set_fast_libnodes_selects_implementation():
-    """set_fast_libnodes picks a concrete library-node implementation (OpenBLAS/MKL, else the pure fallback)
-    instead of expanding to naive loops -- the node keeps its library form with an implementation set."""
-    N = dace.symbol("N")
-
-    @dace.program
-    def mm(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
-        C[:] = A @ B
-
-    sdfg = mm.to_sdfg(simplify=True)
-    libnodes = [n for s in sdfg.all_states() for n in s.nodes() if isinstance(n, nodes.LibraryNode)]
-    assert libnodes, "gemm should lower to a library node before expansion"
-    set_fast_libnodes(sdfg)  # must not raise, and must not expand the node away
-    still = [n for s in sdfg.all_states() for n in s.nodes() if isinstance(n, nodes.LibraryNode)]
-    assert still and all(n.implementation for n in still)  # every node carries a chosen implementation
 
 
 # --- codegen-implementation axis (legacy | experimental) ---------------------------------------------
