@@ -373,7 +373,10 @@ def test_a_kernel_source_computes_what_the_sdfg_computes():
     kernel(A, B, from_source)
 
     from_sdfg = np.zeros(8)
-    sdfg(A=A.copy(), B=B.copy(), C=from_sdfg)
+    # NumPy never contracts a*b+c into an FMA; without this the SDFG's result depends on the host CPU.
+    strict_args = dc.Config.get("compiler", "cpu", "args") + " -ffp-contract=off"
+    with dc.config.set_temporary("compiler", "cpu", "args", value=strict_args):
+        sdfg(A=A.copy(), B=B.copy(), C=from_sdfg)
     assert np.array_equal(from_source, from_sdfg), (from_source, from_sdfg)
 
 

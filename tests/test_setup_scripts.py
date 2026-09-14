@@ -1,20 +1,20 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Smoke tests for the repo's shell scripts (setup_apt / format) and the format gate.
+"""Smoke tests for the repo's shell scripts and the ruff format gate.
 
 These don't run apt/installs -- they guard that each script is syntactically valid, self-documents
-(``--help`` exits 0), rejects a bad flag, and that the tree is actually formatted (so a future edit that
-skips ``scripts/format.sh`` is caught in CI, not in review)."""
+(``--help`` exits 0), rejects a bad flag, and that the tree is ruff-formatted and lint-clean (so a commit
+that skipped pre-commit is caught by the tests too)."""
 
-import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "scripts"
-SH_SCRIPTS = ["setup_apt.sh", "format.sh"]
+SH_SCRIPTS = ["setup_apt.sh"]
 
 
 @pytest.mark.parametrize("name", SH_SCRIPTS)
@@ -39,9 +39,8 @@ def test_script_rejects_unknown_flag(name):
     assert r.returncode != 0, f"{name} accepted an unknown flag"
 
 
-def test_repo_python_and_cpp_are_formatted():
-    """``scripts/format.sh --check`` passes on the committed tree: yapf (python, 120) + clang-format
-    (C/C++, 160) both clean. This is the format regression guard the CI gate also runs."""
-    assert shutil.which("clang-format"), "clang-format not on PATH (pyproject dev extra installs it)"
-    r = subprocess.run(["bash", str(SCRIPTS / "format.sh"), "--check"], capture_output=True, text=True)
-    assert r.returncode == 0, f"tree not formatted -- run scripts/format.sh\n{r.stdout}\n{r.stderr}"
+@pytest.mark.parametrize("check", [["format", "--check"], ["check"]], ids=["format", "lint"])
+def test_committed_tree_is_ruff_clean(check):
+    """The pre-commit ruff hooks would leave the tree unchanged: formatted and lint-clean."""
+    r = subprocess.run([sys.executable, "-m", "ruff", *check, str(REPO)], capture_output=True, text=True)
+    assert r.returncode == 0, f"ruff {' '.join(check)} failed -- run pre-commit run --all-files\n{r.stdout}{r.stderr}"
