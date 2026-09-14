@@ -33,9 +33,9 @@ from nestforge.build.toolchain import (
     Param,
     cudart_dir,
     cudart_link_flags,
-    driver_lib_path,
     parse_params,
     run,
+    runtime_library,
     signature,
     support_rpath_flags,
     usable_openmp,
@@ -271,9 +271,12 @@ def program_compiler() -> str:
 
 def libomp_cmake_args(compiler: str) -> List[str]:
     """CMake cache values under which DaCe's ``find_package(OpenMP)`` resolves LLVM libomp for ``compiler``."""
-    library = driver_lib_path(LIBOMP.soname, compiler)
+    library = runtime_library(LIBOMP.soname, compiler)
     if library is None:
-        raise LookupError(f"{compiler} resolves no lib{LIBOMP.soname}.so; the process's one OpenMP runtime is libomp")
+        raise LookupError(
+            f"no lib{LIBOMP.soname} for {compiler}: neither it, an LLVM driver, llvm-config nor the library search path "
+            "names one, and the process's one OpenMP runtime is libomp"
+        )
     return [f"-DOpenMP_CXX_LIB_NAMES={LIBOMP.soname}", f"-DOpenMP_{LIBOMP.soname}_LIBRARY={library}"]
 
 

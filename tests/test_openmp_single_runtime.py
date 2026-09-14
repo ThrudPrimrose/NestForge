@@ -29,8 +29,8 @@ from nestforge.build.toolchain import (
     LIBOMP,
     OPENMP_RUNTIMES,
     compiler_family,
-    driver_lib_path,
     lib_linkable,
+    runtime_library,
     usable_openmp,
 )
 
@@ -316,8 +316,8 @@ def test_every_openmp_entry_a_gxx_object_calls_is_exported_by_libomp(tmp_path):
     source.write_text(OMP_SRC_ENTRIES)
     obj = tmp_path / "entries.o"
     subprocess.run(["g++", "-x", "c++", "-O2", "-fopenmp", "-c", str(source), "-o", str(obj)], check=True)
-    libomp = driver_lib_path(LIBOMP.soname, "g++")
-    assert libomp is not None, "g++ resolves no libomp.so"
+    libomp = runtime_library(LIBOMP.soname, "g++")
+    assert libomp is not None, "no libomp found for g++ (setup_apt.sh installs libomp-dev)"
 
     called = {name for name in symbol_names(["nm", "-u", str(obj)]) if name.startswith(("GOMP_", "omp_"))}
     exported = symbol_names(["nm", "-D", "--defined-only", str(libomp)])

@@ -17,7 +17,7 @@ import tempfile
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Type, Union
+from typing import Dict, Iterator, List, Optional, Tuple, Type, Union
 
 C_SCALAR = {
     "int32_t": ctypes.c_int32,
@@ -112,15 +112,20 @@ class OpenMPRuntime:
     def link_flags(self, compiler: str) -> List[str]:
         """Flags to link a program against THIS runtime only (avoids dual-runtime oversubscription)."""
         self.check(compiler)
-        fam = compiler_family(compiler)
-        # explicit lib_dir wins (pin a spack/module runtime, "" forces bare -l<soname>); else discover it
-        pinned = self.lib_dir if self.lib_dir is not None else linkable_lib_dir(self.soname, compiler)
+        pinned, library = self.link_location(compiler)
         # -L alone leaves no RUNPATH; ctypes.CDLL fails to open the lib after build without -rpath too
         libdir = [f"-L{pinned}", f"-Wl,-rpath,{pinned}"] if pinned else []
-        if fam == "llvm":
+        if compiler_family(compiler) == "llvm":
             return [f"-fopenmp={self.name}", *libdir]
         # gnu: link the runtime EXPLICITLY (bare -fopenmp would pull libgomp instead)
-        return [*libdir, f"-l{self.soname}"]
+        return [*libdir, library]
+
+    def link_location(self, compiler: str) -> Tuple[Optional[str], str]:
+        """``(-L directory or None, library flag)``. An explicit ``lib_dir`` wins (pin a spack/module runtime; ``""``
+        forces a bare ``-l<soname>``); otherwise both are discovered, see :func:`runtime_library`."""
+        if self.lib_dir is not None:
+            return self.lib_dir, f"-l{self.soname}"
+        return linkable_lib_dir(self.soname, compiler), library_flag(self.soname, compiler)
 
 
 #: icx auto-links libsvml/libimf/libirng/libintlc off-path with NO RUNPATH; probing this one finds the set.
@@ -253,38 +258,78 @@ def linker_finds(soname: str, compiler: str = DEFAULT_COMPILER) -> bool:
     return driver_lib_path(soname, compiler) is not None
 
 
+#: LLVM drivers asked where an LLVM runtime lives: distributions install libomp under the LLVM prefix, off g++'s path.
+LLVM_DRIVERS = ("clang++", "clang")
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def llvm_config_libdir() -> Optional[str]:
+    """``llvm-config --libdir`` of the LLVM on PATH, or ``None``."""
+    if shutil.which("llvm-config") is None:
+        return None
+    try:
+        out = subprocess.run(["llvm-config", "--libdir"], capture_output=True, text=True, timeout=PROBE_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None
+
+
+def shared_object_in(directory: str, soname: str) -> Optional[Path]:
+    """``lib<soname>.so`` in ``directory``, else its highest-versioned ``lib<soname>.so.N``."""
+    unversioned = Path(directory) / f"lib{soname}.so"
+    if unversioned.exists():
+        return unversioned
+    versioned = sorted(Path(directory).glob(f"lib{soname}.so.*"))
+    return versioned[-1] if versioned else None
+
+
+def library_search_dirs(soname: str) -> Iterator[str]:
+    """Where a runtime may sit once no driver names it: the environment's library paths, each probe driver's
+    own search dirs, the loader cache ranked by LLVM version, then common layouts."""
+    yield from env_library_dirs()  # explicit intent (spack/module) outranks anything inferred
+    for probe in LIB_PROBE_DRIVERS:
+        if shutil.which(probe):
+            yield from driver_search_dirs(probe)
+    # ldconfig lists dirs in cache order, not version order; rank like hint_dirs or llvm-14 wins over 18
+    yield from sorted(ldconfig_dirs(soname), key=lambda d: (llvm_version(Path(d)), d), reverse=True)
+    yield from hint_dirs()
+
+
+def runtime_library_candidates(soname: str, compiler: str) -> Iterator[Optional[Path]]:
+    yield driver_lib_path(soname, compiler)
+    for driver in LLVM_DRIVERS:
+        if driver != compiler and shutil.which(driver):
+            yield driver_lib_path(soname, driver)
+    libdir = llvm_config_libdir()
+    if libdir is not None:
+        yield shared_object_in(libdir, soname)
+    for directory in library_search_dirs(soname):
+        yield shared_object_in(directory, soname)
+
+
+def runtime_library(soname: str, compiler: str) -> Optional[Path]:
+    """The shared object ``lib<soname>`` links from for ``compiler``: its own driver first, then an LLVM driver
+    on PATH and ``llvm-config --libdir``, then the environment, loader and layout search. A versioned
+    ``lib<soname>.so.N`` stands in for a missing ``lib<soname>.so``; ``None`` if nothing provides it."""
+    return next((path for path in runtime_library_candidates(soname, compiler) if path is not None), None)
+
+
+def library_flag(soname: str, compiler: str) -> str:
+    """``-l<soname>``, or ``-l:<file>`` when only a versioned shared object provides the runtime."""
+    found = runtime_library(soname, compiler)
+    return f"-l:{found.name}" if found is not None and found.name != f"lib{soname}.so" else f"-l{soname}"
+
+
 @functools.lru_cache(maxsize=None, typed=True)
 def linkable_lib_dir(soname: str, compiler: str = DEFAULT_COMPILER) -> Optional[str]:
-    """The -L directory needed to link lib<soname>, or None if the linker already finds it. Loader and
-    linker search different paths (Ubuntu's libomp-dev symlink can miss the link path while ldconfig
-    still reports it installed). Tries: env path, sibling drivers, then a layout guess."""
+    """The -L directory needed to link lib<soname>, or None if ``compiler`` finds it unaided or nothing provides
+    it. Loader and linker search different paths, so the directory comes from :func:`runtime_library`."""
     if shutil.which(compiler) is None:
         return None  # no linker to ask; a guessed -L would be worse than none
     if linker_finds(soname, compiler):
         return None
-    for d in env_library_dirs():  # explicit intent (spack/module) outranks anything inferred
-        p = Path(d)
-        if (p / f"lib{soname}.so").exists() or (p / f"lib{soname}.a").exists():
-            return d
-    for probe in LIB_PROBE_DRIVERS:
-        if probe != compiler and shutil.which(probe):
-            found = driver_lib_path(soname, probe)
-            if found is not None:
-                return str(found.parent)
-    # nothing resolved it yet: fall back to driver search dirs, a hardcoded ladder would go stale
-    for probe in LIB_PROBE_DRIVERS:
-        if shutil.which(probe):
-            for d in driver_search_dirs(probe):
-                if (Path(d) / f"lib{soname}.so").exists():
-                    return d
-    # ldconfig lists dirs in cache order, not version order; rank like hint_dirs or llvm-14 wins over 18
-    for d in sorted(ldconfig_dirs(soname), key=lambda d: (llvm_version(Path(d)), d), reverse=True):
-        if (Path(d) / f"lib{soname}.so").exists():
-            return d
-    for d in hint_dirs():  # last resort: common layouts, only for a runtime NO query above admitted to
-        if (Path(d) / f"lib{soname}.so").exists():
-            return d
-    return None
+    found = runtime_library(soname, compiler)
+    return str(found.parent) if found is not None else None
 
 
 def lib_linkable(soname: str, compiler: str = DEFAULT_COMPILER) -> bool:

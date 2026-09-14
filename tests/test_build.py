@@ -24,6 +24,7 @@ import dace
 
 import nestforge.build.sdfg as build_mod
 import nestforge.build.toolchain as toolchain_mod
+from nestforge.build.toolchain import LIBOMP, runtime_library
 
 assert shutil.which("g++") is not None, "g++ not on PATH (setup_apt.sh installs it)"
 
@@ -34,7 +35,6 @@ from nestforge.corpus.translate import prepare
 from nestforge.build.arena import make_inputs, run_oracle
 from nestforge.build.sdfg import BuildOptions, build_sdfg, dace_runtime_include
 from nestforge.build.toolchain import (
-    LIBOMP,
     OpenMPRuntime,
     compiler_family,
     driver_lib_path,
@@ -168,6 +168,7 @@ def test_ldconfig_candidates_are_version_ranked_before_first_match(monkeypatch):
     monkeypatch.setattr(toolchain_mod, "env_library_dirs", lambda: [])
     monkeypatch.setattr(toolchain_mod, "driver_lib_path", lambda soname, compiler: None)
     monkeypatch.setattr(toolchain_mod, "driver_search_dirs", lambda compiler: [])
+    monkeypatch.setattr(toolchain_mod, "llvm_config_libdir", lambda: None)
     # cache order is deliberately oldest-first, the order that used to win
     monkeypatch.setattr(toolchain_mod, "ldconfig_dirs", lambda soname: ["/opt/llvm-14/lib", "/opt/llvm-18/lib"])
     monkeypatch.setattr(toolchain_mod.Path, "exists", lambda self: "llvm-" in str(self))
@@ -567,3 +568,117 @@ def test_compiler_warnings_are_reported_but_bounded():
         assert len(seen) == 1
     finally:
         toolchain_mod.WARNED.clear()
+
+
+def write_tool(bin_dir: Path, name: str, answer: str) -> None:
+    """A fake driver on PATH that answers every query with ``answer``."""
+    tool = bin_dir / name
+    tool.write_text(f'#!/bin/sh\necho "{answer}"\n')
+    tool.chmod(0o755)
+
+
+@pytest.fixture
+def cold_lookup_caches():
+    """Runtime lookups are cached per name; a fake PATH must neither read nor leave a cached answer."""
+    caches = (toolchain_mod.driver_lib_path, toolchain_mod.llvm_config_libdir, toolchain_mod.linkable_lib_dir)
+    for cache in caches:
+        cache.cache_clear()
+    yield
+    for cache in caches:
+        cache.cache_clear()
+
+
+def isolate_lookup(tmp_path: Path, monkeypatch) -> Path:
+    """A PATH holding only the fake drivers a test writes, no environment, loader cache or layout hint."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+    monkeypatch.delenv("LIBRARY_PATH", raising=False)
+    monkeypatch.setattr(toolchain_mod, "ldconfig_dirs", lambda soname: [])
+    monkeypatch.setattr(toolchain_mod, "LIB_DIR_HINT_ROOTS", ())
+    monkeypatch.setattr(toolchain_mod, "LIB_DIR_HINTS", ())
+    for cache in (toolchain_mod.driver_lib_path, toolchain_mod.llvm_config_libdir, toolchain_mod.linkable_lib_dir):
+        cache.cache_clear()
+    return bin_dir
+
+
+@pytest.mark.parametrize(
+    "gxx_answers, clang_answers, found_by",
+    [(True, True, "gxx"), (False, True, "clang"), (False, False, "llvm-config")],
+    ids=["the_compiler_first", "then_an_llvm_driver", "then_llvm_config_with_only_a_versioned_so"],
+)
+def test_libomp_lookup_asks_the_compiler_then_an_llvm_driver_then_llvm_config(
+    tmp_path, monkeypatch, cold_lookup_caches, gxx_answers, clang_answers, found_by
+):
+    """Ubuntu installs libomp under the LLVM prefix, where g++ does not search: the lookup must reach it through
+    clang or llvm-config, in that order, and accept libomp.so.5 when the unversioned symlink is missing."""
+    bin_dir = isolate_lookup(tmp_path, monkeypatch)
+    dirs = {name: tmp_path / name for name in ("gxx", "clang", "llvm-config")}
+    for directory in dirs.values():
+        directory.mkdir()
+    (dirs["gxx"] / "libomp.so").write_bytes(b"")
+    (dirs["clang"] / "libomp.so").write_bytes(b"")
+    (dirs["llvm-config"] / "libomp.so.5").write_bytes(b"")
+    write_tool(bin_dir, "g++", f"{dirs['gxx']}/libomp.so" if gxx_answers else "libomp.so")
+    write_tool(bin_dir, "clang", f"{dirs['clang']}/libomp.so" if clang_answers else "libomp.so")
+    write_tool(bin_dir, "llvm-config", str(dirs["llvm-config"]))
+    expected = {"gxx": dirs["gxx"] / "libomp.so", "clang": dirs["clang"] / "libomp.so"}.get(
+        found_by, dirs["llvm-config"] / "libomp.so.5"
+    )
+
+    assert runtime_library("omp", "g++") == expected
+
+
+OMP_KERNEL_CXX = """extern "C" double kern(const double *a, int n) {
+  double s = 0.0;
+  #pragma omp parallel for reduction(+:s)
+  for (int i = 0; i < n; i++) s += a[i];
+  return s;
+}
+"""
+
+LOAD_AND_CALL = """import ctypes, sys
+lib = ctypes.CDLL(sys.argv[1])
+lib.kern.restype = ctypes.c_double
+n = 1000
+values = (ctypes.c_double * n)(*range(n))
+print(lib.kern(values, n))
+"""
+
+
+@pytest.mark.e2e
+def test_a_libomp_only_llvm_config_finds_links_and_loads_from_its_own_directory(
+    tmp_path, monkeypatch, cold_lookup_caches
+):
+    """The CI layout, rebuilt in a temp dir: libomp only as libomp.so.5 under an LLVM prefix g++ does not search.
+    The discovered directory serves the link (-L, -l:libomp.so.5) and the load (rpath), with nothing on the
+    loader path."""
+    real_gxx, real_libomp = shutil.which("g++"), runtime_library("omp", "g++")
+    assert real_gxx and real_libomp, "g++ and libomp are installed (setup_apt.sh)"
+    real_env = dict(os.environ)  # the build and the load see the real PATH; only the lookup sees the fake one
+    llvm_lib = tmp_path / "llvm" / "lib"
+    llvm_lib.mkdir(parents=True)
+    (llvm_lib / "libomp.so.5").symlink_to(os.path.realpath(real_libomp))
+    bin_dir = isolate_lookup(tmp_path, monkeypatch)
+    write_tool(bin_dir, "g++", "libomp.so")
+    write_tool(bin_dir, "llvm-config", str(llvm_lib))
+
+    flags = LIBOMP.link_flags("g++")
+
+    assert flags == [f"-L{llvm_lib}", f"-Wl,-rpath,{llvm_lib}", "-l:libomp.so.5"]
+    source, obj, shared = tmp_path / "kern.cpp", tmp_path / "kern.o", tmp_path / "libkern.so"
+    source.write_text(OMP_KERNEL_CXX)
+    subprocess.run([real_gxx, "-O2", "-fPIC", "-fopenmp", "-c", str(source), "-o", str(obj)], check=True, env=real_env)
+    subprocess.run(
+        [real_gxx, "-shared", "-Wl,--as-needed", str(obj), *flags, "-o", str(shared)], check=True, env=real_env
+    )
+    dynamic = subprocess.run(
+        ["readelf", "-d", str(shared)], capture_output=True, text=True, check=True, env=real_env
+    ).stdout
+    assert "[libomp.so.5]" in dynamic and str(llvm_lib) in dynamic
+    loaded = subprocess.run(
+        [sys.executable, "-c", LOAD_AND_CALL, str(shared)], capture_output=True, text=True, env=real_env
+    )
+    assert loaded.returncode == 0, loaded.stderr[-1500:]
+    assert float(loaded.stdout) == 999 * 1000 / 2
