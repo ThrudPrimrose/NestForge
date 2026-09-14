@@ -7,16 +7,16 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Union
+from typing import TYPE_CHECKING, List, Union
 
 from nestforge.build.toolchain import COMPILE_TIMEOUT_S
 
-from hpcagent_bench import emit_bridge
-from hpcagent_bench.spec import BenchSpec
+if TYPE_CHECKING:
+    from hpcagent_bench.spec import BenchSpec
 
 DRIVER = "numpyto_common.cli"
 
-__all__ = ["BenchSpec", "DRIVER", "translate"]
+__all__ = ["DRIVER", "translate"]
 
 
 def translate(spec: BenchSpec,
@@ -29,6 +29,7 @@ def translate(spec: BenchSpec,
 
     :returns: the generated source files, C then C++ then Fortran.
     """
+    from hpcagent_bench import emit_bridge  # deferred: hpcagent_bench imports nestforge at top level
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     with emit_bridge.bench_info_tempfile(spec) as bench_info:

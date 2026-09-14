@@ -14,16 +14,12 @@ import numpy as np
 
 import dace
 
-from hpcagent_bench import autogen
-from hpcagent_bench.initialize import fill_index_array
-from hpcagent_bench.sizing import is_plain_int
-from hpcagent_bench.spec import KERNELS, BenchSpec
-
 from nestforge.build.arena import resolve_shape
 from nestforge.ir.extract import Boundary
 
 if TYPE_CHECKING:
     from types import ModuleType
+    from hpcagent_bench.spec import BenchSpec
 
 #: Tracks whose ``_dace.py`` this module generates on demand (gitignored, never committed).
 DACE_TRACKS = ("loop_level_reasoning", "scientific_computing", "machine_learning")
@@ -80,6 +76,9 @@ def module_path(short_name: str) -> str:
 
 def iter_dace_kernels(track: Optional[str] = None) -> Iterator[CorpusKernel]:
     """Yields every corpus kernel that ships a ``_dace.py`` impl, optionally filtered by track."""
+    # deferred: hpcagent_bench imports nestforge at top level
+    from hpcagent_bench import autogen
+    from hpcagent_bench.spec import KERNELS, BenchSpec
     for short_name in KERNELS:
         if track is not None and not short_name.startswith(f"{track}/"):
             continue
@@ -98,6 +97,9 @@ def iter_dace_kernels(track: Optional[str] = None) -> Iterator[CorpusKernel]:
 def materialize_dace_corpus(track: Optional[str] = None) -> None:
     """Generates every missing ``_dace.py`` up front; call once, serially, before a parallel test run
     -- concurrent xdist workers would otherwise race the same non-atomic write."""
+    # deferred: hpcagent_bench imports nestforge at top level
+    from hpcagent_bench import autogen
+    from hpcagent_bench.spec import KERNELS
     for short_name in KERNELS:
         if short_name.split("/", 1)[0] not in DACE_TRACKS:
             continue
@@ -113,6 +115,7 @@ def dace_kernel_names(track: Optional[str] = None) -> List[str]:
 def preset_sizes(kernel: CorpusKernel, preset: str) -> Dict[str, int]:
     """Concrete shape-symbol sizes for one preset rung, read from the kernel's manifest (skips
     non-int fuzz-spec entries)."""
+    from hpcagent_bench.sizing import is_plain_int  # deferred: hpcagent_bench imports nestforge at top level
     rung = kernel.spec.parameters.get(preset, {})
     return {sym: int(size) for sym, size in rung.items() if is_plain_int(size)}
 
@@ -124,6 +127,9 @@ def index_fills(manifest_name: Optional[str],
     """Valid-subscript fill values for the nest's manifest-declared integer INDEX arrays, at the SDFG
     descriptor's dtype -- a permutation fill, not the default all-zero uniform-float-cast fill that
     would degrade a gather/scatter to a same-index race once lowered to a ``dace.map``."""
+    # deferred: hpcagent_bench imports nestforge at top level
+    from hpcagent_bench.initialize import fill_index_array
+    from hpcagent_bench.spec import BenchSpec
     if manifest_name is None:
         return {}
     spec = BenchSpec.load(manifest_name)

@@ -9,6 +9,8 @@ leak in the one consumer that cannot debug it.
 import ast
 import importlib
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -71,3 +73,18 @@ def test_skill_has_no_email_address(skill):
     """A skill is committed to the repo, so it must carry no personal contact information."""
     hits = EMAIL_RE.findall(skill.read_text())
     assert not hits, f"{skill} contains an email address: {hits}"
+
+
+def test_importing_nestforge_never_loads_hpcagent_bench():
+    """HPCAgent-Bench imports nest-forge at its own top level, so the reverse import must never fire --
+    a top-level `import hpcagent_bench` anywhere under nestforge/ would deadlock that cycle."""
+    script = ("import importlib, pkgutil, sys\n"
+              "import nestforge\n"
+              "for info in pkgutil.walk_packages(nestforge.__path__, nestforge.__name__ + '.'):\n"
+              "    importlib.import_module(info.name)\n"
+              "leaked = sorted(m for m in sys.modules if m.startswith(('hpcagent_bench', 'numpyto')))\n"
+              "sys.stdout.write(','.join(leaked))\n")
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, cwd=REPO)
+    assert result.returncode == 0, result.stderr
+    leaked = [name for name in result.stdout.strip().split(",") if name]
+    assert not leaked, f"importing nestforge modules loaded: {leaked}"
