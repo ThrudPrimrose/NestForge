@@ -3,7 +3,7 @@
 """The gate that decides whether a measured kernel counts as CORRECT.
 
 Every arena cell, every differential swap and every E-driver row is admitted or rejected by
-``arena.diff_stats`` and the tolerance ``gate_atol`` hands it. A gate that is too tight silently
+``arena.diff_stats`` and the tolerance ``arena.rung_atol`` hands it. A gate that is too tight silently
 deletes a whole kernel class from the corpus; one that is too loose admits a miscompile and reports
 it as a speed-up. Both failures are invisible in the tables they corrupt -- there is no red test, just
 a number that is wrong -- so the properties are pinned here rather than inferred from the sweeps.
@@ -111,8 +111,12 @@ def test_the_gate_is_never_tighter_than_the_output_dtype_can_express():
     floor is what keeps a correct fp32 kernel from being recorded as a miscompile."""
     fp32 = {"a": np.ones(4, dtype=np.float32)}
     fp64 = {"a": np.ones(4, dtype=np.float64)}
-    assert arena.gate_atol("strict-ieee", fp32) >= flags.DTYPE_ATOL["float32"]
-    assert arena.gate_atol("strict-ieee", fp32) > arena.gate_atol("strict-ieee", fp64)
+
+    def gate(mode: str, outputs: dict[str, np.ndarray]) -> float:
+        return arena.rung_atol(mode, arena.dtype_floor(outputs))
+
+    assert gate("strict-ieee", fp32) >= flags.DTYPE_ATOL["float32"]
+    assert gate("strict-ieee", fp32) > gate("strict-ieee", fp64)
 
 
 def test_an_integer_output_contributes_no_tolerance_floor():

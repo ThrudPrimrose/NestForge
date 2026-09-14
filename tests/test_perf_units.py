@@ -75,7 +75,6 @@ def test_veclib_flags_compose_and_gate_by_compatibility():
     assert bad is None and "incompatible" in reason
     nocc, reason2 = flags.veclib_flags(None, "sleef")
     assert nocc is None and "without a compiler" in reason2
-    assert set(flags.VECLIBS) == {"none", "sleef", "libmvec", "svml"}
 
 
 def test_lane_flags_threads_veclib_and_rejects_incompatible():
@@ -86,7 +85,7 @@ def test_lane_flags_threads_veclib_and_rejects_incompatible():
 
 
 def toolchain_labelled(label, cc):
-    return Toolchain(name=label, cc=cc, cxx=None, version=(0, 0), source="path")
+    return Toolchain(name=label, cc=cc, cxx=None, source="path")
 
 
 def test_toolchain_fp_family_maps_labels_to_fp_families():

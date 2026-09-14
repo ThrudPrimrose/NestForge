@@ -28,8 +28,8 @@ def vadd(b: dace.float64[N], c: dace.float64[N], a: dace.float64[N]):
         a[i] = b[i] + c[i]
 
 
-GCC = Toolchain(name="gcc", cc="gcc", cxx="g++", version=(15, 0), source="path")
-CLANG = Toolchain(name="clang", cc="clang", cxx="clang++", version=(21, 0), source="path")
+GCC = Toolchain(name="gcc", cc="gcc", cxx="g++", source="path")
+CLANG = Toolchain(name="clang", cc="clang", cxx="clang++", source="path")
 
 
 def lowered_vadd():
@@ -77,7 +77,7 @@ def test_a_cost_model_the_family_has_no_knob_for_is_not_a_second_build():
 
 
 def test_a_toolchain_without_a_cxx_compiler_contributes_no_variant():
-    assert enumerate_variants([Toolchain(name="gcc", cc="gcc", cxx=None, version=(15, 0), source="path")]) == []
+    assert enumerate_variants([Toolchain(name="gcc", cc="gcc", cxx=None, source="path")]) == []
 
 
 def test_a_shared_measurement_is_gated_at_each_cells_own_rung():

@@ -244,11 +244,6 @@ def rung_atol(mode: str, floor: float) -> float:
     return max(ARENA_ATOL[mode], floor)
 
 
-def gate_atol(mode: str, outputs: Dict[str, np.ndarray]) -> float:
-    """The relative gate for one cell: its FP rung, never tighter than what the output dtype can express."""
-    return rung_atol(mode, dtype_floor(outputs))
-
-
 def diff_stats(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> Tuple[float, float]:
     """``(worst_abs, worst_scaled)`` in one pass, matching :func:`maxdiff` + :func:`relative_maxdiff` combined."""
     worst_abs, worst_rel = 0.0, 0.0

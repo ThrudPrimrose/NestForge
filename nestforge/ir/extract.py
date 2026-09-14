@@ -82,17 +82,6 @@ def extract_state_nest(parent_sdfg: dace.SDFG, state: SDFGState, name: Optional[
     return boundary_from_nsdfg(nsdfg_node, state, parent_sdfg)
 
 
-def nest_defined_symbols(region: CfgNest) -> set:
-    """Symbols defined inside the nest: loop variables plus interstate-edge assignment targets."""
-    syms = set()
-    for b in [region, *region.all_control_flow_blocks()]:
-        if isinstance(b, LoopRegion) and b.loop_variable and b.init_statement:
-            syms.add(b.loop_variable)
-    for e in region.all_interstate_edges():
-        syms.update(e.data.assignments.keys())
-    return syms
-
-
 def assignment_dtype(sdfg: dace.SDFG, rhs: str) -> dace.dtypes.typeclass:
     """dtype of an interstate assignment's RHS, inferred from ``sdfg``'s symbol/array tables; falls
     back to ``int64`` (a float staged across an edge must not be silently truncated to it)."""
@@ -106,7 +95,8 @@ def assignment_dtype(sdfg: dace.SDFG, rhs: str) -> dace.dtypes.typeclass:
 
 
 def nest_defined_symbol_dtypes(sdfg: dace.SDFG, region: CfgNest) -> Dict[str, dace.dtypes.typeclass]:
-    """Every ``nest_defined_symbols`` name, mapped to the dtype it should be declared with."""
+    """Every symbol defined inside the nest (loop variables plus interstate-edge assignment targets),
+    mapped to the dtype it should be declared with."""
     dtypes: Dict[str, dace.dtypes.typeclass] = {}
     for b in [region, *region.all_control_flow_blocks()]:
         if isinstance(b, LoopRegion) and b.loop_variable and b.init_statement:

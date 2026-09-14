@@ -594,15 +594,6 @@ def is_comm_node(node: nodes.LibraryNode) -> bool:
     return type(node).__module__.startswith(_COMM_MODULE_PREFIXES)
 
 
-def is_emittable_library_node(node: nodes.LibraryNode) -> bool:
-    """True iff :func:`emit_library_node` would emit ``node`` (single source of truth for "supported")."""
-    if is_comm_node(node):
-        return False
-    if type(node).__name__ in REFUSED_LIBRARY_NODES:
-        return False
-    return type(node).__name__ in LIBNODE_EMITTERS
-
-
 def emit_library_node(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> List[str]:
     """Numpy statement(s) for a library node; raises if it is a communication / refused / unregistered node."""
     cls = type(node).__name__

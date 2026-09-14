@@ -77,9 +77,6 @@ _ARCH: Dict[str, str] = {
 #: vectorizations (only gcc has a direct knob).
 COST_MODELS: Tuple[str, ...] = ("default", "cheap", "no-vec")
 
-#: Vector-math-library axis DOMAIN. Per-family spelling lives in ``toolchain.VectorMathLib``.
-VECLIBS: Tuple[str, ...] = ("none", "sleef", "libmvec", "svml")
-
 
 def base_flags(family: str) -> List[str]:
     """``-O3`` + native tuning + PIC/shared -- the common prefix every cell shares."""
@@ -157,9 +154,6 @@ _REDUCED_FP: Dict[str, Dict[str, List[str]]] = {
         "no-fast-errno": ["-fp-model=precise", "-fno-math-errno"],
     },
 }
-
-#: Validation tolerance per reduced rung; no-fast-errno is near-bit-exact (only FMA differs).
-REDUCED_FP_ATOL: Dict[str, float] = {"default-fp": 1e-6, "no-fast-errno": 1e-12}
 
 
 def reduced_fp_flags(family: str, mode: str, lang: str = "c") -> List[str]:

@@ -480,12 +480,6 @@ def packed_ops_called(veclib: str, obj_path: str, ops: Tuple[str, ...] = VECLIB_
     return tuple(op for op in ops if serves_op(names, veclib, op))
 
 
-def packed_ops_provided(veclib: str, lib_path: str, ops: Tuple[str, ...] = VECLIB_PROBE_OPS) -> Tuple[str, ...]:
-    """Which of ops the library at lib_path exports; pairs with packed_ops_called for link-line credit."""
-    names = nm_symbol_names(lib_path, dynamic_only=True)
-    return tuple(op for op in ops if serves_op(names, veclib, op))
-
-
 def veclib_library_path(vl: VectorMathLib, compiler: str) -> Optional[str]:
     """The library file the link would resolve, so its exports can be inspected."""
     if not vl.soname:
@@ -611,11 +605,10 @@ def compiler_version(compiler: str) -> Tuple[int, int]:
 # querying "which compilers does this box have" does not drag in a dace import via perf/tsvc_arena
 @dataclass(slots=True)
 class Toolchain:
-    """One discovered toolchain family: C compiler, optional C++ compiler, version, and where it was found."""
+    """One discovered toolchain family: C compiler, optional C++ compiler, and where it was found."""
     name: str
     cc: str
     cxx: Optional[str]  # None -> no native column
-    version: Tuple[int, int]
     source: str  # "path" | "spack"
 
     @property
@@ -758,7 +751,7 @@ def discover_toolchains(requested: str = "auto") -> List[Toolchain]:
         if cxx is None:
             warnings.warn(f"{fam}: C++ compiler {cxx_exe!r} not found; native-baseline column disabled for {fam}")
         source = "path" if shutil.which(cc_exe) else "vendor/spack"
-        out.append(Toolchain(name=fam, cc=cc, cxx=cxx, version=compiler_version(cc), source=source))
+        out.append(Toolchain(name=fam, cc=cc, cxx=cxx, source=source))
     return out
 
 

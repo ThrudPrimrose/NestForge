@@ -1,8 +1,8 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Smoke tests for the repo's shell scripts (setup_apt / setup_spack / format) and the format gate.
+"""Smoke tests for the repo's shell scripts (setup_apt / format) and the format gate.
 
-These don't run apt/spack/installs -- they guard that each script is syntactically valid, self-documents
+These don't run apt/installs -- they guard that each script is syntactically valid, self-documents
 (``--help`` exits 0), rejects a bad flag, and that the tree is actually formatted (so a future edit that
 skips ``scripts/format.sh`` is caught in CI, not in review)."""
 import shutil
@@ -13,7 +13,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "scripts"
-SH_SCRIPTS = ["setup_apt.sh", "setup_spack.sh", "format.sh"]
+SH_SCRIPTS = ["setup_apt.sh", "format.sh"]
 
 
 @pytest.mark.parametrize("name", SH_SCRIPTS)
