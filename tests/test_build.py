@@ -138,8 +138,8 @@ def test_hint_dirs_rank_by_version_across_all_roots(tmp_path, monkeypatch):
     for root, versions in ((lib, ("llvm-9", "llvm-21")), (lib64, ("llvm-14", "llvm-18"))):
         for v in versions:
             (root / v / "lib").mkdir(parents=True)
-    monkeypatch.setattr(toolchain_mod, "_LIB_DIR_HINT_ROOTS", (str(lib), str(lib64)))
-    monkeypatch.setattr(toolchain_mod, "_LIB_DIR_HINTS", ())
+    monkeypatch.setattr(toolchain_mod, "LIB_DIR_HINT_ROOTS", (str(lib), str(lib64)))
+    monkeypatch.setattr(toolchain_mod, "LIB_DIR_HINTS", ())
 
     hints = hint_dirs()
     assert [Path(d).parent.name for d in hints] == ["llvm-21", "llvm-18", "llvm-14", "llvm-9"]
@@ -154,8 +154,8 @@ def test_hint_dirs_is_a_total_order_so_two_identical_boxes_agree(tmp_path, monke
     for name in ("llvm-18", "llvm-18.1"):
         (root / name / "lib").mkdir(parents=True)
     (root / "llvm-18" / "lib64").mkdir()  # same version, two dirs -> the tiebreaker has to decide
-    monkeypatch.setattr(toolchain_mod, "_LIB_DIR_HINT_ROOTS", (str(root),))
-    monkeypatch.setattr(toolchain_mod, "_LIB_DIR_HINTS", ())
+    monkeypatch.setattr(toolchain_mod, "LIB_DIR_HINT_ROOTS", (str(root),))
+    monkeypatch.setattr(toolchain_mod, "LIB_DIR_HINTS", ())
 
     assert hint_dirs() == hint_dirs()  # stable across calls
     assert hint_dirs()[0].endswith("llvm-18.1/lib")  # newest first, ties broken by path
@@ -360,6 +360,30 @@ def test_build_tracks_optimization_and_compile_time():
     assert built.compile_seconds > 0.0
 
 
+def test_unload_after_close_is_a_noop():
+    """The documented lifecycle -- ``run()`` (init -> program -> close) then ``unload()`` once the sweep is
+    done with a kernel -- must not raise: by the time ``unload()`` runs, ``close()`` has already dropped the
+    handle, so there is nothing left for ``unload`` to reconcile."""
+    built = build_sdfg(parallel_axpy_sdfg(), Path(tempfile.mkdtemp(prefix="nf_unload_")))
+    n = 8
+    buf = {"X": np.zeros(n), "Y": np.zeros(n), "Z": np.zeros(n)}
+    built.run(buf, {"N": n})
+    assert built.handle is None
+    built.unload()
+    assert built.lib is None
+
+
+def test_close_after_unload_raises_when_a_handle_is_still_open():
+    """Misuse case: unloading the library while a handle from ``init()`` is still open leaves nothing able
+    to run ``__dace_exit`` on that handle. This must fail loudly rather than silently leak the handle or
+    crash on a null CDLL lookup."""
+    built = build_sdfg(parallel_axpy_sdfg(), Path(tempfile.mkdtemp(prefix="nf_unload2_")))
+    built.init({"N": 8})
+    built.unload()
+    with pytest.raises(RuntimeError, match="unload"):
+        built.close()
+
+
 def test_external_linking_build_is_correct():
     """A nest built as a separate static ``.a`` (link_external) and linked into the ``.so`` runs identically
     to the monolithic build -- external linking is correct, not merely timeable."""
@@ -386,14 +410,25 @@ def test_parse_params_refuses_an_unmapped_by_value_scalar_type():
         parse_params("k_state_t *__state, uint64_t n")
 
 
+def test_parse_params_refuses_an_unmapped_pointer_base_type():
+    """An unmapped pointer base type must fail LOUD too, the same as the scalar branch: silently defaulting
+    to ``double*`` marshals a differently-sized element through the ABI with no ctypes error."""
+    with pytest.raises(ValueError, match="uint64_t"):
+        parse_params("k_state_t *__state, uint64_t *n")
+
+
 def test_owned_build_reusable_handle_program():
-    """After one init, __program can be called repeatedly in place (the timing path) on one handle."""
+    """After one init, __program can be called repeatedly in place (the timing path) on one handle, and
+    every call still computes the right answer (this nest's output does not read its own prior value, so
+    repeating the call is idempotent and one oracle run covers every rep)."""
     boundary = first_nest("scientific_computing/dense_linear_algebra/gemm/gemm")
     shape_syms = {
         s for s in boundary.symbols if any(s in str(d.shape) for d in boundary.standalone_sdfg.arrays.values())
     }
     sizes = {s: (32 if s in shape_syms else 0) for s in boundary.symbols}
     inputs = make_inputs(boundary, sizes, seed=1)
+    prep = prepare(boundary, "k", Path(tempfile.mkdtemp()))
+    oracle = run_oracle(prep, boundary, inputs, sizes)
     built = build_sdfg(boundary.standalone_sdfg, Path(tempfile.mkdtemp(prefix="nf_build_")))
     buf = {k: v.copy() for k, v in inputs.items()}
     built.init(sizes)
@@ -402,6 +437,8 @@ def test_owned_build_reusable_handle_program():
             built.program(buf, sizes)  # repeated in-place calls on the same state handle
     finally:
         built.close()
+    for o in oracle:
+        np.testing.assert_allclose(buf[o], oracle[o], rtol=1e-9, atol=1e-9, equal_nan=True)
 
 
 def test_vectorized_owned_build_matches_oracle():
@@ -439,7 +476,7 @@ def test_toolchain_is_importable_without_dace():
     assert r.returncode == 0, r.stderr[-800:]
 
 
-# --- compiler diagnostics on the DaCe-generated C++ -------------------------------------------------
+# compiler diagnostics on the DaCe-generated C++
 def test_resolved_flags_guarantee_the_standard_and_warnings_without_forcing_them():
     """Both are FILLED IN, not appended blindly: nearly every caller passes its own ``flags`` for one axis
     (an -O level, an FP mode) and would otherwise lose them. ``-Werror`` is deliberately absent -- this
@@ -513,7 +550,7 @@ def test_compiler_warnings_are_reported_but_bounded():
     `warnings.warn` dedups on exact TEXT, so it deduped nothing: a phase-1 sweep printed a distinct
     multi-KB block per compiled cell and grew __warningregistry__ for the life of the rank. Keyed on the
     warning KIND instead, and counted past a budget -- suppressed, never silently dropped."""
-    toolchain_mod._warned.clear()
+    toolchain_mod.WARNED.clear()
     try:
         with warnings.catch_warnings(record=True) as seen:
             warnings.simplefilter("always")
@@ -529,4 +566,4 @@ def test_compiler_warnings_are_reported_but_bounded():
             toolchain_mod.warn_once("g++", "x.cpp:1:1: warning: set but not used [-Wunused-but-set-variable]")
         assert len(seen) == 1
     finally:
-        toolchain_mod._warned.clear()
+        toolchain_mod.WARNED.clear()

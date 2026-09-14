@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from typing import Dict, List, Sequence, Tuple
 
-from nestforge.build.toolchain import CXX_STD
-
 #: FP-precision levels, strictest first; the index is the ladder rung.
 FP_LEVELS: Tuple[str, ...] = ("strict-ieee", "contract-fma", "fast-math")
 
@@ -30,7 +28,7 @@ DTYPE_ATOL: Dict[str, float] = {
 }
 
 #: FP-mode flags per (family, level) -- C spellings; Fortran deltas applied by :func:`fortran_fp_flags`.
-_FP: Dict[str, Dict[str, List[str]]] = {
+FP: Dict[str, Dict[str, List[str]]] = {
     "gnu": {
         "strict-ieee": ["-ffp-contract=off", "-fexcess-precision=standard"],
         "contract-fma": ["-ffp-contract=fast", "-fexcess-precision=standard"],
@@ -50,7 +48,7 @@ _FP: Dict[str, Dict[str, List[str]]] = {
 }
 
 #: Native-tuning flag per family.
-_ARCH: Dict[str, str] = {
+ARCH: Dict[str, str] = {
     "gnu": "-march=native",
     "llvm": "-march=native",
     "intel": "-march=native",
@@ -63,14 +61,14 @@ COST_MODELS: Tuple[str, ...] = ("default", "cheap", "no-vec")
 
 def base_flags(family: str) -> List[str]:
     """``-O3`` + native tuning + PIC/shared -- the common prefix every cell shares."""
-    return ["-O3", _ARCH.get(family, "-march=native"), "-fPIC", "-shared"]
+    return ["-O3", ARCH.get(family, "-march=native"), "-fPIC", "-shared"]
 
 
 def fortran_fp_flags(family: str, level: str) -> List[str]:
     """FP-mode flags for a family's Fortran frontend; gfortran needs ``-fno-frontend-optimize``, since it
     reassociates at ``-O`` even under ``-ffp-contract=off``."""
     drop = {"-fno-math-errno", "-fexcess-precision=standard"}  # C-family flags the Fortran frontends reject
-    flags = [f for f in _FP[family][level] if f not in drop]
+    flags = [f for f in FP[family][level] if f not in drop]
     if family == "gnu":
         if level != "fast-math":
             flags.append("-fno-frontend-optimize")
@@ -81,7 +79,7 @@ def fortran_fp_flags(family: str, level: str) -> List[str]:
 
 def fp_flags(family: str, level: str, lang: str = "c") -> List[str]:
     """FP-mode flags for a (family, level), adjusted for ``lang`` ("c" or "fortran")."""
-    return fortran_fp_flags(family, level) if lang == "fortran" else list(_FP[family][level])
+    return fortran_fp_flags(family, level) if lang == "fortran" else list(FP[family][level])
 
 
 def cost_flags(family: str, model: str) -> List[str]:
@@ -100,7 +98,7 @@ def cost_flags(family: str, model: str) -> List[str]:
 def flag_matrix(family: str, lang: str = "c") -> List[Tuple[str, str, List[str]]]:
     """``[(fp_level, cost_model, full_flags), ...]`` for a family/language, deduped by flag set."""
     matrix: List[Tuple[str, str, List[str]]] = []
-    seen = set()
+    seen: Dict[Tuple[str, ...], None] = {}
     base = base_flags(family)
     for level in FP_LEVELS:
         for model in COST_MODELS:
@@ -108,18 +106,9 @@ def flag_matrix(family: str, lang: str = "c") -> List[Tuple[str, str, List[str]]
             key = tuple(flags)
             if key in seen:
                 continue
-            seen.add(key)
+            seen[key] = None
             matrix.append((level, model, flags))
     return matrix
-
-
-def cxx_source_flags(family: str, cxx_std: str = CXX_STD) -> List[str]:
-    """Flags to compile the numpyto-emitted C source as C++; ``restrict`` and (on gnu) ``__builtin_complex``
-    are shimmed since C++ lacks both."""
-    flags = ["-x", "c++", "-std=" + cxx_std, "-Drestrict=__restrict__"]
-    if family == "gnu":
-        flags.append("-D__builtin_complex(re,im)=((__complex__ double){re,im})")
-    return flags
 
 
 #: nvcc's FP rungs. The device has no fast-math switch, so a GPU kernel sweeps the two rungs nvcc expresses.

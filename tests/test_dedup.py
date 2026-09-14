@@ -63,7 +63,7 @@ def build(tmp_path: Path, source: str, fp_mode: str, tag: str = "v", compiler: s
     return out / f"{tag}.o"
 
 
-# ---------------------------------------------------------------- the C++ key and its blind spot
+# the C++ key and its blind spot
 
 
 def test_the_cpp_key_cannot_see_compile_flags_and_the_asm_key_can(tmp_path):
@@ -106,7 +106,7 @@ def test_function_bodies_keeps_an_escaped_quote_inside_a_literal():
     assert len(function_bodies(code)) == 1
 
 
-# ---------------------------------------------------------------- the assembly key
+# the assembly key
 
 
 def test_the_asm_key_separates_fp_rungs_the_cpp_key_cannot(tmp_path):
@@ -212,7 +212,7 @@ def test_the_pruner_collapses_fp_rungs_a_kernel_cannot_tell_apart(tmp_path):
     assert len(picks) == len(groups) and notes
 
 
-# ---------------------------------------------------------------- grouping
+# grouping
 
 
 def test_collapse_groups_by_key_and_keeps_the_first_as_representative():

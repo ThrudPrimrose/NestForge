@@ -14,7 +14,7 @@ import time
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Type, cast
 
 import numpy as np
 
@@ -23,6 +23,7 @@ from dace.codegen import codegen
 from dace.codegen import compiler as dace_compiler
 
 from nestforge.build.toolchain import (
+    AR,
     CXX_STD,
     DEFAULT_COMPILER,
     DEFAULT_FLAGS,
@@ -30,7 +31,6 @@ from nestforge.build.toolchain import (
     LIBOMP,
     OpenMPRuntime,
     Param,
-    ar_for,
     cudart_dir,
     cudart_link_flags,
     driver_lib_path,
@@ -53,35 +53,42 @@ def dace_runtime_include() -> Path:
 
 @dataclass(slots=True)
 class BuiltSDFG:
-    """A nest-forge-built DaCe ``.so`` with its entry points bound and init/exit managed."""
+    """A nest-forge-built DaCe ``.so`` with its entry points bound and init/exit managed. ``lib`` turns
+    ``None`` once :meth:`unload` has released the dlopen mapping; every method that needs it fails with a
+    clear error rather than a bare ``TypeError`` on ``None[...]``."""
 
     name: str
     so_path: Path
-    _lib: ctypes.CDLL
-    _init_params: List[Param]
-    _prog_params: List[Param]
+    lib: Optional[ctypes.CDLL]
+    init_params: List[Param]
+    prog_params: List[Param]
     #: wall time of DaCe codegen + C++ emission (the optimization phase).
     codegen_seconds: float = 0.0
     #: wall time of the compiler/linker turning C++ into the .so.
     compile_seconds: float = 0.0
-    _handle: Optional[ctypes.c_void_p] = field(default=None, repr=False)
+    handle: Optional[ctypes.c_void_p] = field(default=None, repr=False)
 
     def init(self, sizes: Dict[str, int]) -> None:
-        fn = self._lib[f"__dace_init_{self.name}"]  # ctypes CDLL indexing (not getattr) binds the entry point
+        if self.lib is None:
+            raise RuntimeError(f"{self.name}: init() called after unload(); the compiled library is not mapped")
+        fn = self.lib[f"__dace_init_{self.name}"]  # ctypes CDLL indexing (not getattr) binds the entry point
         fn.restype = ctypes.c_void_p
-        fn.argtypes = [p.ctype for p in self._init_params]
+        fn.argtypes = [p.ctype for p in self.init_params]
         # each param's OWN ctype: a hardcoded width would mismatch (jacobi's int N vs gemm's int64_t NI)
-        self._handle = ctypes.c_void_p(fn(*[p.ctype(int(sizes[p.name])) for p in self._init_params]))
+        self.handle = ctypes.c_void_p(fn(*[p.ctype(int(sizes[p.name])) for p in self.init_params]))
 
     def bind_program(self, buffers: Dict[str, np.ndarray], sizes: Dict[str, int]) -> Tuple[Any, list]:
         """Bind ``__program_N`` and its ctypes args once, so a timed rep loop calls ``fn(*args)`` with no per-rep marshaling."""
-        fn = self._lib[f"__program_{self.name}"]
+        if self.lib is None:
+            raise RuntimeError(f"{self.name}: bind_program() called after unload(); the compiled library is not mapped")
+        fn = self.lib[f"__program_{self.name}"]
         fn.restype = None
-        fn.argtypes = [ctypes.c_void_p] + [p.ctype for p in self._prog_params]
-        args = [self._handle]
-        for p in self._prog_params:
+        fn.argtypes = [ctypes.c_void_p] + [p.ctype for p in self.prog_params]
+        args: List[Any] = [self.handle]
+        for p in self.prog_params:
             if p.is_pointer:
-                args.append(buffers[p.name].ctypes.data_as(p.ctype))
+                # is_pointer guarantees ctype is a Pointer type (parse_params); the cast reflects that.
+                args.append(buffers[p.name].ctypes.data_as(cast(Type[ctypes._Pointer], p.ctype)))
             elif p.name in buffers:  # a DaCe Scalar passed by value
                 args.append(p.ctype(buffers[p.name].item()))
             else:  # a size symbol
@@ -95,17 +102,25 @@ class BuiltSDFG:
 
     def unload(self) -> None:
         """Release the dlopen mapping so a long sweep does not accumulate one live mapping per kernel."""
-        if self._lib is not None:
-            dlclose(self._lib._handle)
-            self._lib = None
+        if self.lib is not None:
+            dlclose(self.lib._handle)
+            self.lib = None
 
     def close(self) -> None:
-        if self._handle is not None:
-            fn = self._lib[f"__dace_exit_{self.name}"]
-            fn.restype = ctypes.c_int
-            fn.argtypes = [ctypes.c_void_p]
-            fn(self._handle)
-            self._handle = None
+        """Run ``__dace_exit`` on a live handle. A no-op with no handle open; raises if the library was
+        unloaded while a handle was still open, since there is then nothing left to call ``__dace_exit`` on."""
+        if self.handle is None:
+            return
+        if self.lib is None:
+            raise RuntimeError(
+                f"{self.name}: close() called after unload() with a handle still open; the library needed "
+                "to run __dace_exit is no longer mapped -- call close() before unload()"
+            )
+        fn = self.lib[f"__dace_exit_{self.name}"]
+        fn.restype = ctypes.c_int
+        fn.argtypes = [ctypes.c_void_p]
+        fn(self.handle)
+        self.handle = None
 
     def run(self, buffers: Dict[str, np.ndarray], sizes: Dict[str, int]) -> None:
         """One-shot init -> program -> exit (for correctness; for timing, init once + loop program)."""
@@ -148,14 +163,10 @@ class BuildOptions:
     compiler: str = DEFAULT_COMPILER
     flags: Optional[List[str]] = None  # None -> DEFAULT_FLAGS
     expand_libnodes: bool = False
-    blas_link: Optional[List[str]] = None
     openmp: Optional[OpenMPRuntime] = None
     link_external: bool = False  # link the nest as a separate static .a (else a monolithic single TU)
     # object, not the vectorizer's own config type, to keep the vectorizer import lazy
     vectorize: Optional[object] = None
-    # extern nest-variant libs appended after the frame object, for the differential swap path: nest-forge
-    # bypasses DaCe's CMake, so ExternLibEnv's libraries are not auto-linked and must be passed here
-    extra_link: Optional[List[str]] = None
 
     def resolved_flags(self) -> List[str]:
         """``flags`` (or :data:`DEFAULT_FLAGS`), with the C++ standard and ``-Wall`` guaranteed."""
@@ -189,7 +200,7 @@ def build_commands(folder: Optional[Path], opts: BuildOptions) -> BuildCommands:
     omp_c = omp.compile_flags(compiler) if omp else []
     omp_l = omp.link_flags(compiler) if omp else []
     # icx auto-links libsvml/libimf off the loader path with no RUNPATH; without this dlopen fails.
-    libs = [*omp_l, *(opts.blas_link or []), *(opts.extra_link or []), *support_rpath_flags(compiler)]
+    libs = [*omp_l, *support_rpath_flags(compiler)]
     return BuildCommands(
         compiler=compiler,
         cflags=[f for f in opts.resolved_flags() if f != "-shared"],
@@ -219,7 +230,7 @@ def archive_and_link(
     """Archive ``objects`` into ``archive`` and link ``shared`` from the whole archive."""
     if archive.exists():
         archive.unlink()  # ar r APPENDS; start clean so a rebuild doesn't stack stale members
-    run([ar_for(linker), "rcs", str(archive), *[str(obj) for obj in objects]])
+    run([AR, "rcs", str(archive), *[str(obj) for obj in objects]])
     whole = ["-Wl,--export-dynamic", "-Wl,--whole-archive", str(archive), "-Wl,--no-whole-archive"]
     link_shared(linker, whole, link_libs, shared)
 
@@ -255,7 +266,7 @@ def compile(frame: Path, folder: Path, name: str, opts: BuildOptions) -> Tuple[P
 
 def program_compiler() -> str:
     """The C++ compiler DaCe's program build runs: ``compiler.cpu.executable``, else CMake's ``c++``."""
-    return dace.config.Config.get("compiler", "cpu", "executable") or "c++"
+    return str(dace.config.Config.get("compiler", "cpu", "executable") or "c++")
 
 
 def libomp_cmake_args(compiler: str) -> List[str]:
@@ -324,9 +335,9 @@ def compile_program(gen: GeneratedProgram, opts: Optional[BuildOptions] = None) 
     return BuiltSDFG(
         name=gen.name,
         so_path=so,
-        _lib=ctypes.CDLL(str(so)),
-        _init_params=init_params,
-        _prog_params=prog_params,
+        lib=ctypes.CDLL(str(so)),
+        init_params=init_params,
+        prog_params=prog_params,
         codegen_seconds=gen.codegen_seconds,
         compile_seconds=compile_seconds,
     )

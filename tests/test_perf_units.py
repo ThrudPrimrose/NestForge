@@ -17,7 +17,7 @@ from nestforge.build import harness
 from nestforge.build.toolchain import Toolchain
 
 
-# --- emitted-source signature order (harness.signature_order) ------------------------------------------
+# emitted-source signature order (harness.signature_order)
 def test_signature_order_c_and_fortran_multiline():
     csrc = "void s000_fp64(double* a, double* out, int64_t N) {"
     assert harness.signature_order(csrc, "s000_fp64", "c") == ["a", "out", "N"]
@@ -30,7 +30,7 @@ def test_abi_order_pointer_star_stripped():
     assert harness.signature_order("void k_fp64(double *a, double* b, int64_t N) {", "k_fp64") == ["a", "b", "N"]
 
 
-# --- flag composition (flags.*) -----------------------------------------------------------------------
+# flag composition (flags.*)
 def test_base_flags_native_tuning_per_family():
     assert flags.base_flags("gnu") == ["-O3", "-march=native", "-fPIC", "-shared"]
 
@@ -72,10 +72,7 @@ def test_toolchain_fp_family_maps_labels_to_fp_families():
     assert toolchain_labelled("unknown", "some-cc").fp_family == "gnu"  # safe default
 
 
-# --- key_seed determinism -----------------------------------------------------------------------------
-
-
-# --- fault isolation edge cases (run_isolated) --------------------------------------------------------
+# fault isolation edge cases (run_isolated)
 def test_run_isolated_malformed_result_is_error_not_crash():
     # a non-JSON-able return is caught in the child and comes back as an error sentinel; parent survives.
     res = run_isolated(lambda: {"bad": {1, 2, 3}})  # a set is not JSON-serializable
@@ -86,7 +83,7 @@ def test_run_isolated_passes_through_plain_dict():
     assert run_isolated(lambda: {"ok": True, "n": 7}) == {"ok": True, "n": 7}
 
 
-# --- call_c output snapshotting (harness.call_c) -------------------------------------------------------
+# call_c output snapshotting (harness.call_c)
 class CountingArray(np.ndarray):
     """An ndarray that counts its own .copy() calls, so a test can assert call_c did not snapshot."""
 
@@ -192,7 +189,7 @@ def test_call_c_does_not_restore_a_write_only_buffer(monkeypatch):
     assert buf.copies == 0
 
 
-# --- the rewind primitive, shared by every timing loop in the repo ------------------------------------
+# the rewind primitive, shared by every timing loop in the repo
 def test_accumulating_outputs_is_the_read_write_intersection():
     """Read-only and write-only buffers are both excluded: the first is never written, the second holds
     nothing that survives into the next rep. Only the intersection can feed on its own output."""
@@ -224,7 +221,7 @@ def test_toolchain_fp_family_only_ever_names_a_real_fp_family():
     it maps to a family those tables do not have would decline every cell -- or worse, `base_flags` would
     silently fall back to `-march=native` and the cell would be measured under flags nobody chose."""
     for label, cc in (("gcc", "gcc"), ("clang", "clang"), ("intel", "icx"), ("future", "fcc")):
-        assert toolchain_labelled(label, cc).fp_family in flags._FP, label
+        assert toolchain_labelled(label, cc).fp_family in flags.FP, label
 
 
 def test_the_two_family_vocabularies_stay_apart():

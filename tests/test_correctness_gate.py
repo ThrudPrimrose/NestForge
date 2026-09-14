@@ -96,17 +96,18 @@ def test_the_gate_is_elementwise_and_a_single_bad_element_survives_averaging():
     assert worst_rel == pytest.approx(0.5)  # scaled by max(|1|, |2|, 1.0) = 2
 
 
-def test_diff_stats_agrees_with_computing_both_numbers_separately():
-    """``diff_stats`` exists only to make one pass instead of two; its docstring promises the same
-    semantics. If it ever drifts from the pair it replaced, the arena and the differential harness
-    start disagreeing about the same kernel."""
-    rng = np.random.default_rng(0)
-    for case in ({"x": rng.random(32)}, {"x": rng.random(32) * 1e6}, {"x": rng.random(8), "y": rng.random((4, 4))}):
-        perturbed = {k: v + rng.random(v.shape) * 1e-9 for k, v in case.items()}
-        assert arena.diff_stats(case, perturbed) == (
-            arena.maxdiff(case, perturbed),
-            arena.relative_maxdiff(case, perturbed),
-        )
+def test_maxdiff_and_relative_maxdiff_read_the_right_half_of_diff_stats():
+    """``maxdiff`` and ``relative_maxdiff`` are thin wrappers over ``diff_stats``; pin that each reads its
+    OWN half -- a swapped index would silently report the relative gate as the absolute one, or vice versa.
+    Chosen at reduction scale, where the two halves genuinely differ (see
+    test_a_reduction_sized_result_is_judged_relatively_not_absolutely), so a swap cannot pass by accident."""
+    total = 1.6e4
+    a = {"sum": np.array([total])}
+    b = {"sum": np.array([total + 14 * np.spacing(total)])}
+    worst_abs, worst_rel = arena.diff_stats(a, b)
+    assert worst_abs != worst_rel
+    assert arena.maxdiff(a, b) == worst_abs
+    assert arena.relative_maxdiff(a, b) == worst_rel
 
 
 def test_the_gate_is_never_tighter_than_the_output_dtype_can_express():

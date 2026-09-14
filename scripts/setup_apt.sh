@@ -96,7 +96,7 @@ apt_install flang        # optional: LLVM Fortran, not on every release
 log "OpenMP runtimes: libomp (LLVM/clang), libgomp (ships with gcc)"
 apt_install libomp-dev libgomp1
 
-log "BLAS/LAPACK (linked via BuildOptions.blas_link)"
+log "BLAS/LAPACK"
 apt_install libopenblas-dev liblapack-dev libblis-dev libfftw3-dev
 
 [ "$DO_ONEAPI" -eq 1 ] && { phase_oneapi || warn "oneAPI setup incomplete"; }

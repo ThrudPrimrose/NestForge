@@ -84,7 +84,10 @@ def parse_disassembly(out: str) -> Dict[str, str]:
     for line in out.splitlines():
         header = SYMBOL_LINE.match(line)
         if header:
-            current = header.group(1)
+            symbol = header.group(1)
+            if not isinstance(symbol, str):
+                continue  # the pattern's one group is mandatory; unreachable on a real match, but narrows the type
+            current = symbol
             bodies[current] = []
             continue
         insn = INSN_LINE.match(line)

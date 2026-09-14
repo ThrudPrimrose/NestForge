@@ -162,8 +162,6 @@ def test_both_teardown_modes_make_the_fork_safe(tmp_path, runtime, mode):
     pause_openmp_pools(OMP_PAUSE_MODES[mode])
 
     # fork by hand: run_isolated pauses internally, which would mask whether THIS mode did the work.
-    import os
-
     r, w = os.pipe()
     pid = os.fork()
     if pid == 0:

@@ -10,7 +10,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -37,7 +37,7 @@ CTYPE = {
 
 
 def resolve_shape(shape: Sequence[Any], sizes: Dict[str, int]) -> Tuple[int, ...]:
-    env = {symbolic.symbol(k): v for k, v in sizes.items()}
+    env: Dict[Union[symbolic.symbol, str], Union[int, float]] = {symbolic.symbol(k): v for k, v in sizes.items()}
     return tuple(int(symbolic.evaluate(d, env)) for d in shape)
 
 
@@ -287,23 +287,6 @@ def call_on_device(
         memory.free()
 
 
-def maxdiff(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> float:
-    """Largest absolute elementwise difference; ``inf`` if any difference is non-finite.
-    Builtin ``max`` drops a non-first NaN (``nan > x`` is False), so unmapped this would report 0.0 and let
-    a NaN-poisoned kernel win."""
-    worst = 0.0
-    compared = False
-    for k in a:
-        if not a[k].size:
-            continue
-        compared = True
-        d = float(np.max(np.abs(a[k] - b[k])))
-        if not np.isfinite(d):
-            return float("inf")
-        worst = max(worst, d)
-    return worst if compared else float("inf")  # a verdict read off zero elements is not a match
-
-
 def dtype_floor(arrays: Dict[str, np.ndarray]) -> float:
     """The loosest :data:`flags.DTYPE_ATOL` floor among ``arrays`` (one ULP of the narrowest format present)."""
     return max(
@@ -317,7 +300,12 @@ def rung_atol(mode: str, floor: float) -> float:
 
 
 def diff_stats(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> Tuple[float, float]:
-    """``(worst_abs, worst_scaled)`` in one pass, matching :func:`maxdiff` + :func:`relative_maxdiff` combined."""
+    """``(worst_abs, worst_scaled)`` in one pass over every array: the absolute elementwise difference, and
+    the same difference scaled by the magnitude of the values compared (the denominator floors at 1.0, since
+    an absolute gate is unreachable for a reduction -- fp64 ULP noise exceeds 1e-14 at reduction scale --
+    without loosening what fp64 actually promises at small magnitude). ``inf`` on a non-finite difference
+    (builtin ``max`` drops a non-first NaN, which would otherwise report a NaN-poisoned kernel as a perfect
+    match) and on a verdict that touched zero elements (an all-empty comparison is not a match either)."""
     worst_abs, worst_rel = 0.0, 0.0
     compared = False
     for k in a:
@@ -341,21 +329,11 @@ def diff_stats(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> Tuple[floa
     return worst_abs, worst_rel
 
 
+def maxdiff(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> float:
+    """The absolute half of :func:`diff_stats`."""
+    return diff_stats(a, b)[0]
+
+
 def relative_maxdiff(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> float:
-    """Largest elementwise difference SCALED by the magnitude of the values compared.
-    An absolute gate is unreachable for a reduction (fp64 ULP noise exceeds 1e-14 at reduction scale), so
-    the denominator floors at 1.0 -- never loosened below what fp64 promises, but reachable for large sums."""
-    worst = 0.0
-    compared = False
-    for k in a:
-        if not a[k].size:
-            continue
-        compared = True
-        scale = np.maximum(np.maximum(np.abs(a[k]), np.abs(b[k])), 1.0)
-        with np.errstate(invalid="ignore"):  # inf/inf -> nan, which is a FAILURE, not a warning
-            d = float(np.max(np.abs(a[k] - b[k]) / scale))
-        # builtin max(0.0, nan) is 0.0, i.e. a PERFECT match for a NaN-poisoned result -- map to inf
-        if not np.isfinite(d):
-            return float("inf")
-        worst = max(worst, d)
-    return worst if compared else float("inf")  # a verdict read off zero elements is not a match
+    """The scaled half of :func:`diff_stats`."""
+    return diff_stats(a, b)[1]

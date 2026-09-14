@@ -17,9 +17,9 @@ import tempfile
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Type, Union
 
-_C_SCALAR = {
+C_SCALAR = {
     "int32_t": ctypes.c_int32,
     "int64_t": ctypes.c_int64,
     "int": ctypes.c_int,
@@ -28,7 +28,7 @@ _C_SCALAR = {
     "bool": ctypes.c_bool,
 }
 
-_C_PTR = {"float": ctypes.c_float, "double": ctypes.c_double, "int32_t": ctypes.c_int32, "int64_t": ctypes.c_int64}
+C_PTR = {"float": ctypes.c_float, "double": ctypes.c_double, "int32_t": ctypes.c_int32, "int64_t": ctypes.c_int64}
 
 DEFAULT_COMPILER = "g++"
 
@@ -53,10 +53,10 @@ def compiler_family(compiler: str) -> str:
 
 
 #: OpenMP ABI a family emits -- ``gomp`` (GCC ``GOMP_*``) or ``kmpc`` (LLVM/oneAPI ``__kmpc_*``).
-_COMPILER_ABI = {"gnu": "gomp", "llvm": "kmpc"}
+COMPILER_ABI = {"gnu": "gomp", "llvm": "kmpc"}
 
 #: Runtimes selectable via -fopenmp=<name> on clang/flang/icx; gcc links any runtime explicitly via -l<soname>.
-_LLVM_SELECTABLE = frozenset({"libomp", "libgomp", "libiomp5"})
+LLVM_SELECTABLE = frozenset({"libomp", "libgomp", "libiomp5"})
 
 
 @dataclass(slots=True)
@@ -76,15 +76,15 @@ class OpenMPRuntime:
         set; gnu links any gomp-ABI runtime."""
         fam = compiler_family(compiler)
         if fam == "llvm":
-            return self.name in _LLVM_SELECTABLE and _COMPILER_ABI["llvm"] in self.provides
-        return _COMPILER_ABI["gnu"] in self.provides
+            return self.name in LLVM_SELECTABLE and COMPILER_ABI["llvm"] in self.provides
+        return COMPILER_ABI["gnu"] in self.provides
 
     def check(self, compiler: str) -> None:
         if self.compatible(compiler):
             return
         fam = compiler_family(compiler)
         if fam == "llvm":
-            if _COMPILER_ABI["llvm"] not in self.provides:
+            if COMPILER_ABI["llvm"] not in self.provides:
                 raise ValueError(
                     f"{Path(compiler).name} emits the 'kmpc' OpenMP ABI, which {self.name} does not "
                     f"implement (it provides {sorted(self.provides)}); libgomp is gomp-only. Use a "
@@ -92,7 +92,7 @@ class OpenMPRuntime:
                 )
             raise ValueError(
                 f"{Path(compiler).name} selects the OpenMP runtime by name and only knows "
-                f"{sorted(_LLVM_SELECTABLE)}; {self.name} is not name-selectable by an LLVM compiler. "
+                f"{sorted(LLVM_SELECTABLE)}; {self.name} is not name-selectable by an LLVM compiler. "
                 f"Use libomp/libiomp5, or build with gcc (which links {self.name} via -l{self.soname})."
             )
         raise ValueError(
@@ -148,15 +148,15 @@ OPENMP_RUNTIMES = {"libomp": LIBOMP, "libgomp": LIBGOMP, "libiomp5": LIBIOMP5}
 
 
 def env_library_dirs() -> List[str]:
-    """Dirs from LD_LIBRARY_PATH/LIBRARY_PATH/DYLD_*; find_library only consults ldconfig, missing these."""
+    """Dirs from LD_LIBRARY_PATH/LIBRARY_PATH; find_library only consults ldconfig, missing these."""
     dirs: List[str] = []
-    for var in ("LD_LIBRARY_PATH", "LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"):
+    for var in ("LD_LIBRARY_PATH", "LIBRARY_PATH"):
         dirs += [d for d in os.environ.get(var, "").split(os.pathsep) if d]
     return dirs
 
 
 #: Drivers to ask where a runtime lives when the target compiler cannot find it; clang-first since libomp.
-_LIB_PROBE_DRIVERS = ("clang++", "clang", "g++", "gcc")
+LIB_PROBE_DRIVERS = ("clang++", "clang", "g++", "gcc")
 
 #: Ceiling on a toolchain PROBE (asking a driver/loader, not compiling); an unbounded one hangs the sweep.
 PROBE_TIMEOUT_S: float = 15.0
@@ -195,13 +195,13 @@ def driver_search_dirs(compiler: str) -> List[str]:
 
 
 #: ldconfig by name AND full path: /usr/sbin is off the default non-root PATH on Debian-family slim images.
-_LDCONFIG_EXES = ("ldconfig", "/usr/sbin/ldconfig", "/sbin/ldconfig")
+LDCONFIG_EXES = ("ldconfig", "/usr/sbin/ldconfig", "/sbin/ldconfig")
 
 
 @functools.lru_cache(maxsize=None, typed=True)
 def ldconfig_output() -> str:
     """``ldconfig -p`` output, or "". sbin is off the non-root PATH on slim images, so full paths are tried too."""
-    for exe in _LDCONFIG_EXES:
+    for exe in LDCONFIG_EXES:
         try:
             out = subprocess.run([exe, "-p"], capture_output=True, text=True, timeout=PROBE_TIMEOUT_S).stdout
         except (OSError, subprocess.SubprocessError):
@@ -228,9 +228,9 @@ def ldconfig_dirs(soname: str) -> List[str]:
 
 
 #: Common install layouts, tried only after driver/loader queries come up empty; hints, not truth.
-_LIB_DIR_HINT_ROOTS = ("/usr/lib", "/usr/lib64")
+LIB_DIR_HINT_ROOTS = ("/usr/lib", "/usr/lib64")
 
-_LIB_DIR_HINTS = ("/usr/lib64", "/usr/local/lib64", "/usr/local/lib")
+LIB_DIR_HINTS = ("/usr/lib64", "/usr/local/lib64", "/usr/local/lib")
 
 
 def llvm_version(path: Path) -> Tuple[int, ...]:
@@ -244,9 +244,9 @@ def llvm_version(path: Path) -> Tuple[int, ...]:
 def hint_dirs() -> List[str]:
     """Guessed library dirs, newest LLVM first, ranked ACROSS roots (per-root sorting would put
     /usr/lib/llvm-14 ahead of /usr/lib64/llvm-18) with path as a stable tiebreaker for glob order."""
-    found = [p for root in _LIB_DIR_HINT_ROOTS for p in Path(root).glob("llvm-*/lib*")]
+    found = [p for root in LIB_DIR_HINT_ROOTS for p in Path(root).glob("llvm-*/lib*")]
     ranked = sorted({str(p) for p in found}, key=lambda d: (llvm_version(Path(d)), d), reverse=True)
-    return ranked + [d for d in _LIB_DIR_HINTS if d not in ranked]
+    return ranked + [d for d in LIB_DIR_HINTS if d not in ranked]
 
 
 def linker_finds(soname: str, compiler: str = DEFAULT_COMPILER) -> bool:
@@ -266,13 +266,13 @@ def linkable_lib_dir(soname: str, compiler: str = DEFAULT_COMPILER) -> Optional[
         p = Path(d)
         if (p / f"lib{soname}.so").exists() or (p / f"lib{soname}.a").exists():
             return d
-    for probe in _LIB_PROBE_DRIVERS:
+    for probe in LIB_PROBE_DRIVERS:
         if probe != compiler and shutil.which(probe):
             found = driver_lib_path(soname, probe)
             if found is not None:
                 return str(found.parent)
     # nothing resolved it yet: fall back to driver search dirs, a hardcoded ladder would go stale
-    for probe in _LIB_PROBE_DRIVERS:
+    for probe in LIB_PROBE_DRIVERS:
         if shutil.which(probe):
             for d in driver_search_dirs(probe):
                 if (Path(d) / f"lib{soname}.so").exists():
@@ -319,10 +319,14 @@ def usable_openmp(compiler: str) -> Optional[OpenMPRuntime]:
     return None
 
 
+#: The two ctypes shapes a kernel parameter can take: a scalar type, or a pointer to one.
+CType = Union[Type[ctypes._SimpleCData], Type[ctypes._Pointer]]
+
+
 @dataclass(slots=True)
 class Param:
     name: str
-    ctype: object  # a ctypes type
+    ctype: CType
     is_pointer: bool
 
 
@@ -338,14 +342,20 @@ def parse_params(param_str: str) -> List[Param]:
         name = re.split(r"[\s*]+", tok)[-1]
         base = tok[: tok.rfind(name)].replace("*", "").strip()
         if is_ptr:
-            params.append(Param(name, ctypes.POINTER(_C_PTR.get(base, ctypes.c_double)), True))
+            # an unmapped base type would guess a width silently -- an ABI bug ctypes can't catch -- so refuse
+            ptr_ctype = C_PTR.get(base)
+            if ptr_ctype is None:
+                raise ValueError(
+                    f"parameter {name!r} of entry point is a pointer to C type {base!r}, which has no "
+                    f"ctypes mapping (known: {sorted(C_PTR)}); add it to C_PTR"
+                )
+            params.append(Param(name, ctypes.POINTER(ptr_ctype), True))
         else:
-            # an unmapped type would guess a width silently -- an ABI bug ctypes can't catch -- so refuse
-            ctype = _C_SCALAR.get(base)
+            ctype = C_SCALAR.get(base)
             if ctype is None:
                 raise ValueError(
                     f"parameter {name!r} of entry point has C type {base!r}, which has no ctypes "
-                    f"mapping (known: {sorted(_C_SCALAR)}); add it to _C_SCALAR"
+                    f"mapping (known: {sorted(C_SCALAR)}); add it to C_SCALAR"
                 )
             params.append(Param(name, ctype, False))
     return params
@@ -385,45 +395,10 @@ def raw_signature(text: str, symbol: str, lang: str = "c") -> str:
 
 def signature(code: str, symbol: str) -> str:
     """The parameter list of symbol(...) in code; unlike raw_signature, matches a non-void DaCe declaration."""
-    m = re.search(rf"{symbol}\s*\((.*?)\)", code, re.S)
+    m = re.search(rf"{re.escape(symbol)}\s*\((.*?)\)", code, re.S)
     if not m:
         raise LookupError(f"entry point {symbol} not found in generated code")
     return m.group(1)
-
-
-def clang_major_via_preprocessor(compiler: str) -> Optional[int]:
-    """Underlying clang major via __clang_major__, for icx/icpx/ifx whose --version hides it; None if unknown."""
-    try:
-        p = subprocess.run(
-            [compiler, "-dM", "-E", "-x", "c", "/dev/null"], capture_output=True, text=True, timeout=PROBE_TIMEOUT_S
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    m = re.search(r"#define __clang_major__ (\d+)", p.stdout)
-    return int(m.group(1)) if m else None
-
-
-@functools.lru_cache(maxsize=None, typed=True)
-def compiler_version(compiler: str) -> Tuple[int, int]:
-    """The compiler's (major, minor) version from --version; (0, 0) if unparseable, never a guess."""
-    try:
-        p = subprocess.run([compiler, "--version"], capture_output=True, text=True, timeout=PROBE_TIMEOUT_S)
-    except (OSError, subprocess.SubprocessError):
-        return (0, 0)
-    out = f"{p.stdout}\n{p.stderr}"
-    fam = compiler_family(compiler)
-    if fam == "llvm":
-        m = re.search(r"clang version (\d+)\.(\d+)", out)
-        if m:
-            return (int(m.group(1)), int(m.group(2)))
-        # icx/icpx/ifx hide the clang version behind their own banner; ask the preprocessor instead
-        cmaj = clang_major_via_preprocessor(compiler)
-        return (cmaj, 0) if cmaj is not None else (0, 0)
-    if fam == "gnu":
-        m = re.search(r"\bg(?:cc|\+\+)?[^\n]*?\b(\d+)\.(\d+)\.\d+\b", out) or re.search(r"\b(\d+)\.(\d+)\.\d+\b", out)
-        if m:
-            return (int(m.group(1)), int(m.group(2)))
-    return (0, 0)
 
 
 # whole-toolchain discovery, PATH only; lives here, not a perf driver, so querying "which compilers does
@@ -448,13 +423,13 @@ class Toolchain:
 
 
 #: family label -> (C compiler exe, C++ compiler exe).
-_FAMILY_EXES = {
+FAMILY_EXES = {
     "gcc": ("gcc", "g++"),
     "clang": ("clang", "clang++"),
     "intel": ("icx", "icpx"),
 }
 #: user tokens (compiler names/aliases) -> family label.
-_ALIASES = {
+ALIASES = {
     "gcc": "gcc", "g++": "gcc", "gnu": "gcc",
     "clang": "clang", "clang++": "clang", "llvm": "clang",
     "icx": "intel", "icpx": "intel", "intel": "intel", "oneapi": "intel",
@@ -464,17 +439,17 @@ _ALIASES = {
 def discover_toolchains(requested: str = "auto") -> List[Toolchain]:
     """Discover toolchain families on PATH ("auto"/"all" -> gcc/clang/intel); C compiler required, C++
     optional."""
-    tokens = list(_FAMILY_EXES) if requested.strip() in ("", "auto", "all") else requested.split()
+    tokens = list(FAMILY_EXES) if requested.strip() in ("", "auto", "all") else requested.split()
     families: List[str] = []
     for t in tokens:
-        fam = _ALIASES.get(t.strip())
+        fam = ALIASES.get(t.strip())
         if fam is None:
-            warnings.warn(f"unknown compiler token {t!r}; known: {sorted(_ALIASES)}")
+            warnings.warn(f"unknown compiler token {t!r}; known: {sorted(ALIASES)}")
         elif fam not in families:
             families.append(fam)
     out: List[Toolchain] = []
     for fam in families:
-        cc_exe, cxx_exe = _FAMILY_EXES[fam]
+        cc_exe, cxx_exe = FAMILY_EXES[fam]
         cc = shutil.which(cc_exe)
         if cc is None:
             warnings.warn(f"{fam}: C compiler {cc_exe!r} not found on PATH; skipping this family")
@@ -566,12 +541,8 @@ def needed_libraries(shared: Path) -> List[str]:
     return re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", out)
 
 
-@functools.lru_cache(maxsize=None, typed=True)
-def ar_for(compiler: str) -> str:
-    """The LTO-plugin-aware ar (gcc-ar/llvm-ar) when present, so an -flto object stays linkable; plain ar otherwise."""
-    cand = {"gnu": "gcc-ar", "llvm": "llvm-ar"}.get(compiler_family(compiler), "ar")
-    return cand if shutil.which(cand) else "ar"
-
+#: The archiver every build uses; nothing in the tree passes -flto, so no LTO-plugin-aware ar/gcc-ar is needed.
+AR = "ar"
 
 #: Wall-clock ceiling for a single compile/link/archive command; a stuck compile freezes the whole sweep rank.
 COMPILE_TIMEOUT_S: float = float(os.environ.get("NF_COMPILE_TIMEOUT", "900"))
@@ -579,8 +550,8 @@ COMPILE_TIMEOUT_S: float = float(os.environ.get("NF_COMPILE_TIMEOUT", "900"))
 #: Distinct warning TEXTS reported per tool before the rest are only counted (unbounded dedup grows forever).
 WARN_BUDGET: int = 5
 
-#: tool name -> (distinct texts already reported, total suppressed after the budget).
-_warned: Dict[str, Tuple[set, int]] = {}
+#: tool name -> (distinct texts already reported (insertion order, as a dict), total suppressed past the budget).
+WARNED: Dict[str, Tuple[Dict[str, None], int]] = {}
 
 
 def warning_kinds(stderr: str) -> str:
@@ -594,22 +565,22 @@ def warn_once(tool: str, stderr: str) -> None:
     compiled cell (hundreds of MB across a sweep). Past budget, kinds are only counted; warning_summary
     reports the total."""
     kinds = warning_kinds(stderr)
-    seen, suppressed = _warned.setdefault(tool, (set(), 0))
+    seen, suppressed = WARNED.setdefault(tool, ({}, 0))
     if kinds in seen:
-        _warned[tool] = (seen, suppressed + 1)
+        WARNED[tool] = (seen, suppressed + 1)
         return
     if len(seen) >= WARN_BUDGET:
-        _warned[tool] = (seen, suppressed + 1)
+        WARNED[tool] = (seen, suppressed + 1)
         return
-    seen.add(kinds)
-    _warned[tool] = (seen, suppressed)
+    seen[kinds] = None
+    WARNED[tool] = (seen, suppressed)
     warnings.warn(f"{tool} warnings [{kinds}]:\n{stderr[-2000:]}")
 
 
 def warning_summary() -> List[str]:
     """One line per tool naming what was reported and how many further warnings were only counted."""
     out = []
-    for tool, (seen, suppressed) in sorted(_warned.items()):
+    for tool, (seen, suppressed) in sorted(WARNED.items()):
         line = f"{tool}: {len(seen)} warning kind(s) reported ({', '.join(sorted(seen))})"
         if suppressed:
             line += f"; {suppressed} further warning(s) suppressed"
