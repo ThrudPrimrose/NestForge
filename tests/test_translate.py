@@ -77,11 +77,12 @@ def test_a_fused_maps_scalar_transient_is_spelled_the_same_inside_and_out():
     Runs the emitted kernel rather than grepping the text: the spelling only matters because it decides
     whether the value survives from the write to the read.
     """
-    from nestforge.granularity import granularity_ladder
+    from nestforge.phases.normalize import Targets, normalize
+    from nestforge.phases.schedule import full_fusion
     from nestforge.phases.scopes import lower_nests_to_external_call
 
     sdfg = gather_two_map.to_sdfg(simplify=True)
-    granularity_ladder(sdfg, max_points=2)[-1].apply(sdfg)  # the maximal (fused) rung
+    full_fusion(normalize(sdfg, Targets()), Targets())
     calls = lower_nests_to_external_call(sdfg, "outer")
     assert calls, "nothing lowered; the fixture no longer produces an offloadable nest"
     ext, b = calls[0]

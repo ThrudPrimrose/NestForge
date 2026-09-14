@@ -80,10 +80,8 @@ def manifest_dict(boundary: Boundary, name: str, sizes: Optional[Dict[str, int]]
         init["scalars"] = float_scalars
     return {
         "name": name,
-        "short_name": name,
         "func_name": name,
         "relative_path": "extended",
-        "kind": "microkernel",
         "level": 1,
         "parameters": {
             preset: int_params
@@ -92,8 +90,4 @@ def manifest_dict(boundary: Boundary, name: str, sizes: Optional[Dict[str, int]]
         "array_args": arrays,
         "output_args": list(boundary.outputs),
         "init": init,
-        # hpcagent_bench.spec hoists taxonomy.track into BenchSpec
-        "taxonomy": {
-            "track": "foundation"
-        },
     }
