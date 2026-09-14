@@ -28,8 +28,8 @@ thread, so `pause_openmp_pools` shuts down loaded OpenMP thread pools first.
 
 ## Runtime libraries
 
-Every library and program links the runtimes it needs by name and never relies on the host process
-having them loaded.
+NestForge assumes Linux. Every link passes `-Wl,--as-needed`, and every library and program links the
+runtimes it needs by name instead of relying on the host process having them loaded.
 
 - **OpenMP.** LLVM libomp is the process's one runtime. It serves g++ code through its `GOMP_*` entry
   points and clang++ or icpx code through `__kmpc_*`, so every compiler shares one thread pool.

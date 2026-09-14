@@ -77,7 +77,7 @@ pytest -m "not integration and not gpu and not vendor"    # unit set
 pytest -m integration                                     # compiles and runs kernels
 ```
 
-Benchmark kernels and the NumPy to C, C++ and Fortran translator come from
+NestForge assumes Linux. Benchmark kernels and the NumPy to C, C++ and Fortran translator come from
 [HPCAgent-Bench](https://github.com/spcl/HPCAgent-Bench). HPCAgent-Bench imports NestForge, so
 `import nestforge` never loads HPCAgent-Bench; only the functions that need it do.
 
