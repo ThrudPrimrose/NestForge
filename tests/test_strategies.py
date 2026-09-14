@@ -28,7 +28,7 @@ def test_empty_strategy_reason_distinguishes_libnode_only_from_empty():
 
 def test_skip_taskloops_descends_through_a_map_only_time_loop():
     # jacobi's TSTEPS loop body is only maps -> a taskloop; skip it and offload the spatial maps.
-    sdfg = sdfg_for("hpc/structured_grids/jacobi_1d/jacobi_1d")
+    sdfg = sdfg_for("scientific_computing/structured_grids/jacobi_1d/jacobi_1d")
     refs = get_strategy("skip-taskloops")(sdfg)
     assert refs, "expected the inner compute maps"
     assert all(isinstance(n, nodes.MapEntry) for _, n in refs)
@@ -39,13 +39,13 @@ def test_skip_taskloops_descends_through_a_map_only_time_loop():
 
 def test_innermost_yields_leaf_maps_when_present():
     # jacobi's loop holds maps, so the innermost units are those maps (not the loop wrapper).
-    sdfg = sdfg_for("hpc/structured_grids/jacobi_1d/jacobi_1d")
+    sdfg = sdfg_for("scientific_computing/structured_grids/jacobi_1d/jacobi_1d")
     refs = get_strategy("innermost")(sdfg)
     assert refs and all(isinstance(n, nodes.MapEntry) for _, n in refs)
 
 
 def test_innermost_yields_leaf_loops_for_loop_only_kernels():
     # lu has no maps and an outer loop wrapping two inner loops; the innermost units are those two.
-    sdfg = sdfg_for("hpc/dense_linear_algebra/lu/lu")
+    sdfg = sdfg_for("scientific_computing/dense_linear_algebra/lu/lu")
     refs = get_strategy("innermost")(sdfg)
     assert len(refs) == 2 and all(isinstance(n, LoopRegion) for _, n in refs)

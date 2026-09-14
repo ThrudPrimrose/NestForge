@@ -19,14 +19,14 @@ def test_corpus_program_is_the_entry_not_a_helper():
     from nestforge.corpus.bench import iter_dace_kernels
     ks = {k.short_name: k for k in iter_dace_kernels()}
     # mlp_dace defines relu, softmax, then mlp; resnet has resnet_basicblock + a _gpu variant after it.
-    assert ks["ml/mlp/mlp"].program().name.endswith("mlp")
-    assert ks["ml/resnet/resnet"].program().name.endswith("resnet_basicblock")
+    assert ks["machine_learning/mlp/mlp"].program().name.endswith("mlp")
+    assert ks["machine_learning/resnet/resnet"].program().name.endswith("resnet_basicblock")
 
 
 def test_corpus_module_path_independent_of_namespace_path():
     from nestforge.corpus.bench import module_path
     # Derived from the registry key, not hpcagent_bench.benchmarks.__path__ (which can be stale/multi-root).
-    assert module_path("hpc/dense_linear_algebra/gemm/gemm") == \
+    assert module_path("scientific_computing/dense_linear_algebra/gemm/gemm") == \
         "hpcagent_bench.benchmarks.hpc.dense_linear_algebra.gemm.gemm_dace"
 
 
