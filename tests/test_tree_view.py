@@ -111,7 +111,7 @@ def test_region_lines_carry_the_stable_descriptive_id_not_a_minted_one():
     assert not re.search(r"\[e\d+:region:", tree)
 
 
-# --- conditions read as the arrays they test -------------------------------------------------------
+# conditions read as the arrays they test
 
 
 def test_a_condition_names_the_array_it_really_reads():
@@ -155,7 +155,7 @@ def test_an_unparsable_condition_is_passed_through():
     assert resolve_scalars("this is not python", {}) == "this is not python"
 
 
-# --- bodies: what each kernel computes -------------------------------------------------------------
+# bodies: what each kernel computes
 
 
 @dc.program
@@ -230,7 +230,7 @@ def test_an_emitter_refusal_is_reported_on_the_line_not_raised(monkeypatch):
     assert "<not emitted: no emitter for this>" in tree
 
 
-# --- reductions on the kernel line -----------------------------------------------------------------
+# reductions on the kernel line
 
 
 @dc.program
@@ -295,7 +295,7 @@ def test_a_body_is_not_recovered_by_slicing_the_emitted_block():
     assert body == full
 
 
-# --- one kernel's body, by handle -------------------------------------------------------------------
+# one kernel's body, by handle
 
 
 def test_session_hands_back_one_kernel_body_by_its_tree_id():
@@ -331,7 +331,7 @@ def test_a_stale_id_does_not_silently_return_someone_elses_body():
         session.kernel_body(nest_id)
 
 
-# --- a kernel's REPRESENTATION: pure, runnable numpy -------------------------------------------------
+# a kernel's REPRESENTATION: pure, runnable numpy
 
 
 def source_of_first_kernel(program):

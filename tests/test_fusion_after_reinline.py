@@ -51,7 +51,7 @@ def test_externalized_nest_keeps_its_own_sdfg_for_reinlining():
     """(a) The material to re-inline with. Without it phase IV cannot start."""
     _, calls = externalized()
     for ext, _boundary in calls:
-        assert ext._standalone_sdfg is not None, f"{ext.name} cannot be re-inlined: no standalone SDFG"
+        assert ext.standalone_sdfg is not None, f"{ext.name} cannot be re-inlined: no standalone SDFG"
 
 
 def test_reinlined_nests_are_inlined_so_map_fusion_can_see_them():

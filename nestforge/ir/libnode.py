@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import os
 from dataclasses import dataclass
-from typing import Collection, List, Optional, Sequence, Tuple
+from typing import Collection, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -20,7 +20,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-_CPP_SCALAR = {"float64": "double", "float32": "float", "int64": "int64_t", "int32": "int32_t"}
+CPP_SCALAR = {"float64": "double", "float32": "float", "int64": "int64_t", "int32": "int32_t"}
 
 
 def in_conn(name: str) -> str:
@@ -33,11 +33,11 @@ def out_conn(name: str) -> str:
     return f"_out_{name}"
 
 
-def connector_for(arg: str, outputs: set) -> str:
+def connector_for(arg: str, outputs: Collection[str]) -> str:
     return out_conn(arg) if arg in outputs else in_conn(arg)
 
 
-def value_connectors(node: "ExternalCall", state: dace.SDFGState) -> set:
+def value_connectors(node: "ExternalCall", state: dace.SDFGState) -> Set[str]:
     """Connectors whose memlet covers one element: DaCe declares these as a VALUE, so the call
     must take their address, not pass them as a pointer."""
     single = set()
@@ -80,11 +80,11 @@ class CallSite:
 
 def data_param(node: "ExternalCall", arg: str, dtype: str, site: CallSite) -> Tuple[str, str]:
     """``(parameter, call argument)`` of one data argument: a read-only Scalar input by value, the rest by pointer."""
-    if dtype not in _CPP_SCALAR:
+    if dtype not in CPP_SCALAR:
         # No C spelling for this dtype (complex, float16, unsigned, ...): refuse instead of a codegen KeyError.
         raise ValueError(
             f"ExternalCall {node.name!r}: array {arg!r} has dtype {dtype!r}, which has no "
-            f"extern-C spelling (known: {sorted(_CPP_SCALAR)}); keep the DaceReference "
+            f"extern-C spelling (known: {sorted(CPP_SCALAR)}); keep the DaceReference "
             "implementation for this nest"
         )
     conn = connector_for(arg, site.outputs)
@@ -95,7 +95,7 @@ def data_param(node: "ExternalCall", arg: str, dtype: str, site: CallSite) -> Tu
             f"{conn!r} connector (a caller-allocated scratch buffer is not passed across "
             "the ExternalCall boundary); keep the DaceReference implementation"
         )
-    ctype = _CPP_SCALAR[dtype]
+    ctype = CPP_SCALAR[dtype]
     if conn in site.scalars:
         return f"{ctype} {arg}", conn
     const = "" if arg in site.outputs else "const "
@@ -132,7 +132,7 @@ def proto_and_call(node: "ExternalCall", state: dace.SDFGState) -> Tuple[str, st
     call_args: List[str] = []
     for arg in order:
         if arg not in arrays:
-            params.append(f"{_CPP_SCALAR.get(scalar_dtypes.get(arg, 'int64'), 'int64_t')} {arg}")
+            params.append(f"{CPP_SCALAR.get(scalar_dtypes.get(arg, 'int64'), 'int64_t')} {arg}")
             call_args.append(arg)
             continue
         param, call_arg = data_param(node, arg, dtypes_map[arg], site)
@@ -197,9 +197,9 @@ class ExpandDaceReference(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "ExternalCall", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
-        if node._standalone_sdfg is None:
+        if node.standalone_sdfg is None:
             raise ValueError(f"ExternalCall {node.name} has no standalone SDFG to fall back to")
-        return copy.deepcopy(node._standalone_sdfg)
+        return copy.deepcopy(node.standalone_sdfg)
 
 
 @dace.library.expansion
@@ -259,14 +259,26 @@ class ExternalCall(nodes.LibraryNode):
     def __init__(
         self,
         name: str,
-        inputs: Optional[set] = None,
-        outputs: Optional[set] = None,
+        inputs: Optional[Sequence[str]] = None,
+        outputs: Optional[Sequence[str]] = None,
         numpy_source: str = "",
         config: Optional[dict] = None,
         standalone_sdfg: Optional[dace.SDFG] = None,
         **kwargs,
     ) -> None:
-        super().__init__(name, inputs=inputs or set(), outputs=outputs or set(), **kwargs)
+        # Ordered, not a set: connector order (in_connectors/out_connectors) must stay deterministic.
+        super().__init__(name, inputs=list(inputs or []), outputs=list(outputs or []), **kwargs)
         self.numpy_source = numpy_source
         self.config = config
-        self._standalone_sdfg = standalone_sdfg  # in-memory only (not serialized in M0)
+        self.standalone_sdfg = standalone_sdfg  # in-memory only (not serialized in M0)
+
+    @property
+    def standalone_sdfg(self) -> Optional[dace.SDFG]:
+        """Detached, independently compilable copy of the nest; in-memory only (not serialized in M0).
+        A plain ``@property`` over ``_standalone_sdfg``: dace's ``make_properties`` rejects any stored
+        instance attribute that is neither a declared Property nor underscore-prefixed."""
+        return self._standalone_sdfg
+
+    @standalone_sdfg.setter
+    def standalone_sdfg(self, value: Optional[dace.SDFG]) -> None:
+        self._standalone_sdfg = value

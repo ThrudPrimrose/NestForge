@@ -183,7 +183,7 @@ def test_inplace_nest_reference_sdfg_declares_every_connector():
     already gone) and the DaceReference expansion with no ``_out_A`` descriptor -- NestedSDFG validation then
     rejects the connector. Guards the ExternalCall/reference connector alignment for read+write boundaries."""
     sdfg, ext = inplace_lowered()
-    arrays = ext._standalone_sdfg.arrays
+    arrays = ext.standalone_sdfg.arrays
     for conn in set(ext.in_connectors) | set(ext.out_connectors):
         assert conn in arrays, f"connector {conn} has no descriptor in the reference SDFG: {sorted(arrays)}"
     sdfg.expand_library_nodes()

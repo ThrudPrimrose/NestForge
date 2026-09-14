@@ -32,7 +32,7 @@ def nest_refs(key):
     return sdfg, parallel_top_level_maps(sdfg)
 
 
-# --- is_parallel_nest ------------------------------------------------------------------------------
+# is_parallel_nest
 def test_map_schedule_drives_parallel_classification():
     sdfg = dace.SDFG("t")
     sdfg.add_array("a", [10], dace.float64)
@@ -55,7 +55,7 @@ def test_real_parallel_map_kernel_is_parallel():
     assert any(is_parallel_nest(node) for _, node in refs)
 
 
-# --- nested-map emission (map_lines recursion) ----------------------------------------------------
+# nested-map emission (map_lines recursion)
 def test_s2275_nested_map_emits_and_computes():
     # tsvc_2_s2275 baseline = an i-loop with an inner j-loop (2-D aa FMA) + an i-level 1-D statement.
     # Canonicalization legally DISTRIBUTES the two (the yaml puzzle: interchange for the matrix update

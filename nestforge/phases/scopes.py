@@ -90,13 +90,19 @@ def kernel_connector(prefixed: Callable[[str], str], conn: Optional[str]) -> Opt
 
 
 def replace_nsdfg_with_external(boundary: Boundary, name: str) -> ExternalCall:
+    if boundary.state is None or boundary.nsdfg_node is None:
+        raise ValueError(
+            "replace_nsdfg_with_external needs an extracted-nest Boundary (state + nsdfg_node); got a "
+            "whole-program boundary, which has neither"
+        )
     state = boundary.state
     nsdfg = boundary.nsdfg_node
     # Connectors are prefixed so they never collide with array/symbol names (a LibraryNode rule).
+    # Ordered lists, not sets: connector order must stay deterministic (boundary order), not hash-based.
     ext = ExternalCall(
         name,
-        inputs={in_conn(i) for i in boundary.inputs},
-        outputs={out_conn(o) for o in boundary.outputs},
+        inputs=[in_conn(i) for i in boundary.inputs],
+        outputs=[out_conn(o) for o in boundary.outputs],
         numpy_source=nest_to_numpy(boundary, fn_name=name),
         config=manifest_dict(boundary, name),
         standalone_sdfg=reference_sdfg(boundary),

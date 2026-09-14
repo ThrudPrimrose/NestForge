@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Set, Union
 
 import dace
 from dace import symbolic
@@ -29,10 +29,10 @@ class Boundary:
     inputs: List[str]
     outputs: List[str]
     symbols: List[str]
-    nsdfg_node: nodes.NestedSDFG  # placed in the parent; the replacement anchor
-    state: SDFGState
+    nsdfg_node: Optional[nodes.NestedSDFG]  # placed in the parent; None for a whole-program boundary
+    state: Optional[SDFGState]  # None for a whole-program boundary
     standalone_sdfg: dace.SDFG  # detached, independently compilable copy of the nest
-    parent_sdfg: dace.SDFG = field(repr=False, default=None)
+    parent_sdfg: Optional[dace.SDFG] = field(repr=False, default=None)
 
 
 def detach(sdfg: dace.SDFG) -> dace.SDFG:
@@ -91,20 +91,25 @@ def assignment_dtype(sdfg: dace.SDFG, rhs: str) -> dace.dtypes.typeclass:
 
 
 def nest_defined_symbol_dtypes(sdfg: dace.SDFG, region: CfgNest) -> Dict[str, dace.dtypes.typeclass]:
-    """Every symbol defined inside the nest (loop variables plus interstate-edge assignment targets),
-    mapped to the dtype it should be declared with."""
+    """Every genuine interstate-edge assignment target defined inside the nest, mapped to the dtype it
+    should be pre-declared with. Loop iterators are scope symbols (never SDFG symbols): DaCe's own nest
+    helper types and exports them itself from the ``LoopRegion``, so they are excluded here rather than
+    hardcoded and pre-declared."""
+    loop_variables = {
+        b.loop_variable
+        for b in [region, *region.all_control_flow_blocks()]
+        if isinstance(b, LoopRegion) and b.loop_variable
+    }
     dtypes: Dict[str, dace.dtypes.typeclass] = {}
-    for b in [region, *region.all_control_flow_blocks()]:
-        if isinstance(b, LoopRegion) and b.loop_variable and b.init_statement:
-            dtypes[b.loop_variable] = dace.int64
     for e in region.all_interstate_edges():
         for target, rhs in e.data.assignments.items():
-            if target not in dtypes:
-                dtypes[target] = assignment_dtype(sdfg, str(rhs))
+            if target in loop_variables or target in dtypes:
+                continue
+            dtypes[target] = assignment_dtype(sdfg, str(rhs))
     return dtypes
 
 
-def trip_count_symbols(sdfg: dace.SDFG) -> set:
+def trip_count_symbols(sdfg: dace.SDFG) -> Set[str]:
     """Symbols that can change how much work ``sdfg`` does: loop init/condition/update statements, map
     ranges, and interstate conditions (not assignments, which carry a value but never gate whether it
     runs). Recurses into NestedSDFGs, translating each inner name back through ``symbol_mapping``."""
@@ -134,6 +139,7 @@ def extract_cfg_nest(parent_sdfg: dace.SDFG, region: CfgNest, name: Optional[str
     """Outline one control-flow block -- a ``LoopRegion`` or a ``ConditionalBlock`` with all its branches
     -- into a standalone SDFG; the coarsest of the three offload units."""
     # pre-declare with the INFERRED dtype: int64 by fiat would truncate a float staged across an edge.
+    # Loop iterators are never pre-declared here (GOTCHA: scope symbols, not SDFG symbols).
     for s, dtype in nest_defined_symbol_dtypes(parent_sdfg, region).items():
         if s not in parent_sdfg.symbols:
             parent_sdfg.add_symbol(s, dtype)

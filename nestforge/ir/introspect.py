@@ -203,20 +203,18 @@ def loop_domain(loop: LoopRegion, defs: Dict[str, str]) -> str:
     return resolve_scalars(loop.loop_condition.as_string, defs) if loop.loop_condition is not None else ""
 
 
-#: ``str(end) -> simplify(end + 1)``, keyed on the string form (stable across equal sympy objects).
-_END_PLUS_ONE: Dict[str, Any] = {}
+@functools.lru_cache(maxsize=4096, typed=True)
+def end_plus_one(end_text: str) -> str:
+    """``str(simplify(end + 1))`` for one END expression's string form -- render_range asks the same
+    bound repeatedly across a program's kernels."""
+    return str(dace.symbolic.simplify(dace.symbolic.pystr_to_symbolic(end_text) + 1))
 
 
 def render_range(rng: Tuple[Any, Any, Any]) -> str:
     """``begin:end:step`` with the two redundant parts dropped -- an inclusive end is rendered as the
     exclusive bound a reader expects, and a unit step is left off."""
     begin, end, step = rng
-    key = str(end)
-    stop = _END_PLUS_ONE.get(key)
-    if stop is None:
-        stop = dace.symbolic.simplify(end + 1)
-        _END_PLUS_ONE[key] = stop
-    text = f"{begin}:{stop}"
+    text = f"{begin}:{end_plus_one(str(end))}"
     return text if step == 1 else f"{text}:{step}"
 
 
