@@ -23,6 +23,7 @@ from nestforge.ir.introspect import describe_graph, kernel_body, kernel_source, 
 from nestforge.phases.feedback import run_feedback_loop
 from nestforge.phases.kernel import KernelSource, schedule_kernel, use_kernel_library
 from nestforge.phases.normalize import Targets, normalize
+from nestforge.phases.offload import offload
 from nestforge.phases.schedule import (FusionMove, RegionMove, apply_fusion, apply_region_fusion, can_fuse,
                                        enumerate_fusions, enumerate_region_fusions, finish_schedule,
                                        fission_to_statements, full_fusion, scope_metrics)
@@ -250,6 +251,25 @@ class Session:
             ext, boundary = self.resolve(kernel_id, "kernel")
             self.prepared[kernel_id] = prepare(boundary, ext.name, self.work_dir / ext.name)
         return self.prepared[kernel_id]
+
+    # Phase 3: offload
+
+    def offload(self) -> dict:
+        """Give every kernel a device and insert the host/device copies. With a GPU target the graph
+        changes, so every earlier id goes stale and the kernels come back under fresh ids."""
+        kernels = [(hid, obj) for hid, obj in self.handles.items() if hid.split(":", 2)[1] == "kernel"]
+        placement = offload(self.sdfg, self.targets)
+        if self.targets.gpu:
+            self.bump()
+            kernels = [(self.mint("kernel", obj), obj) for _, obj in kernels]
+        return {
+            "kernels": [{
+                "id": hid,
+                "name": ext.name,
+                "device": placement.devices[ext.name]
+            } for hid, (ext, _) in kernels],
+            "copies": [list(pair) for pair in placement.copies],
+        }
 
     # Phase 4: optimize kernels
 
