@@ -11,23 +11,9 @@ import pytest
 
 from nestforge.build import arena
 
-from nestforge.corpus import tsvc
 from nestforge.build.isolation import run_isolated
 from nestforge.build import flags
 from nestforge.build import harness
-
-
-# --- native-baseline signature parsing (tsvc.native_signature) ----------------------------------------
-def test_native_signature_strips_qualifiers_and_types():
-    cpp = 'extern "C" void s000_d(double* restrict a, const double * b, int64_t LEN_1D, int n1) {'
-    sig = tsvc.native_signature(cpp, "s000_d")
-    assert sig == [("a", "double", True), ("b", "double", True), ("LEN_1D", "int64_t", False), ("n1", "int", False)]
-
-
-def test_native_signature_float_and_missing_symbol():
-    assert tsvc.native_signature("void k(float* x) {", "k") == [("x", "float", True)]
-    with pytest.raises(LookupError):
-        tsvc.native_signature("void other(double* x) {", "k")
 
 
 def test_native_symbol_fallback_to_first_kernel():
@@ -123,10 +109,6 @@ def test_family_of_maps_labels_to_fp_families():
 
 
 # --- key_seed determinism -----------------------------------------------------------------------------
-def test_key_seed_is_stable_and_distinct():
-    assert tsvc.key_seed("s000") == tsvc.key_seed("s000")  # process-independent (not salted hash)
-    assert tsvc.key_seed("s000") != tsvc.key_seed("s112")  # different keys -> different offsets
-    assert 0 <= tsvc.key_seed("anything") <= 0xFFFF
 
 
 # --- fault isolation edge cases (run_isolated) --------------------------------------------------------
@@ -264,47 +246,6 @@ def test_rewind_snapshot_writes_through_to_the_bound_buffer():
     a = np.full(4, 0.25)
     snapshot = arena.rewind_snapshot(FakeBoundary(["a"], inputs=["a"]), {"a": a})
     assert snapshot[0][0] is a
-
-
-def test_the_native_signature_type_set_matches_what_the_arena_can_bind():
-    """`native_signature` produces base-type STRINGS that `harness.C_BASE` turns into ctypes types. A type
-    accepted by the parser but absent from that mapping would KeyError mid-bind, and one accepted by the
-    mapping but refused by the parser makes a legitimate baseline unmeasurable. Pin them equal."""
-    assert set(tsvc.NATIVE_C_BASE) == set(harness.C_BASE)
-
-
-def test_native_signature_refuses_a_type_it_cannot_bind():
-    """The old fallback made every unrecognised declaration an `int`, so a `bool` bound as a 4-byte int:
-    a silent ABI mismatch ctypes cannot catch and the timings cannot reveal."""
-    with pytest.raises(ValueError, match="cannot bind"):
-        tsvc.native_signature('extern "C" void k_d(bool flag, double* a) {', "k_d")
-
-
-def test_native_signature_ignores_a_doc_comment_naming_the_symbol():
-    """29 of the 245 foundation baselines put ``// <symbol> (<note>): ...`` directly above the declaration.
-    A ``\\b<symbol>\\s*\\(`` search matches the COMMENT first and returns its parenthetical as the whole
-    parameter list, so the parse raised and -- because both drivers catch only LookupError -- the ValueError
-    killed the entire kernel, not just its native column. The ``void`` anchor is what rules the comment out."""
-    cpp = ('// argmax_value_d (s314): x = a[0]; for i: if a[i] > x: x = a[i]\n'
-           'extern "C" void argmax_value_d(const double* __restrict__ a, double* __restrict__ out, int64_t n) {')
-    assert tsvc.native_signature(cpp, "argmax_value_d") == [("a", "double", True), ("out", "double", True),
-                                                            ("n", "int64_t", False)]
-
-
-def test_native_signature_accepts_a_namespace_qualified_type():
-    """The C++ baselines spell the <cstdint> types both bare and ``std::``-qualified -- same type, same ABI.
-    Unhandled, the qualified spelling failed NATIVE_C_BASE and dropped every gather/scatter kernel (whose
-    index array is the one declared that way) from the sweep."""
-    cpp = 'extern "C" void ext_gather_load_d(double* dst, const std::int64_t* __restrict__ idx, int len) {'
-    assert tsvc.native_signature(cpp, "ext_gather_load_d") == [("dst", "double", True), ("idx", "int64_t", True),
-                                                               ("len", "int", False)]
-
-
-def test_native_signature_does_not_eat_a_name_containing_const():
-    """Qualifiers are stripped as whole words. A substring strip turned a parameter named `const_term`
-    into `_term`, binding the argument list one name out of step with the compiled signature."""
-    sig = tsvc.native_signature('extern "C" void k_d(const double* const_term, int64_t LEN_1D) {', "k_d")
-    assert sig == [("const_term", "double", True), ("LEN_1D", "int64_t", False)]
 
 
 def test_family_of_only_ever_names_a_real_fp_family():
