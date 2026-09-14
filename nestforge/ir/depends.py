@@ -281,7 +281,7 @@ def kernel_flow(state: SDFGState, node: ExternalCall, env: Env, facts: Dict[int,
     tracker.kernels[node.label] = None
     for edge in state.in_edges(node):
         connector = edge.dst_conn
-        if connector is None or not connector.startswith(INPUT_PREFIX) or edge.data.is_empty():
+        if connector is None or not connector.startswith(INPUT_PREFIX):
             continue
         record(tracker, node.label, connector.removeprefix(INPUT_PREFIX), "input", source_fact(state, edge, facts))
     for name in kernel_symbols(node):

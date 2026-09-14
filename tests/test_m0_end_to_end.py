@@ -19,6 +19,13 @@ def vadd(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
         C[i] = A[i] + B[i]
 
 
+@dace.program
+def overwrite(A: dace.float64[N], B: dace.float64[N], X: dace.float64[N], C: dace.float64[N]):
+    X[:] = A + 1
+    X[:] = B + 2
+    C[:] = X * 3
+
+
 def reference_outputs(n):
     A = np.random.default_rng(0).random(n)
     B = np.random.default_rng(1).random(n)
@@ -34,6 +41,31 @@ def test_lower_inserts_external_call():
     assert set(ext.in_connectors) == {"_in_A", "_in_B"}
     assert set(ext.out_connectors) == {"_out_C"}
     assert "def " in ext.numpy_source
+
+
+def test_an_ordering_edge_into_a_lowered_nest_gains_no_connector():
+    sdfg = overwrite.to_sdfg(simplify=True)
+
+    lowered = lower_nests_to_external_call(sdfg)
+
+    connectors = [
+        conn
+        for call, boundary in lowered
+        for conn in (
+            *call.in_connectors,
+            *call.out_connectors,
+            *(edge.dst_conn for edge in boundary.state.in_edges(call)),
+            *(edge.src_conn for edge in boundary.state.out_edges(call)),
+        )
+    ]
+    assert "_in_None" not in connectors and "_out_None" not in connectors
+    ordering = [
+        (edge.src.data, call.label, edge.dst_conn)
+        for call, boundary in lowered
+        for edge in boundary.state.in_edges(call)
+        if edge.data.is_empty()
+    ]
+    assert ordering == [("X", "extcall_1", None)]
 
 
 def test_dace_reference_runs_correctly():

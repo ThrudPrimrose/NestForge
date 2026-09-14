@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import List, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import dace
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
@@ -83,6 +83,12 @@ def reference_sdfg(boundary: Boundary) -> "dace.SDFG":
     return ref
 
 
+def kernel_connector(prefixed: Callable[[str], str], conn: Optional[str]) -> Optional[str]:
+    """``prefixed(conn)``, or ``None`` for an ordering edge (empty memlet, no connector), so it never becomes
+    ``_in_None``."""
+    return None if conn is None else prefixed(conn)
+
+
 def replace_nsdfg_with_external(boundary: Boundary, name: str) -> ExternalCall:
     state = boundary.state
     nsdfg = boundary.nsdfg_node
@@ -98,9 +104,9 @@ def replace_nsdfg_with_external(boundary: Boundary, name: str) -> ExternalCall:
     state.add_node(ext)
     # Fresh memlets per edge (never reuse subsets/memlets); remap connector names.
     for e in state.in_edges(nsdfg):
-        state.add_edge(e.src, e.src_conn, ext, in_conn(e.dst_conn), copy.deepcopy(e.data))
+        state.add_edge(e.src, e.src_conn, ext, kernel_connector(in_conn, e.dst_conn), copy.deepcopy(e.data))
     for e in state.out_edges(nsdfg):
-        state.add_edge(ext, out_conn(e.src_conn), e.dst, e.dst_conn, copy.deepcopy(e.data))
+        state.add_edge(ext, kernel_connector(out_conn, e.src_conn), e.dst, e.dst_conn, copy.deepcopy(e.data))
     state.remove_node(nsdfg)
     return ext
 
