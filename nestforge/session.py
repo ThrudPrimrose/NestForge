@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Session: the one API over every phase, shared by the deterministic driver, humans and agents.
 
-The SDFG lives here; callers name graph objects by epoch-stamped string ids. Any mutation bumps the
-epoch, so an id from before it raises :class:`StaleHandle` instead of acting on a moved graph.
+The SDFG lives here; callers name graph objects by epoch-stamped string ids, or name tree rows by their labels
+together with the epoch they were read at. Any mutation bumps the epoch and regenerates the labels, so an id or
+label from before it is refused instead of acting on a moved graph.
 """
 
 from __future__ import annotations
@@ -11,9 +12,9 @@ from __future__ import annotations
 import json
 import re
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import dace
 from dace.sdfg import nodes
@@ -23,7 +24,8 @@ from nestforge.corpus.translate import Prepared, emit_sources, prepare
 from nestforge.ir.depends import OUTPUT_PREFIX, KernelGraph, UnsupportedProgram, kernel_dependencies
 from nestforge.ir.extract import Boundary, detach, extract_map_nest, find_state_of_node
 from nestforge.ir.libnode import ExternalCall
-from nestforge.ir.introspect import describe_graph, kernel_body, kernel_source, nest_reads_writes
+from nestforge.ir.introspect import describe_graph, kernel_body, kernel_source, nest_reads_writes, tree_rows
+from nestforge.ir.names import normalize_labels
 from nestforge.phases.feedback import run_feedback_loop
 from nestforge.phases.kernel import (
     KernelSource,
@@ -36,19 +38,24 @@ from nestforge.phases.kernel import (
 from nestforge.phases.normalize import Targets, normalize
 from nestforge.phases.offload import external_calls, offload, transfers
 from nestforge.phases.schedule import (
+    MOVE_SHAPES,
+    NOT_IMPLEMENTED,
     FissionMove,
     FusionMove,
     RegionMove,
-    apply_fusion,
-    apply_map_fission,
+    Row,
     apply_region_fusion,
     can_fuse,
+    check_kind,
+    commit_move,
     enumerate_fusions,
     enumerate_map_fissions,
     enumerate_region_fusions,
     finish_schedule,
     fission_to_statements,
     full_fusion,
+    legal_moves,
+    plan_move,
     scope_metrics,
 )
 from nestforge.phases.scopes import (
@@ -70,6 +77,17 @@ class StaleHandle(KeyError):
     """An id from a past epoch: the graph changed under it; list again and retry."""
 
 
+@dataclass(frozen=True, slots=True)
+class MoveResult:
+    """What :meth:`Session.apply_move` did. ``status`` is ``applied`` (``reason`` names the transformation),
+    ``illegal``, ``not-implemented``, ``not-found`` or ``stale``; only ``applied`` changed the program."""
+
+    status: str
+    kind: str
+    labels: Tuple[str, ...]
+    reason: str
+
+
 class Session:
     """Owner of one program SDFG and the ids callers drive it through."""
 
@@ -79,6 +97,7 @@ class Session:
         "targets",
         "epoch",
         "handles",
+        "rows",
         "work_dir",
         "prepared",
         "kernel_sources",
@@ -98,6 +117,9 @@ class Session:
         self.name = name or sdfg.label
         self.epoch = 0
         self.handles: Dict[str, object] = {}
+        # tree labels are unique across the whole SDFG hierarchy, rebuilt by every bump()
+        normalize_labels(sdfg)
+        self.rows: Optional[Dict[str, Row]] = None
         self.work_dir = Path(work_dir) if work_dir else Path(tempfile.mkdtemp(prefix="nfsession_"))
         self.prepared: Dict[str, Prepared] = {}
         self.kernel_sources: Dict[str, KernelSource] = {}
@@ -128,6 +150,8 @@ class Session:
     def bump(self) -> None:
         self.epoch += 1
         self.handles = {}
+        normalize_labels(self.sdfg)
+        self.rows = None
         self.prepared = {}
         self.kernel_sources = {}
         self.kernel_deps = None
@@ -143,14 +167,16 @@ class Session:
     # Phase 1: inter-kernel schedule
 
     def describe(self, bodies: bool = False, metrics: bool = False, deps: bool = False) -> str:
-        """The program as a text tree; nest lines carry :meth:`can_fuse` ids, scope metrics if ``metrics``, and each
-        kernel row its :meth:`kernel_graph` line underneath if ``deps``."""
+        """The program as a text tree headed by the epoch; rows are named by the labels :meth:`apply_move` takes, nest
+        lines carry :meth:`can_fuse` ids, scope metrics if ``metrics``, and each kernel row its :meth:`kernel_graph`
+        line underneath if ``deps``."""
         return describe_graph(
             self.sdfg,
             handle=self.tree_handle,
             bodies=bodies,
             metrics=self.metrics_suffix if metrics else None,
             notes=self.deps_line if deps else None,
+            epoch=self.epoch,
         )
 
     def deps_line(self, node: nodes.LibraryNode) -> Optional[str]:
@@ -189,9 +215,58 @@ class Session:
 
     def fuse(self, move_id: str) -> str:
         move: FusionMove = self.resolve(move_id, "move")
-        apply_fusion(self.sdfg, move)
-        self.bump()
+        self.commit(self.sdfg, move)
         return self.describe()
+
+    def list_moves(self, kind: Optional[str] = None) -> List[dict]:
+        """Every legal move right now, of ``kind`` or of every kind, as ``{kind, labels, epoch}``: exactly what
+        :meth:`apply_move` takes back. A not-implemented kind lists nothing."""
+        return [
+            {"kind": name, "labels": list(labels), "epoch": self.epoch} for name, labels in legal_moves(self.sdfg, kind)
+        ]
+
+    def apply_move(self, kind: str, labels: Sequence[str], epoch: int) -> MoveResult:
+        """Apply one scheduling move to the tree rows ``labels`` name, as read at ``epoch``.
+
+        :param kind: One of ``loop-fusion``, ``loop-fission``, ``map-fusion``, ``map-fission``,
+            ``interchange-loop-loop``, ``interchange-loop-map``, ``interchange-map-loop``, ``interchange-map-map``.
+        :param labels: Tree labels in the order the kind takes them: first then second for a fusion, outer then inner
+            for an interchange.
+        :param epoch: The epoch :meth:`describe` or :meth:`list_moves` showed with those labels.
+        :returns: The outcome; nothing but ``applied`` touches the program.
+        :raises ValueError: ``kind`` is unknown or ``labels`` has the wrong count.
+        """
+        names = tuple(labels)
+        shape = MOVE_SHAPES[check_kind(kind)]
+        if len(names) != len(shape):
+            raise ValueError(f"{kind} takes {len(shape)} label(s); got {len(names)}")
+        if kind in NOT_IMPLEMENTED:
+            return MoveResult("not-implemented", kind, names, NOT_IMPLEMENTED[kind])
+        if epoch != self.epoch:
+            reason = (
+                f"labels read at epoch {epoch}; the program is at epoch {self.epoch}. Describe or list moves again."
+            )
+            return MoveResult("stale", kind, names, reason)
+        rows = self.row_index()
+        missing = [name for name in names if name not in rows]
+        if missing:
+            return MoveResult("not-found", kind, names, f"no tree row is labeled {', '.join(missing)}.")
+        plan = plan_move(kind, [rows[name] for name in names])
+        if isinstance(plan, str):
+            return MoveResult("illegal", kind, names, plan)
+        return MoveResult("applied", kind, names, self.commit(*plan))
+
+    def row_index(self) -> Dict[str, Row]:
+        """Tree label -> ``(block or node, state)``, built once per epoch."""
+        if self.rows is None:
+            self.rows = tree_rows(self.sdfg)
+        return self.rows
+
+    def commit(self, sdfg: dace.SDFG, move: Union[FusionMove, FissionMove]) -> str:
+        """Apply one move on the SDFG owning its nodes and start a new epoch; returns the transformation's name."""
+        applied = commit_move(sdfg, move)
+        self.bump()
+        return applied
 
     def list_region_fusions(self) -> List[dict]:
         """Adjacent state pairs that may merge, so nests in them can fuse afterwards."""
@@ -218,8 +293,7 @@ class Session:
 
     def fission(self, move_id: str) -> str:
         move: FissionMove = self.resolve(move_id, "fission")
-        apply_map_fission(self.sdfg, move)
-        self.bump()
+        self.commit(self.sdfg, move)
         return self.describe()
 
     def full_fusion(self) -> str:

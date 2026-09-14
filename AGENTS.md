@@ -17,7 +17,11 @@ Every phase has a deterministic default, so a run works with any subset of agent
 
 - Never edit SDFG nodes or memlets. Request moves through the Session API; each move is checked for
   legality before it applies.
-- Ids go stale after any mutation. List again before the next move.
+- Name nests by the labels `Session.describe()` prints. They are unique across the whole program,
+  nested SDFGs included. Pass them with the epoch from the tree's first line or from `list_moves()`:
+  `apply_move(kind, labels, epoch)`.
+- Labels and ids regenerate after every mutation. A move carrying an old epoch returns `stale`;
+  describe or list again before the next move. Only an `applied` result changed the program.
 - A result counts only after it matches the kernel's NumPy oracle. Wrong and fast loses.
 - A kernel library keeps the C entry and argument order it was given; a different order corrupts the
   call silently.

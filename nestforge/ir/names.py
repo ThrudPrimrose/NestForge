@@ -30,6 +30,7 @@ from dace.transformation.interstate.multistate_inline import InlineMultistateSDF
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+from dace.utils import find_new_name
 
 #: Iteration variable of a wrap map; shared by every wrap map since none of them ever read it.
 WRAP_PARAM = "__nf_wrap"
@@ -183,8 +184,22 @@ def block_kind(block: ControlFlowBlock) -> str:
 
 def normalize_labels(sdfg: dace.SDFG) -> None:
     """Rename every control-flow block and every map to ``<kind><level>_<index>``, globally unique:
-    ``index`` counts per ``(kind, level)`` across the whole SDFG, not per CFG."""
+    ``index`` counts per ``(kind, level)`` across the whole SDFG, not per CFG. A library node keeps its
+    label unless an earlier one already holds it."""
     relabel_cfg(sdfg, 0, {})
+    unique_library_labels(sdfg)
+
+
+def unique_library_labels(sdfg: dace.SDFG) -> None:
+    """Rename each library node whose label an earlier one holds, nested SDFGs included."""
+    taken: Dict[str, None] = {}
+    for node, _ in sdfg.all_nodes_recursive():
+        if not isinstance(node, nodes.LibraryNode):
+            continue
+        if node.label in taken:
+            # LibraryNode sets name and label alike; keep them equal
+            node.name = node.label = find_new_name(node.label, taken)
+        taken[node.label] = None
 
 
 def next_label(kind: str, level: int, counters: Dict[tuple, int]) -> str:

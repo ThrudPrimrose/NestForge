@@ -12,10 +12,23 @@ nodes; it reads two views and requests moves.
   scope. OI divides work by the bytes a scope moves under a simple cache model: a map caches
   perfectly, a loop caches nothing.
 
-Moves are single-pair DaCe transformations, each checked for legality before it applies: vertical
-and horizontal map fusion, loop fusion, state fusion, and fission of one map's independent output
-groups (`list_fissions` / `fission`). `fission_all` splits the whole program to statement
-granularity.
+A move is one existing DaCe transformation, legal only when that transformation's `can_be_applied`
+accepts it. `list_moves(kind)` returns the legal moves as `{kind, labels, epoch}`. `apply_move(kind,
+labels, epoch)` applies one and returns a `MoveResult` whose status is `applied`, `illegal`,
+`not-implemented`, `not-found` or `stale`. Labels are the tree labels `describe()` prints, and its
+first line shows the epoch.
+
+| kind | labels | DaCe |
+|---|---|---|
+| `loop-fusion` | first, second loop | `LoopFusion` |
+| `map-fusion` | two maps | `MapFusionVertical` through an intermediate, else `MapFusionHorizontal` |
+| `map-fission` | map | `MapFission` on a map whose body is one nested SDFG |
+| `interchange-map-map` | outer, inner map | `MapInterchange` |
+| `interchange-loop-map` | loop, its one map | `MoveLoopIntoMap`: the map becomes outer |
+| `loop-fission`, `interchange-loop-loop`, `interchange-map-loop` | | not implemented |
+
+`fission_all` splits the whole program to statement granularity, loops included. The id-based calls
+stay: `list_fusions` / `fuse`, `list_fissions` / `fission` and state fusion via `fuse_regions`.
 
 | | |
 |---|---|

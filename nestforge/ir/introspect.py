@@ -218,19 +218,35 @@ def render_range(rng: Tuple[Any, Any, Any]) -> str:
     return text if step == 1 else f"{text}:{step}"
 
 
+def tree_rows(sdfg: dace.SDFG) -> Dict[str, Tuple[Any, Optional[SDFGState]]]:
+    """Every label a tree row can print -> ``(block or node, its state)``, the state ``None`` for a block. Covers
+    conditional branches, maps and library nodes, nested SDFGs included."""
+    rows: Dict[str, Tuple[Any, Optional[SDFGState]]] = {}
+    # a ConditionalBlock's nodes() are its branches, so the recursive walk reaches them
+    for cfg in sdfg.all_control_flow_regions(recursive=True):
+        for block in cfg.nodes():
+            rows[block.label] = (block, None)
+            if isinstance(block, SDFGState):
+                kernels = (n for n in block.nodes() if isinstance(n, (nodes.MapEntry, nodes.LibraryNode)))
+                rows.update((n.label, (n, block)) for n in kernels)
+    return rows
+
+
 def describe_graph(
     sdfg: dace.SDFG,
     handle: Optional[Handle] = None,
     bodies: bool = False,
     metrics: Optional[Metrics] = None,
     notes: Optional[Notes] = None,
+    epoch: Optional[int] = None,
 ) -> str:
     """The SDFG as an ASCII tree for the agent. Each line is one block or kernel; the guides show
     nesting. ``handle(kind, obj)``, when given, returns the session id to stamp on that line,
     ``bodies=True`` also prints what each leaf kernel computes, as numpy, under its line,
-    ``metrics(entry)`` is appended to every top-level map's line, and a line ``notes(node)`` returns
-    is printed under that library node's line."""
-    lines: List[str] = [f"SDFG '{sdfg.label}'"]
+    ``metrics(entry)`` is appended to every top-level map's line, a line ``notes(node)`` returns
+    is printed under that library node's line, and ``epoch`` is shown on the first line."""
+    header = f"SDFG '{sdfg.label}'" if epoch is None else f"SDFG '{sdfg.label}'  epoch={epoch}"
+    lines: List[str] = [header]
     walk_regions(sdfg, "", lines, handle, interstate_definitions(sdfg), bodies, metrics, notes)
     return "\n".join(lines)
 
