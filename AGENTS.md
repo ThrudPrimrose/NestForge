@@ -7,7 +7,7 @@ Guide for LLM agents that drive NestForge and for coding agents that change it. 
 
 | Agent | Phases | Reads | Requests |
 |---|---|---|---|
-| scheduling | [1](docs/phases/1-shape-kernels.md), [2](docs/phases/2-define-scopes.md), [3](docs/phases/3-offload.md) | structure tree, kernel bodies, work/depth, OI | fusion/fission moves, scope unit, kernel-to-device schedule |
+| scheduling | [1](docs/phases/1-shape-kernels.md), [2](docs/phases/2-define-scopes.md), [3](docs/phases/3-offload.md) | structure tree, kernel bodies, work/depth, OI | fusion/fission moves, kernel-to-device schedule |
 | kernel | [4](docs/phases/4-optimize-kernels.md) | one kernel as NumPy, C++ or Fortran, its boundary | a source file or `lib<kernel>.a` with the given C entry |
 | analysis | [feedback](docs/phases/feedback.md) | placement, copy volume, per-kernel times, OI | a phase-1 move, or stop |
 

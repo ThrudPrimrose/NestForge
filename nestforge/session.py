@@ -26,8 +26,8 @@ from nestforge.phases.normalize import Targets, normalize
 from nestforge.phases.schedule import (FusionMove, RegionMove, apply_fusion, apply_region_fusion, can_fuse,
                                        enumerate_fusions, enumerate_region_fusions, finish_schedule,
                                        fission_to_statements, full_fusion, scope_metrics)
-from nestforge.phases.scopes import (DEFAULT_GRANULARITY, is_parallel_nest, label_nest, lower_nests_to_external_call,
-                                     offload_candidates, top_level_map_entries)
+from nestforge.phases.scopes import (is_parallel_nest, label_nest, lower_nests_to_external_call, offload_candidates,
+                                     top_level_map_entries)
 from nestforge.phases.variants import enumerate_variants, select_variant
 
 #: kernel_source language -> (translator target, generated file suffix). C and C++ come from one C emit.
@@ -202,12 +202,11 @@ class Session:
 
     # Phase 2: scope definition
 
-    def list_scope_candidates(self, unit: str = DEFAULT_GRANULARITY) -> List[dict]:
-        """What ``unit`` would extract, without mutating."""
+    def list_scope_candidates(self) -> List[dict]:
+        """The parallel top-level maps phase 2 would extract, without mutating."""
         out: List[dict] = []
-        for cand in offload_candidates(self.sdfg, unit):
-            is_map = isinstance(cand.node, nodes.MapEntry)
-            container = find_state_of_node(cand.parent_sdfg, cand.node) if is_map else cand.parent_sdfg
+        for cand in offload_candidates(self.sdfg):
+            container = find_state_of_node(cand.parent_sdfg, cand.node)
             reads, writes = nest_reads_writes(container, cand.node)
             out.append({
                 "id": self.mint("cand", cand),
@@ -218,9 +217,9 @@ class Session:
             })
         return out
 
-    def define_scopes(self, unit: str = DEFAULT_GRANULARITY) -> List[dict]:
-        """Replace every scope ``unit`` selects with an ``ExternalCall`` kernel; returns kernel ids."""
-        lowered = lower_nests_to_external_call(self.sdfg, unit)
+    def define_scopes(self) -> List[dict]:
+        """Replace every parallel top-level map with an ``ExternalCall`` kernel; returns kernel ids."""
+        lowered = lower_nests_to_external_call(self.sdfg)
         if lowered:
             self.bump()
         return [{

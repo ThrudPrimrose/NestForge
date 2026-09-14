@@ -18,7 +18,7 @@ from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 
 CfgNest = Union[LoopRegion, ConditionalBlock]
-NestNode = Union[nodes.MapEntry, CfgNest, SDFGState]
+NestNode = Union[nodes.MapEntry, CfgNest]
 
 
 @dataclass(slots=True)
@@ -70,14 +70,6 @@ def extract_map_nest(parent_sdfg: dace.SDFG, map_entry: nodes.MapEntry, name: Op
     generated C signature)."""
     state = find_state_of_node(parent_sdfg, map_entry)
     subgraph = state.scope_subgraph(map_entry, include_entry=True, include_exit=True)
-    nsdfg_node = helpers.nest_state_subgraph(parent_sdfg, state, subgraph, name=name or "nest", full_data=True)
-    return boundary_from_nsdfg(nsdfg_node, state, parent_sdfg)
-
-
-def extract_state_nest(parent_sdfg: dace.SDFG, state: SDFGState, name: Optional[str] = None) -> Boundary:
-    """Outline a WHOLE state (all its maps/tasklets as one unit) into a standalone SDFG. ``full_data=True``
-    nests whole boundary arrays so the emitted C signature is not shrunk to accessed sub-ranges."""
-    subgraph = SubgraphView(state, state.nodes())
     nsdfg_node = helpers.nest_state_subgraph(parent_sdfg, state, subgraph, name=name or "nest", full_data=True)
     return boundary_from_nsdfg(nsdfg_node, state, parent_sdfg)
 
@@ -158,10 +150,8 @@ def extract_nest_to_sdfg(parent_sdfg: dace.SDFG, node: NestNode, name: Optional[
         return extract_map_nest(parent_sdfg, node, name=name)
     if isinstance(node, (LoopRegion, ConditionalBlock)):
         return extract_cfg_nest(parent_sdfg, node, name=name)
-    if isinstance(node, SDFGState):
-        return extract_state_nest(parent_sdfg, node, name=name)
     raise TypeError(f"cannot extract node of type {type(node).__name__}; expected MapEntry, LoopRegion, "
-                    "ConditionalBlock or SDFGState")
+                    "or ConditionalBlock")
 
 
 def whole_program_boundary(sdfg: dace.SDFG) -> Boundary:
