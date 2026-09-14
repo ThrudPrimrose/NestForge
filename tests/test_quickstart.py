@@ -32,6 +32,17 @@ def nest_kinds(tree: str) -> dict:
     return {"maps": sum(bool(MAP_LINE.match(t)) for t in texts), "loops": sum(bool(LOOP_LINE.match(t)) for t in texts)}
 
 
+def lib_paths(node):
+    """Every non-empty ``lib_path`` a saved SDFG records, at any depth."""
+    if isinstance(node, dict):
+        yield from ([node["lib_path"]] if node.get("lib_path") else [])
+        for value in node.values():
+            yield from lib_paths(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from lib_paths(value)
+
+
 @pytest.fixture(scope="module")
 def quickstart_run(tmp_path_factory) -> Tuple[Path, str]:
     """The CPU quick start, run once for every test here: its output folder and what it printed."""
@@ -57,7 +68,8 @@ def test_cpu_quickstart_prints_one_line_per_phase_and_saves_every_artifact(quick
     ]
     kernel_dir = out / "kernels" / "extcall_0"
     assert sorted(p.name for p in kernel_dir.iterdir()) == ["extcall_0.cpp", "libextcall_0.a"]
-    assert str(kernel_dir / "libextcall_0.a") in (out / "4-optimize-kernels.sdfg").read_text()
+    (bound,) = list(lib_paths(json.loads((out / "4-optimize-kernels.sdfg").read_text())))
+    assert Path(bound).read_bytes() == (kernel_dir / "libextcall_0.a").read_bytes()
     config = json.loads((out / "5-sweep-configurations.json").read_text())
     assert list(config) == ["extcall_0"]
     assert list(config["extcall_0"]) == ["compiler", "fp_mode", "cost_model", "flags", "time_us"]

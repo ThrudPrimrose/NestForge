@@ -23,6 +23,7 @@ from nestforge.ir.introspect import describe_graph, kernel_body, kernel_source, 
 from nestforge.phases.feedback import run_feedback_loop
 from nestforge.phases.kernel import (
     KernelSource,
+    build_kernel_library,
     kernel_runtime_libraries,
     process_runtime_libraries,
     schedule_kernel,
@@ -312,12 +313,33 @@ class Session:
 
     # Phase 4: optimize kernels
 
+    def scheduled_kernel(self, kernel_id: str) -> KernelSource:
+        """The kernel's CPF unit for the device phase 3 placed it on, rendered once per epoch."""
+        if kernel_id not in self.kernel_sources:
+            ext, boundary = self.resolve(kernel_id, "kernel")
+            self.kernel_sources[kernel_id] = schedule_kernel(ext, boundary, self.work_dir / ext.name / "kernel")
+        return self.kernel_sources[kernel_id]
+
     def optimize_kernel(self, kernel_id: str) -> dict:
-        """Apply the default kernel schedule and generate its source with one C entry."""
-        ext, boundary = self.resolve(kernel_id, "kernel")
-        src = schedule_kernel(ext, boundary, self.work_dir / ext.name / "kernel")
-        self.kernel_sources[kernel_id] = src
-        return {"kernel": ext.name, "symbol": src.symbol, "abi_order": list(src.abi_order)}
+        """Phase 4 default: render the kernel's CPF unit, build it with the first configuration phase 5 sweeps for
+        its device, and bind that library, with the runtimes it needs, to the kernel's ``ExternalCall``."""
+        ext, _ = self.resolve(kernel_id, "kernel")
+        src = self.scheduled_kernel(kernel_id)
+        variants = device_variants(src.device)
+        if not variants:
+            raise LookupError(f"no {src.device} toolchain on this machine can build {ext.name}")
+        variant = variants[0]
+        library = build_kernel_library(src, variant.compiler, list(variant.flags), self.work_dir / ext.name / "library")
+        use_kernel_library(ext, library, src.symbol, src.abi_order, kernel_runtime_libraries(src, variant.compiler))
+        return {
+            "kernel": ext.name,
+            "symbol": src.symbol,
+            "abi_order": list(src.abi_order),
+            "entry": f"{src.symbol}({', '.join(src.abi_order)})",
+            "unit": str(src.unit),
+            "library": str(library),
+            "variant": variant.label,
+        }
 
     def set_kernel(
         self,
@@ -346,15 +368,14 @@ class Session:
     def sweep_configurations(
         self, kernel_id: str, sizes: Dict[str, int], reps: int = 10, compilers: Optional[List[str]] = None
     ) -> dict:
-        """Build and time the kernel's variants, link the fastest correct one, and summarize the sweep.
+        """Build and time the kernel's variants, link the fastest correct one, and summarize the sweep; ``config``
+        is the winner's compiler, FP mode, cost model, flags and time.
 
         :param sizes: Value of every symbol the kernel needs, used for validation and timing.
         :param compilers: Toolchain names to keep (``gcc``, ``clang``, ``nvcc``, ``nvcc-13.1``, ...); all discovered
             ones for the kernel's device when ``None``.
         """
-        if kernel_id not in self.kernel_sources:
-            self.optimize_kernel(kernel_id)
-        src = self.kernel_sources[kernel_id]
+        src = self.scheduled_kernel(kernel_id)
         ext, _ = self.resolve(kernel_id, "kernel")
         result = select_variant(
             src,
@@ -374,7 +395,7 @@ class Session:
             "cells": len(result.cells),
             "collapsed": list(result.collapsed),
             "winner": winner.variant.label if winner is not None else None,
-            **winner_config(winner),
+            "config": winner_config(winner),
         }
 
     # Feedback
