@@ -27,7 +27,7 @@ def test_corpus_module_path_independent_of_namespace_path():
     from nestforge.corpus.bench import module_path
     # Derived from the registry key, not hpcagent_bench.benchmarks.__path__ (which can be stale/multi-root).
     assert module_path("scientific_computing/dense_linear_algebra/gemm/gemm") == \
-        "hpcagent_bench.benchmarks.hpc.dense_linear_algebra.gemm.gemm_dace"
+        "hpcagent_bench.benchmarks.scientific_computing.dense_linear_algebra.gemm.gemm_dace"
 
 
 # ----- C-style emission: pre-allocated buffers, no internal allocation ----------------------------

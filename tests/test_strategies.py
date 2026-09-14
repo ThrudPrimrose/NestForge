@@ -44,8 +44,20 @@ def test_innermost_yields_leaf_maps_when_present():
     assert refs and all(isinstance(n, nodes.MapEntry) for _, n in refs)
 
 
+N = dace.symbol("N", dtype=dace.int64)
+
+
+@dace.program
+def two_carried_loops(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
+    for k in range(N):
+        for i in range(1, N):
+            a[i] = a[i - 1] + b[k]
+        for j in range(1, N):
+            c[j] = c[j - 1] * 0.5
+
+
 def test_innermost_yields_leaf_loops_for_loop_only_kernels():
-    # lu has no maps and an outer loop wrapping two inner loops; the innermost units are those two.
-    sdfg = sdfg_for("scientific_computing/dense_linear_algebra/lu/lu")
+    # An outer loop wrapping two carried inner loops: the innermost units are those two loops.
+    sdfg = two_carried_loops.to_sdfg(simplify=True)
     refs = get_strategy("innermost")(sdfg)
     assert len(refs) == 2 and all(isinstance(n, LoopRegion) for _, n in refs)
