@@ -12,7 +12,7 @@ from dace.sdfg import nodes
 
 from nestforge.ir.libnode import ExternalCall
 from nestforge.phases.scopes import (DEFAULT_GRANULARITY, OffloadCandidate, get_strategy, lower_nests_to_external_call,
-                               offload_candidates, strategy_names, whole_program_boundary)
+                                     offload_candidates, strategy_names, whole_program_boundary)
 
 N = dace.symbol("N")
 f64 = dace.float64

@@ -29,7 +29,8 @@ def test_emit_numpy_labels_regions_and_states():
     import ast
 
     from nestforge.ir.emit_numpy import body_or_pass
-    src = sdfg_to_numpy(kernels()["scientific_computing/map_reduce/azimint_hist/azimint_hist"].to_sdfg(simplify=True), "k")
+    src = sdfg_to_numpy(kernels()["scientific_computing/map_reduce/azimint_hist/azimint_hist"].to_sdfg(simplify=True),
+                        "k")
     ast.parse(src)  # valid python despite the interleaved comments
     assert "# loop region (" in src
     assert "# state (" in src
@@ -168,8 +169,8 @@ def test_contour_integral_two_returns_solve_and_indirect_negate():
     # contour_radius is a read-only config scalar (the reference's 1.0 default = the unit circle); dace lowers
     # it to a required by-value param -- the python kwarg default is lost -- so supply it, else it reads 0 and
     # the |z| < radius residue negate never fires (garbage vs the oracle below, which uses 1.0).
-    call, src = alloc_run("scientific_computing/dense_linear_algebra/contour_integral/contour_integral", "contour_integral",
-                          dict(NR=NR, NM=NM, slab_per_bc=slab, num_int_pts=32),
+    call, src = alloc_run("scientific_computing/dense_linear_algebra/contour_integral/contour_integral",
+                          "contour_integral", dict(NR=NR, NM=NM, slab_per_bc=slab, num_int_pts=32),
                           dict(Ham=Ham, int_pts=int_pts, Y=Y, contour_radius=1.0))
     assert "np.complex128(" in src and "dace." not in src  # casts normalized to numpy
 
@@ -277,7 +278,11 @@ def test_nbody_nested_where_emits_and_computes():
             f"stock DaCe cannot lower nbody's masked assignment / Nt+1 scalar-symbol collision: {type(e).__name__}")
     inputs = dict(mass=mass, pos=pos, vel=vel, dt=np.array([dt]), G=np.array([G]), softening=np.array([soft]))
     try:
-        call, _ = alloc_run("scientific_computing/n_body_methods/nbody/nbody", "nbody", dict(N=N, Nt=Nt), inputs, sdfg=sdfg)
+        call, _ = alloc_run("scientific_computing/n_body_methods/nbody/nbody",
+                            "nbody",
+                            dict(N=N, Nt=Nt),
+                            inputs,
+                            sdfg=sdfg)
     except UnsupportedNest:
         # The emitter's own explicit refusal: it names the DaCe-side ExpandNestedSDFGInputs gap it hit.
         pytest.xfail("ExpandNestedSDFGInputs multi-dim condition offset not fixed in this DaCe")
@@ -358,8 +363,8 @@ def test_azimint_hist_three_level_nested_return_and_computes():
     rng = np.random.default_rng(0)
     data, radius = rng.random(N), rng.random(N)
     try:
-        call, _ = alloc_run("scientific_computing/map_reduce/azimint_hist/azimint_hist", "azimint_hist", dict(N=N, npt=npt, bins=npt),
-                            dict(data=data, radius=radius))
+        call, _ = alloc_run("scientific_computing/map_reduce/azimint_hist/azimint_hist", "azimint_hist",
+                            dict(N=N, npt=npt, bins=npt), dict(data=data, radius=radius))
     except UnsupportedNest:
         # Genuine upstream gap, not a missing tool -- xfail (see the nbody test above for why xfail,
         # never skip: CI's zero-skip unit set must stay green while a real fix still shows up as PASS.
@@ -387,8 +392,8 @@ def test_azimint_naive_wcr_reduction_emits_and_computes():
     rng = np.random.default_rng(0)
     data, radius = rng.random(N), rng.random(N)
     try:
-        call, _ = alloc_run("scientific_computing/map_reduce/azimint_naive/azimint_naive", "azimint_naive", dict(N=N, npt=npt),
-                            dict(data=data, radius=radius))
+        call, _ = alloc_run("scientific_computing/map_reduce/azimint_naive/azimint_naive", "azimint_naive",
+                            dict(N=N, npt=npt), dict(data=data, radius=radius))
     except UnsupportedNest:
         pytest.xfail("nested-SDFG emission unavailable in this DaCe")
 
@@ -415,7 +420,8 @@ def test_trisolv_loop_shaped_scratch_maxsized_and_computes():
     rng = np.random.default_rng(0)
     L = np.tril(rng.random((N, N))) + N * np.eye(N)
     b = rng.random(N)
-    call, src = alloc_run("scientific_computing/dense_linear_algebra/trisolv/trisolv", "trisolv", dict(N=N), dict(L=L, b=b))
+    call, src = alloc_run("scientific_computing/dense_linear_algebra/trisolv/trisolv", "trisolv", dict(N=N),
+                          dict(L=L, b=b))
     assert "np.empty" not in src  # still C-style: no in-kernel allocation
     x = call.get("x", call.get("__return"))
     np.testing.assert_allclose(x, np.linalg.solve(L, b))
@@ -446,8 +452,8 @@ def test_covariance_decreasing_loop_scratch_and_computes():
     rng = np.random.default_rng(0)
     data = rng.random((Nrows, M))
     fn = 8.0
-    call, _ = alloc_run("scientific_computing/dense_linear_algebra/covariance/covariance", "covariance", dict(M=M, N=Nrows),
-                        dict(data=data.copy(), float_n=np.array([fn])))
+    call, _ = alloc_run("scientific_computing/dense_linear_algebra/covariance/covariance", "covariance",
+                        dict(M=M, N=Nrows), dict(data=data.copy(), float_n=np.array([fn])))
     cov = call.get("cov", call.get("__return"))
     d2 = data - data.mean(axis=0)
     ref = np.zeros((M, M))

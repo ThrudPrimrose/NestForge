@@ -11,8 +11,8 @@ import pytest
 import dace
 from dace.transformation.interstate.state_fusion import StateFusion
 
-from nestforge.phases.schedule import (FusionMove, apply_fusion, enumerate_fusions, horizontal_map_moves, loop_fusion_moves,
-                                   vertical_map_moves)
+from nestforge.phases.schedule import (FusionMove, apply_fusion, enumerate_fusions, horizontal_map_moves,
+                                       loop_fusion_moves, vertical_map_moves)
 
 N = dace.symbol("N")
 f64 = dace.float64
