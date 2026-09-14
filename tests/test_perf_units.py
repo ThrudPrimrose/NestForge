@@ -3,6 +3,7 @@
 """Compile-free unit tests for the build/arena plumbing: signature parsing and FP-precision x cost-model
 flag composition -- pure logic on synthetic inputs, so no compiler needed.
 """
+
 import ctypes
 from pathlib import Path
 
@@ -88,6 +89,7 @@ def test_run_isolated_passes_through_plain_dict():
 # --- call_c output snapshotting (harness.call_c) -------------------------------------------------------
 class CountingArray(np.ndarray):
     """An ndarray that counts its own .copy() calls, so a test can assert call_c did not snapshot."""
+
     copies = 0
 
     def copy(self, *a, **kw):
@@ -127,8 +129,9 @@ def call_c_on_stub(monkeypatch, reps, read_write=False, **kw):
     inputs = {"a": buf}
     argtypes = [ctypes.POINTER(ctypes.c_double), ctypes.c_int64]
     boundary = FakeBoundary(["a"], inputs=["a"] if read_write else [])
-    out, us = harness.call_c(Path("stub.so"), "k_fp64", ["a", "LEN_1D"], argtypes, boundary, inputs, {"LEN_1D": 4},
-                             reps, **kw)
+    out, us = harness.call_c(
+        Path("stub.so"), "k_fp64", ["a", "LEN_1D"], argtypes, boundary, inputs, {"LEN_1D": 4}, reps, **kw
+    )
     return out, us, buf, fn
 
 
@@ -165,11 +168,16 @@ def test_call_c_restores_an_in_place_buffer_before_every_timed_rep(monkeypatch):
     inputs = {"a": buf.view(Recorder)}
     inputs["a"][...] = 0.25  # the pristine values the restore must reinstate
     restored.clear()
-    harness.call_c(Path("stub.so"),
-                   "k_fp64", ["a", "LEN_1D"], [ctypes.POINTER(ctypes.c_double), ctypes.c_int64],
-                   FakeBoundary(["a"], inputs=["a"]),
-                   inputs, {"LEN_1D": 4},
-                   reps=3)
+    harness.call_c(
+        Path("stub.so"),
+        "k_fp64",
+        ["a", "LEN_1D"],
+        [ctypes.POINTER(ctypes.c_double), ctypes.c_int64],
+        FakeBoundary(["a"], inputs=["a"]),
+        inputs,
+        {"LEN_1D": 4},
+        reps=3,
+    )
     # 4 = one per rep, plus one before the WARM call so the call the CPU trains its caches and predictors
     # on starts from the same state the timed reps do.
     assert len(restored) == 4, f"expected one restore per rep plus the warm call, saw {len(restored)}"

@@ -5,6 +5,7 @@ reusing the existing DaCe canon passes (SplitStatements + LoopFission + MapFissi
 Phase-2 flow -- fission then fuse back up. Value-preservation (bit-exact vs the un-fissioned reference) is
 the invariant on every case.
 """
+
 import numpy as np
 import pytest
 
@@ -74,11 +75,14 @@ def test_fission_splits_independent_recurrences_value_preserving():
     assert all(np.allclose(got[k], ref[k]) for k in inputs)
 
 
-@pytest.mark.parametrize("prog,names", [
-    (two_independent_recurrences, ("a", "b", "c")),
-    (three_independent_statements, ("a", "b", "c", "d")),
-    (conditional_body, ("a", "b", "c")),
-])
+@pytest.mark.parametrize(
+    "prog,names",
+    [
+        (two_independent_recurrences, ("a", "b", "c")),
+        (three_independent_statements, ("a", "b", "c", "d")),
+        (conditional_body, ("a", "b", "c")),
+    ],
+)
 def test_fission_is_value_preserving(prog, names):
     inputs = mk(names=names)
     ref = run(prog.to_sdfg(simplify=True), inputs, 48)

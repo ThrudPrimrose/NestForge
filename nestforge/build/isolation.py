@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Run a compiled kernel in a forked child, so a segfault or runaway loop cannot take down the
 parent; a crash, timeout, or malformed result comes back as an ``{"error": ...}`` sentinel."""
+
 from __future__ import annotations
 
 import faulthandler
@@ -37,15 +38,19 @@ def pause_openmp_pools(mode: int = OMP_PAUSE_SOFT) -> None:
         try:
             pause = lib.omp_pause_resource_all
         except AttributeError:
-            warnings.warn(f"{soname}: no omp_pause_resource_all (pre-OpenMP-5.0 runtime); its thread pool "
-                          f"was NOT torn down before the fork -- fork safety for this runtime now rests on "
-                          f"its own pthread_atfork handler, if it installs one (libgomp installs none).")
+            warnings.warn(
+                f"{soname}: no omp_pause_resource_all (pre-OpenMP-5.0 runtime); its thread pool "
+                f"was NOT torn down before the fork -- fork safety for this runtime now rests on "
+                f"its own pthread_atfork handler, if it installs one (libgomp installs none)."
+            )
             continue
         pause.argtypes = [ctypes.c_int]
         pause.restype = ctypes.c_int
         if pause(mode) != 0:
-            warnings.warn(f"{soname}: omp_pause_resource_all(mode={mode}) returned non-zero; its thread "
-                          f"pool was NOT torn down before the fork.")
+            warnings.warn(
+                f"{soname}: omp_pause_resource_all(mode={mode}) returned non-zero; its thread "
+                f"pool was NOT torn down before the fork."
+            )
 
 
 def quiet_fatal_signals() -> None:

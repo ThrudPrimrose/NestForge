@@ -12,6 +12,7 @@ one and recovers. Since the OpenMP runtime is a configurable axis -- libgomp is 
 :func:`pause_openmp_pools` is what makes that true, so these tests poison the parent on purpose and
 assert the child still runs.
 """
+
 import ctypes
 import inspect
 import os
@@ -23,8 +24,14 @@ import numpy as np
 import pytest
 
 from nestforge.build.toolchain import OpenMPRuntime, lib_linkable
-from nestforge.build.isolation import (ERROR_CHARS, OMP_PAUSE_MODES, OMP_PAUSE_SOFT, OMP_RUNTIME_SONAMES,
-                                       pause_openmp_pools, run_isolated)
+from nestforge.build.isolation import (
+    ERROR_CHARS,
+    OMP_PAUSE_MODES,
+    OMP_PAUSE_SOFT,
+    OMP_RUNTIME_SONAMES,
+    pause_openmp_pools,
+    run_isolated,
+)
 
 OMP_SRC = """#include <omp.h>
 void kern(double *a, int n) {
@@ -72,15 +79,15 @@ def build(tmp_path, runtime):
     so = tmp_path / f"k_{runtime}.so"
     extra = []
     if runtime != "gomp":  # gcc's default IS libgomp; anything else must be pinned at link, after the source
-        assert lib_linkable(
-            runtime,
-            "gcc"), (f"lib{runtime}.so is a hard requirement of this regression but is not installed / linkable by "
-                     f"gcc here -- install it (e.g. libomp-dev); an absent second runtime is a broken env to surface "
-                     f"loudly, not a skip to hide behind (the unit set runs under NESTFORGE_CI_NO_SKIP anyway)")
+        assert lib_linkable(runtime, "gcc"), (
+            f"lib{runtime}.so is a hard requirement of this regression but is not installed / linkable by "
+            f"gcc here -- install it (e.g. libomp-dev); an absent second runtime is a broken env to surface "
+            f"loudly, not a skip to hide behind (the unit set runs under NESTFORGE_CI_NO_SKIP anyway)"
+        )
         extra = OpenMPRuntime(name=f"lib{runtime}", soname=runtime).link_flags("gcc")
     proc = subprocess.run(
-        ["gcc", "-O2", "-fPIC", "-shared", "-fopenmp",
-         str(src), *extra, "-o", str(so)], capture_output=True, text=True)
+        ["gcc", "-O2", "-fPIC", "-shared", "-fopenmp", str(src), *extra, "-o", str(so)], capture_output=True, text=True
+    )
     assert proc.returncode == 0, proc.stderr[-800:]
     needed = subprocess.run(["readelf", "-d", str(so)], capture_output=True, text=True).stdout
     # DT_NEEDED may show libomp.so.5 for a libiomp5 request (ABI-compat symlink); accept the resolved one.
@@ -156,6 +163,7 @@ def test_both_teardown_modes_make_the_fork_safe(tmp_path, runtime, mode):
 
     # fork by hand: run_isolated pauses internally, which would mask whether THIS mode did the work.
     import os
+
     r, w = os.pipe()
     pid = os.fork()
     if pid == 0:
@@ -219,7 +227,8 @@ def test_the_default_pause_mode_is_soft():
     default = inspect.signature(pause_openmp_pools).parameters["mode"].default
     assert default == OMP_PAUSE_SOFT, (
         f"pause_openmp_pools default mode is {default!r}, expected soft ({OMP_PAUSE_SOFT}) -- soft is the "
-        f"weakest reset that still buys fork safety and must remain the default")
+        f"weakest reset that still buys fork safety and must remain the default"
+    )
 
 
 def test_a_mapped_runtime_without_the_pause_symbol_is_warned_not_silent(monkeypatch):

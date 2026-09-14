@@ -13,6 +13,7 @@ ctypes cannot catch it: the kernel writes through the wrong pointer, silently.
 `harness.signature_order` exists precisely to parse the real emitted signature. These tests pin that the
 binding follows it.
 """
+
 import pytest
 
 import dace
@@ -54,8 +55,9 @@ def test_emitted_signature_disagrees_with_manifest_role_order(tmp_path):
     emitted = signature_order(csrc.read_text(), "wab_fp64")
     assert emitted == ["a", "b", "N"]  # sorted arrays, then scalars
     assert list(prep.manifest["input_args"]) == ["b", "a", "N"]  # role order: input, output, symbol
-    assert emitted != list(prep.manifest["input_args"]), \
+    assert emitted != list(prep.manifest["input_args"]), (
         "the two orders now coincide for this kernel -- pick one whose output still sorts before its input"
+    )
 
 
 def test_a_prototype_above_the_definition_does_not_widen_the_capture():
@@ -66,10 +68,12 @@ def test_a_prototype_above_the_definition_does_not_widen_the_capture():
     native column. `[^)]*` cannot cross a closing paren at all."""
     from nestforge.build.toolchain import raw_signature
 
-    declared_then_defined = ('void s000_fp64(double *restrict a, const double *restrict b, int64_t LEN_1D);\n'
-                             '\n'
-                             'extern "C" void s000_fp64(double *restrict a, const double *restrict b, '
-                             'int64_t LEN_1D) {\n  return;\n}\n')
+    declared_then_defined = (
+        "void s000_fp64(double *restrict a, const double *restrict b, int64_t LEN_1D);\n"
+        "\n"
+        'extern "C" void s000_fp64(double *restrict a, const double *restrict b, '
+        "int64_t LEN_1D) {\n  return;\n}\n"
+    )
     params = raw_signature(declared_then_defined, "s000_fp64")
     assert params == "double *restrict a, const double *restrict b, int64_t LEN_1D"
     assert ";" not in params and "void" not in params

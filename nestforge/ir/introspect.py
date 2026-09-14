@@ -3,6 +3,7 @@
 """Read-only structure inspection for the agent: ``describe_graph`` renders the SDFG as an ASCII
 tree of regions/loops/kernels (each named by its canonical normal-form label); ``nest_reads_writes``
 reports one nest's arrays without extracting it."""
+
 from __future__ import annotations
 
 import ast
@@ -37,7 +38,7 @@ Metrics = Callable[[nodes.MapEntry], str]
 class Substitute(ast.NodeTransformer):
     """Replace each ``Name`` that has a definition with that definition's expression."""
 
-    __slots__ = ("definitions", )
+    __slots__ = ("definitions",)
 
     def __init__(self, definitions: Dict[str, str]) -> None:
         self.definitions = definitions
@@ -216,10 +217,9 @@ def render_range(rng: Tuple[Any, Any, Any]) -> str:
     return text if step == 1 else f"{text}:{step}"
 
 
-def describe_graph(sdfg: dace.SDFG,
-                   handle: Optional[Handle] = None,
-                   bodies: bool = False,
-                   metrics: Optional[Metrics] = None) -> str:
+def describe_graph(
+    sdfg: dace.SDFG, handle: Optional[Handle] = None, bodies: bool = False, metrics: Optional[Metrics] = None
+) -> str:
     """The SDFG as an ASCII tree for the agent. Each line is one block or kernel; the guides show
     nesting. ``handle(kind, obj)``, when given, returns the session id to stamp on that line,
     ``bodies=True`` also prints what each leaf kernel computes, as numpy, under its line, and
@@ -234,8 +234,15 @@ def stamp(text: str, handle: Optional[Handle], kind: str, obj: object) -> str:
     return f"[{handle(kind, obj)}] {text}" if handle is not None else text
 
 
-def walk_regions(cfg: Union[dace.SDFG, ControlFlowRegion], prefix: str, lines: List[str], handle: Optional[Handle],
-                 defs: Dict[str, str], bodies: bool, metrics: Optional[Metrics]) -> None:
+def walk_regions(
+    cfg: Union[dace.SDFG, ControlFlowRegion],
+    prefix: str,
+    lines: List[str],
+    handle: Optional[Handle],
+    defs: Dict[str, str],
+    bodies: bool,
+    metrics: Optional[Metrics],
+) -> None:
     """Render one CFG's blocks under ``prefix``, recursing."""
     blocks = in_order(cfg)
     for index, block in enumerate(blocks):
@@ -250,8 +257,15 @@ def walk_regions(cfg: Union[dace.SDFG, ControlFlowRegion], prefix: str, lines: L
             walk_regions(block, below, lines, handle, defs, bodies, metrics)
 
 
-def walk_branches(block: ConditionalBlock, prefix: str, lines: List[str], handle: Optional[Handle],
-                  defs: Dict[str, str], bodies: bool, metrics: Optional[Metrics]) -> None:
+def walk_branches(
+    block: ConditionalBlock,
+    prefix: str,
+    lines: List[str],
+    handle: Optional[Handle],
+    defs: Dict[str, str],
+    bodies: bool,
+    metrics: Optional[Metrics],
+) -> None:
     """A conditional's branches, in stored order (the first matching one wins, so that is execution order)."""
     for index, (condition, branch) in enumerate(block.branches):
         last = index == len(block.branches) - 1
@@ -261,8 +275,9 @@ def walk_branches(block: ConditionalBlock, prefix: str, lines: List[str], handle
         walk_regions(branch, prefix + (BLANK if last else PIPE), lines, handle, defs, bodies, metrics)
 
 
-def walk_state(state: SDFGState, prefix: str, lines: List[str], handle: Optional[Handle], bodies: bool,
-               metrics: Optional[Metrics]) -> None:
+def walk_state(
+    state: SDFGState, prefix: str, lines: List[str], handle: Optional[Handle], bodies: bool, metrics: Optional[Metrics]
+) -> None:
     """A state's kernels: every map nest plus any library node, nested scopes recursed into."""
     children = state.scope_children()
     if not any(isinstance(n, (nodes.MapEntry, nodes.LibraryNode)) for n in children[None]):
@@ -271,7 +286,8 @@ def walk_state(state: SDFGState, prefix: str, lines: List[str], handle: Optional
 
     def descend(scope: Optional[nodes.MapEntry], pad: str) -> None:
         kernels = [
-            n for n in sorted(children[scope], key=lambda n: rank.get(id(n), 0))
+            n
+            for n in sorted(children[scope], key=lambda n: rank.get(id(n), 0))
             if isinstance(n, (nodes.MapEntry, nodes.LibraryNode))
         ]
         for index, node in enumerate(kernels):

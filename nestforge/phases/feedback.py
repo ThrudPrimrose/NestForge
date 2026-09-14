@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Feedback edges (e) and (g): measured outcomes that decide whether to re-enter the inter-kernel schedule."""
+
 from __future__ import annotations
 
 import copy
@@ -15,6 +16,7 @@ from nestforge.phases.schedule import apply_fusion, first_fusion
 @dataclass(frozen=True, slots=True)
 class Outcome:
     """One measured round: which configuration, whether it matched the oracle, how fast."""
+
     name: str
     ok: bool
     median_us: float = float("inf")
@@ -53,16 +55,16 @@ def improved(prior: List[Outcome], candidate: Outcome) -> bool:
 @dataclass(slots=True)
 class FeedbackResult:
     """Every round's outcome, the winner, and the SDFG snapshot the winner was measured on."""
+
     outcomes: List[Outcome]
     best: Optional[Outcome]
     rounds: int
     sdfg: dace.SDFG
 
 
-def run_feedback_loop(sdfg: dace.SDFG,
-                      measure: Measure,
-                      apply_move: GranularityStep = default_fuse_step,
-                      max_rounds: int = 8) -> FeedbackResult:
+def run_feedback_loop(
+    sdfg: dace.SDFG, measure: Measure, apply_move: GranularityStep = default_fuse_step, max_rounds: int = 8
+) -> FeedbackResult:
     """Apply one move per round and re-measure until a round does not improve or no move is left."""
     if max_rounds < 1:
         raise ValueError(f"max_rounds must be >= 1, got {max_rounds}")

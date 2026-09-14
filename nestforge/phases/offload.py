@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Phase 3: give every kernel a device and insert the host/device copies that placement implies."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from nestforge.phases.normalize import Targets
 @dataclass(frozen=True, slots=True)
 class Placement:
     """Device per kernel name, and ``(source, destination)`` containers of every host/device copy."""
+
     devices: Dict[str, str]
     copies: Tuple[Tuple[str, str], ...]
 

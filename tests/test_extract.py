@@ -6,10 +6,10 @@ import dace
 from nestforge.phases.scopes import parallel_top_level_maps
 from nestforge.ir.extract import extract_nest_to_sdfg, trip_count_symbols
 
-N = dace.symbol('N')
-B_SYM = dace.symbol('B')
-OUTER = dace.symbol('OUTER')
-OFF = dace.symbol('OFF')
+N = dace.symbol("N")
+B_SYM = dace.symbol("B")
+OUTER = dace.symbol("OUTER")
+OFF = dace.symbol("OFF")
 
 
 @dace.program
@@ -21,7 +21,7 @@ def vadd(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 @dace.program
 def shifted(A: dace.float64[N], C: dace.float64[N]):
     """``OFF`` only ever lands in a SUBSCRIPT; ``N`` bounds the map. The two must classify differently."""
-    for i in dace.map[0:N - 64]:
+    for i in dace.map[0 : N - 64]:
         C[i + OFF] = A[i + OFF] * 2.0
 
 
@@ -68,9 +68,9 @@ def nested_bound_sdfg(symbol_mapping):
     state = sdfg.add_state(is_start_block=True)
     inner = dace.SDFG("inner")
     inner.add_array("a", [N], dace.float64)
-    inner.add_state(is_start_block=True).add_mapped_tasklet("t", {"i": "0:B"}, {},
-                                                            "out = 1.0", {"out": dace.Memlet("a[i]")},
-                                                            external_edges=True)
+    inner.add_state(is_start_block=True).add_mapped_tasklet(
+        "t", {"i": "0:B"}, {}, "out = 1.0", {"out": dace.Memlet("a[i]")}, external_edges=True
+    )
     nsdfg = state.add_nested_sdfg(inner, {}, {"a"}, symbol_mapping=symbol_mapping)
     state.add_edge(nsdfg, "a", state.add_access("a"), None, dace.Memlet("a[0:N]"))
     sdfg.validate()

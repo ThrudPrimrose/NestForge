@@ -3,13 +3,14 @@
 """M0 end-to-end: lower a map-nest to ExternalCall and run it through the DaceReference fallback, checking it
 reproduces the original SDFG. The ExternCall path (a built ``lib<kernel>.a`` linked into the parent) is
 covered by ``tests/test_variants_phase.py``."""
+
 import numpy as np
 import dace
 
 from nestforge.phases.scopes import lower_nests_to_external_call
 from nestforge.ir.libnode import ExternalCall
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program

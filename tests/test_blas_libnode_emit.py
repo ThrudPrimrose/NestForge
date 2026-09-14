@@ -9,6 +9,7 @@ compiled + run FORKED via :func:`run_isolated`) and the emitted numpy (``sdfg_to
 asserts they agree to machine precision. Inputs are deliberately NON-symmetric so the uplo-triangle write
 (Syrk/Syr2k preserve the opposite triangle) and the full-symmetric reconstruction (Symm) are exercised.
 """
+
 import numpy as np
 import pytest
 
@@ -180,6 +181,7 @@ def test_gemm_runtime_coefficient_connector_is_refused(conn):
     compile-time properties alone: the numpy oracle and the translated C both derive from the emission, so a
     dropped runtime coefficient scales BOTH identically and maxdiff validation cannot catch it."""
     from dace.libraries.blas.nodes.gemm import Gemm
+
     n, m, k = 3, 5, 4
     sdfg = dace.SDFG(f"gemm_rt{conn}")
     sdfg.add_array("A", [n, k], DT)
@@ -201,6 +203,7 @@ def test_gemm_runtime_coefficient_connector_is_refused(conn):
 
 def test_mpi_node_is_refused_by_module():
     from dace.libraries.mpi.nodes.bcast import Bcast
+
     sdfg = dace.SDFG("mpi")
     sdfg.add_array("x", [8], DT)
     st = sdfg.add_state()

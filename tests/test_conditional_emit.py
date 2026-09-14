@@ -7,6 +7,7 @@ branches are separate regions. The emitter turns that block back into a python `
 one branch body per region; these tests build such SDFGs directly and validate both the structure
 (the emitted keywords) and the numerics (the taken branch matches numpy).
 """
+
 import inspect
 
 import numpy as np
@@ -47,14 +48,16 @@ def build_three_branch():
     for label, guard, delta in (("b0", "sel == 0", 10.0), ("b1", "sel == 1", 20.0), ("belse", None, 30.0)):
         region = ControlFlowRegion(label, sdfg=sdfg)
         st = region.add_state(label + "_s", is_start_block=True)
-        st.add_mapped_tasklet(label + "_m",
-                              dict(i="0:N"),
-                              dict(inp=dc.Memlet("a[i]")),
-                              f"o = inp + {delta}",
-                              dict(o=dc.Memlet("out[i]")),
-                              input_nodes={"a": st.add_read("a")},
-                              output_nodes={"out": st.add_write("out")},
-                              external_edges=True)
+        st.add_mapped_tasklet(
+            label + "_m",
+            dict(i="0:N"),
+            dict(inp=dc.Memlet("a[i]")),
+            f"o = inp + {delta}",
+            dict(o=dc.Memlet("out[i]")),
+            input_nodes={"a": st.add_read("a")},
+            output_nodes={"out": st.add_write("out")},
+            external_edges=True,
+        )
         cond.add_branch(guard, region)
     sdfg.validate()
     return sdfg
@@ -75,14 +78,16 @@ def build_switch(name, branches):
     for i, (guard, delta) in enumerate(branches):
         region = ControlFlowRegion(f"b{i}", sdfg=sdfg)
         st = region.add_state(f"b{i}_s", is_start_block=True)
-        st.add_mapped_tasklet(f"b{i}_m",
-                              dict(i="0:N"),
-                              dict(inp=dc.Memlet("a[i]")),
-                              f"o = inp + {delta}",
-                              dict(o=dc.Memlet("out[i]")),
-                              input_nodes={"a": st.add_read("a")},
-                              output_nodes={"out": st.add_write("out")},
-                              external_edges=True)
+        st.add_mapped_tasklet(
+            f"b{i}_m",
+            dict(i="0:N"),
+            dict(inp=dc.Memlet("a[i]")),
+            f"o = inp + {delta}",
+            dict(o=dc.Memlet("out[i]")),
+            input_nodes={"a": st.add_read("a")},
+            output_nodes={"out": st.add_write("out")},
+            external_edges=True,
+        )
         cond.add_branch(guard, region)
     sdfg.validate()
     return sdfg
@@ -143,6 +148,7 @@ def test_a_non_final_unconditional_branch_is_refused():
     matches), and two unconditional branches emitted two ``else:`` clauses -- a SyntaxError.
     """
     from nestforge.ir.emit_numpy import UnsupportedNest
+
     sdfg = build_switch("else_first", [(None, 20.0), ("sel == 0", 10.0)])
     with pytest.raises(UnsupportedNest, match="unconditional branch"):
         sdfg_to_numpy(sdfg, "else_first")

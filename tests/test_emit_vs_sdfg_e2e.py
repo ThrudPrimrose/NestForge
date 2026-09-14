@@ -21,6 +21,7 @@ This is the cross-compiler coverage.
 Every listed case must pass (the CI unit set forbids skips); a build/emit/compile failure or a numerical
 mismatch is a hard FAILURE, run in a forked child so a miscompiled kernel cannot take down the worker.
 """
+
 import inspect
 import tempfile
 from pathlib import Path
@@ -75,18 +76,38 @@ SC_L1 = [
 # of TSVC-2.5 (the descriptively-named kernels). s13110 is excluded: the installed corpus ships its
 # ``_dace.py`` with no co-located manifest, so it cannot be loaded as a registered kernel at all.
 LLR_L1 = [
-    "tsvc_2_s1113", "tsvc_2_s1221", "tsvc_2_s1244", "tsvc_2_s152", "tsvc_2_s2275", "tsvc_2_s3111", "tsvc_2_s3113",
-    "tsvc_2_s331", "tsvc_2_s481", "tsvc_2_s118", "tsvc_2_s1213", "tsvc_2_s1351", "tsvc_2_s126", "tsvc_2_s161",
-    "tsvc_2_s241", "tsvc_2_s2711", "tsvc_2_s112", "tsvc_2_s114", "cond_reduce_sym", "cond_reduce_sum",
-    "ext_break_capture", "ext_break_find_first"
+    "tsvc_2_s1113",
+    "tsvc_2_s1221",
+    "tsvc_2_s1244",
+    "tsvc_2_s152",
+    "tsvc_2_s2275",
+    "tsvc_2_s3111",
+    "tsvc_2_s3113",
+    "tsvc_2_s331",
+    "tsvc_2_s481",
+    "tsvc_2_s118",
+    "tsvc_2_s1213",
+    "tsvc_2_s1351",
+    "tsvc_2_s126",
+    "tsvc_2_s161",
+    "tsvc_2_s241",
+    "tsvc_2_s2711",
+    "tsvc_2_s112",
+    "tsvc_2_s114",
+    "cond_reduce_sym",
+    "cond_reduce_sum",
+    "ext_break_capture",
+    "ext_break_find_first",
 ]
 
 # cross-compiler subset: kernels whose nests lower + translate + compile cleanly in every language.
 # numpyto has no C++ target (the C++ lane would recompile the C, same toolchain), so the distinct
 # compilers are covered by C x {gcc, clang} + Fortran x {gfortran}.
 SC_L2 = [
-    "scientific_computing/dense_linear_algebra/gemm/gemm", "scientific_computing/dense_linear_algebra/k3mm/k3mm",
-    "scientific_computing/dense_linear_algebra/mvt/mvt", "scientific_computing/dense_linear_algebra/atax/atax"
+    "scientific_computing/dense_linear_algebra/gemm/gemm",
+    "scientific_computing/dense_linear_algebra/k3mm/k3mm",
+    "scientific_computing/dense_linear_algebra/mvt/mvt",
+    "scientific_computing/dense_linear_algebra/atax/atax",
 ]
 # Only straight-line nests translate + compile identically in EVERY language across gcc/clang/gfortran; a
 # nest carrying loop state (recurrence / masked reduction) diverges at the artificial nest boundary or hits
@@ -187,8 +208,11 @@ def max_abs_diff(oracle, cand):
         want = np.asarray(want).ravel()
         assert want.size == got.size, f"{name}: size {want.size} vs {got.size}"
         cplx = np.iscomplexobj(want) or np.iscomplexobj(got)
-        a, b = (want.astype(np.complex128), got.astype(np.complex128)) if cplx else \
-               (want.astype(np.float64), got.astype(np.float64))
+        a, b = (
+            (want.astype(np.complex128), got.astype(np.complex128))
+            if cplx
+            else (want.astype(np.float64), got.astype(np.float64))
+        )
         # ``a - b`` is NaN wherever either side is NaN (and for inf - inf). A NaN on only ONE side is a
         # MAXIMAL disagreement -- exactly what this gate exists to catch -- so it scores as inf and can
         # never be dropped. Positions that are bit-equal (incl. both NaN, or both +-inf) are genuine
@@ -216,8 +240,9 @@ def test_maxdiff_scores_nan_mismatch_as_divergence():
 
 
 # ---- L1: emitted numpy == the SDFG --------------------------------------------------------------------
-@pytest.mark.parametrize("kind,short",
-                         [("scientific_computing", s) for s in SC_L1] + [("loop_level_reasoning", s) for s in LLR_L1])
+@pytest.mark.parametrize(
+    "kind,short", [("scientific_computing", s) for s in SC_L1] + [("loop_level_reasoning", s) for s in LLR_L1]
+)
 def test_emit_numpy_matches_sdfg(kind, short):
 
     def work():
@@ -234,14 +259,14 @@ def test_emit_numpy_matches_sdfg(kind, short):
 
 
 # ---- L2: emitted code compiled across compilers == the SDFG (per nest) --------------------------------
-@pytest.mark.parametrize("kind,short,lang,compiler", [("scientific_computing", s, lang, cc) for s in SC_L2
-                                                      for lang, ccs in COMPILERS.items()
-                                                      for cc in ccs] + [("loop_level_reasoning", s, lang, cc)
-                                                                        for s in LLR_L2
-                                                                        for lang, ccs in COMPILERS.items()
-                                                                        for cc in ccs])
+@pytest.mark.parametrize(
+    "kind,short,lang,compiler",
+    [("scientific_computing", s, lang, cc) for s in SC_L2 for lang, ccs in COMPILERS.items() for cc in ccs]
+    + [("loop_level_reasoning", s, lang, cc) for s in LLR_L2 for lang, ccs in COMPILERS.items() for cc in ccs],
+)
 def test_emit_compiled_matches_sdfg_across_compilers(kind, short, lang, compiler):
     import shutil
+
     tool = compiler if lang == "c" else "gfortran"
     assert shutil.which(tool) is not None, f"compiler {tool} not on PATH (setup_apt.sh installs gcc/clang/gfortran)"
 
@@ -251,6 +276,7 @@ def test_emit_compiled_matches_sdfg_across_compilers(kind, short, lang, compiler
         from nestforge.corpus.translate import prepare, emit_sources
         from nestforge.build.arena import make_inputs
         from nestforge.build.harness import c_argtypes, call_c, signature_order
+
         make_sdfg, sizes, _ = builder_for(kind, short)
         nests = lower_nests_to_external_call(make_sdfg())
         suffix = {"c": ".c", "cpp": ".c", "fortran": ".f90"}[lang]
@@ -270,11 +296,11 @@ def test_emit_compiled_matches_sdfg_across_compilers(kind, short, lang, compiler
                 src = next(p for p in emit_sources(prep, d / f"{name}_{lang}", target=target) if p.suffix == suffix)
                 so = d / f"{name}_{lang}_{compiler}.so"
                 subprocess.run(
-                    [tool, "-O2", "-fPIC", "-shared", "-ffp-contract=off",
-                     str(src), "-o", str(so)],
+                    [tool, "-O2", "-fPIC", "-shared", "-ffp-contract=off", str(src), "-o", str(so)],
                     capture_output=True,
                     text=True,
-                    check=True)
+                    check=True,
+                )
                 order = signature_order(src.read_text(), f"{name}_fp64", "fortran" if lang == "fortran" else "c")
                 outs, _ = call_c(so, f"{name}_fp64", order, c_argtypes(order, b), b, dict(inp), nsizes, 1)
                 # ``__sym_out_*`` are extraction sentinels (a nest's loop-exit index / carried scalar), not
@@ -283,9 +309,15 @@ def test_emit_compiled_matches_sdfg_across_compilers(kind, short, lang, compiler
                 # L1; L2 checks the real DATA outputs of the compiled nest match across compilers.
                 worst = max(
                     worst,
-                    max((float(np.max(np.abs(oracle[k] - outs[k])))
-                         for k in outs if k in oracle and not k.startswith("__sym_out")),
-                        default=0.0))
+                    max(
+                        (
+                            float(np.max(np.abs(oracle[k] - outs[k])))
+                            for k in outs
+                            if k in oracle and not k.startswith("__sym_out")
+                        ),
+                        default=0.0,
+                    ),
+                )
         return {"md": worst}
 
     res = run_isolated(work, timeout=600)

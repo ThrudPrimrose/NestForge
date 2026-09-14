@@ -9,6 +9,7 @@ reference. These pin two emitter/extraction fixes:
   * ``cond_reduce_sym``      -- a size-1 buffer is READ as ``x[0]`` (not the bare ``(1,)`` array, which a
     NumPy-2 scalar assignment rejects), and its canonicalized WCR *copy* accumulates.
 """
+
 import inspect
 
 import numpy as np

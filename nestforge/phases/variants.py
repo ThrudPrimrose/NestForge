@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Configuration sweep: build a kernel per compiler x FP mode x cost model, keep the fastest correct build."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,13 +13,20 @@ from nestforge.build.arena import make_inputs, run_oracle
 from nestforge.build.dedup import collapse, representatives, variant_key
 from nestforge.build.toolchain import Toolchain
 from nestforge.corpus.translate import Prepared
-from nestforge.phases.kernel import (KernelSource, KernelVerdict, at_rung, build_kernel_library, failed_verdict,
-                                     measure_kernel)
+from nestforge.phases.kernel import (
+    KernelSource,
+    KernelVerdict,
+    at_rung,
+    build_kernel_library,
+    failed_verdict,
+    measure_kernel,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class Variant:
     """One sweep cell: a C++ compiler and the compile flags its axes compose to."""
+
     compiler: str
     fp_mode: str
     cost_model: str
@@ -32,6 +40,7 @@ class Variant:
 @dataclass(slots=True)
 class VariantCell:
     """A variant's verdict; ``same_as`` names the cell whose identical artifact was measured instead."""
+
     variant: Variant
     verdict: KernelVerdict
     archive: Optional[Path] = None
@@ -41,6 +50,7 @@ class VariantCell:
 @dataclass(slots=True)
 class VariantResult:
     """Every cell, the collapsed groups, and the fastest correct cell with the entry it links through."""
+
     cells: List[VariantCell]
     collapsed: List[str]
     winner: Optional[VariantCell]
@@ -60,13 +70,15 @@ def enumerate_variants(toolchains: Sequence[Toolchain]) -> List[Variant]:
             continue
         # flag_matrix already dedups a cost model the family has no knob for onto its default flags
         for fp_mode, cost_model, composed in flags.flag_matrix(tc.fp_family, "c"):
-            variants.setdefault((tc.cxx, fp_mode, tuple(composed)), Variant(tc.cxx, fp_mode, cost_model,
-                                                                            tuple(composed)))
+            variants.setdefault(
+                (tc.cxx, fp_mode, tuple(composed)), Variant(tc.cxx, fp_mode, cost_model, tuple(composed))
+            )
     return list(variants.values())
 
 
-def build_variants(src: KernelSource, variants: Sequence[Variant],
-                   out_dir: Path) -> Tuple[Dict[str, VariantCell], Dict[str, str]]:
+def build_variants(
+    src: KernelSource, variants: Sequence[Variant], out_dir: Path
+) -> Tuple[Dict[str, VariantCell], Dict[str, str]]:
     """``(cells by id, artifact key by id)``; a failed build is a cell without a key."""
     cells: Dict[str, VariantCell] = {}
     keys: Dict[str, str] = {}
@@ -83,8 +95,9 @@ def build_variants(src: KernelSource, variants: Sequence[Variant],
     return cells, keys
 
 
-def select_variant(src: KernelSource, prep: Prepared, sizes: Dict[str, int], reps: int, variants: Sequence[Variant],
-                   out_dir: Path) -> VariantResult:
+def select_variant(
+    src: KernelSource, prep: Prepared, sizes: Dict[str, int], reps: int, variants: Sequence[Variant], out_dir: Path
+) -> VariantResult:
     """Build ``variants`` of ``src`` under ``out_dir``, time each distinct artifact once against the NumPy oracle
     (gating every cell at its own FP rung), and return all cells with the fastest correct one as winner."""
     inputs = make_inputs(src.boundary, sizes)

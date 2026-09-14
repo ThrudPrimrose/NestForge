@@ -6,6 +6,7 @@ A skill file is a prompt: an agent reads it and copies the snippet verbatim. So 
 code block or a leaked local path is not a documentation nit, it is a runtime failure or a privacy
 leak in the one consumer that cannot debug it.
 """
+
 import ast
 import importlib
 import re
@@ -78,12 +79,14 @@ def test_skill_has_no_email_address(skill):
 def test_importing_nestforge_never_loads_hpcagent_bench():
     """HPCAgent-Bench imports nest-forge at its own top level, so the reverse import must never fire --
     a top-level `import hpcagent_bench` anywhere under nestforge/ would deadlock that cycle."""
-    script = ("import importlib, pkgutil, sys\n"
-              "import nestforge\n"
-              "for info in pkgutil.walk_packages(nestforge.__path__, nestforge.__name__ + '.'):\n"
-              "    importlib.import_module(info.name)\n"
-              "leaked = sorted(m for m in sys.modules if m.startswith(('hpcagent_bench', 'numpyto')))\n"
-              "sys.stdout.write(','.join(leaked))\n")
+    script = (
+        "import importlib, pkgutil, sys\n"
+        "import nestforge\n"
+        "for info in pkgutil.walk_packages(nestforge.__path__, nestforge.__name__ + '.'):\n"
+        "    importlib.import_module(info.name)\n"
+        "leaked = sorted(m for m in sys.modules if m.startswith(('hpcagent_bench', 'numpyto')))\n"
+        "sys.stdout.write(','.join(leaked))\n"
+    )
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, cwd=REPO)
     assert result.returncode == 0, result.stderr
     leaked = [name for name in result.stdout.strip().split(",") if name]

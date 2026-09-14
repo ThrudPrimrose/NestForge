@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Phase 0: normalize a program to the canonical parallel form, leaving the final fusion to phase 1."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ FUSE_STAGE = "fuse"
 @dataclass(frozen=True, slots=True)
 class Targets:
     """Devices the program may run on. The CPU is always a target; the GPU is opt-in."""
+
     gpu: bool = False
 
     @property
@@ -25,7 +27,7 @@ class Targets:
 
 def normalization_stages(targets: Targets) -> List[str]:
     labels = stage_labels(targets.canon_target)
-    return labels[:labels.index(FUSE_STAGE)]
+    return labels[: labels.index(FUSE_STAGE)]
 
 
 def normalize(sdfg: dace.SDFG, targets: Targets) -> dace.SDFG:

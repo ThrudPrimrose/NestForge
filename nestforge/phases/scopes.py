@@ -31,8 +31,12 @@ def is_parallel_nest(node: NestNode) -> bool:
 def parallel_top_level_maps(sdfg: dace.SDFG) -> List[Tuple[dace.SDFG, nodes.MapEntry]]:
     """Phase 2's scope candidates: one scope per parallel top-level map, anywhere in the SDFG's
     control flow (including inside a loop region)."""
-    return [(sdfg, entry) for state in sdfg.all_states() for entry in top_level_map_entries(state)
-            if is_parallel_nest(entry)]
+    return [
+        (sdfg, entry)
+        for state in sdfg.all_states()
+        for entry in top_level_map_entries(state)
+        if is_parallel_nest(entry)
+    ]
 
 
 def label_nest(node: Union[nodes.MapEntry, LoopRegion]) -> str:
@@ -47,6 +51,7 @@ def label_nest(node: Union[nodes.MapEntry, LoopRegion]) -> str:
 @dataclass(slots=True)
 class OffloadCandidate:
     """One parallel top-level map phase 2 would externalize, with its label."""
+
     parent_sdfg: dace.SDFG
     node: nodes.MapEntry
     label: str
@@ -80,14 +85,14 @@ def replace_nsdfg_with_external(boundary: Boundary, name: str) -> ExternalCall:
     state = boundary.state
     nsdfg = boundary.nsdfg_node
     # Connectors are prefixed so they never collide with array/symbol names (a LibraryNode rule).
-    ext = ExternalCall(name,
-                       inputs={in_conn(i)
-                               for i in boundary.inputs},
-                       outputs={out_conn(o)
-                                for o in boundary.outputs},
-                       numpy_source=nest_to_numpy(boundary, fn_name=name),
-                       config=manifest_dict(boundary, name),
-                       standalone_sdfg=reference_sdfg(boundary))
+    ext = ExternalCall(
+        name,
+        inputs={in_conn(i) for i in boundary.inputs},
+        outputs={out_conn(o) for o in boundary.outputs},
+        numpy_source=nest_to_numpy(boundary, fn_name=name),
+        config=manifest_dict(boundary, name),
+        standalone_sdfg=reference_sdfg(boundary),
+    )
     state.add_node(ext)
     # Fresh memlets per edge (never reuse subsets/memlets); remap connector names.
     for e in state.in_edges(nsdfg):

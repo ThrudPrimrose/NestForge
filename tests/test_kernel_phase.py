@@ -3,6 +3,7 @@
 """Kernel optimization on four tiny kernels: the default kernel is a standalone CPF unit, its one C entry takes
 CPF's argument order with the types ``ExternalCall`` declares, ``lib<kernel>.a`` defines that entry, and every
 built kernel matches its NumPy oracle."""
+
 import re
 import subprocess
 from typing import Tuple
@@ -14,7 +15,13 @@ import dace
 from nestforge.build.toolchain import raw_signature, split_params
 from nestforge.corpus.translate import prepare
 from nestforge.ir.libnode import proto_and_call
-from nestforge.phases.kernel import build_kernel_library, default_schedule, schedule_kernel, use_kernel_library, validate_kernel
+from nestforge.phases.kernel import (
+    build_kernel_library,
+    default_schedule,
+    schedule_kernel,
+    use_kernel_library,
+    validate_kernel,
+)
 from nestforge.phases.normalize import Targets, normalize
 from nestforge.phases.schedule import full_fusion
 from nestforge.phases.scopes import lower_nests_to_external_call
@@ -72,7 +79,7 @@ def split_decl(decl: str) -> Tuple[str, str]:
     """``(type, name)`` of one C parameter declaration, qualifiers other than ``const`` dropped."""
     text = " ".join(re.sub(r"\b__restrict__\b", "", decl).split()).replace(" *", "*")
     name = re.split(r"[\s*]+", text)[-1]
-    return text[:text.rfind(name)].strip(), name
+    return text[: text.rfind(name)].strip(), name
 
 
 def entry_params(src):

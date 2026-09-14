@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Collapse variants that are the same build twice, so the sweep measures each distinct build once:
 ``cpp_body_key`` sees codegen only, ``asm_body_key`` sees the disassembly where flag duplicates show up."""
+
 from __future__ import annotations
 
 import hashlib
@@ -62,7 +63,7 @@ def function_bodies(code: str) -> List[str]:
             elif c == "}" and depth > 0:
                 depth -= 1
                 if depth == 0:
-                    bodies.append(code[start:i + 1])
+                    bodies.append(code[start : i + 1])
                     start = -1
             i += 1
     return bodies

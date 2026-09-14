@@ -1,37 +1,20 @@
-# Pre-commit formatting for nest-forge (column limit 120 for Python, 160 for C/C++).
-#
-#   one-time:   pip install pre-commit && pre-commit install
-#   all files:  pre-commit run --all-files
-#   on commit:  runs automatically over staged files
-#
-# All three hooks auto-fix: format.sh rewrites in place, check_headers.py --fix
-# inserts a missing header, and the large-files check simply blocks the commit
-# (nothing to auto-fix there). The format hook delegates to scripts/format.sh --
-# the SAME script CI's Phase-0 gate runs in --check mode -- so local and CI share
-# one formatter (yapf @ 120 cols for Python, clang-format @ 160 cols for C/C++,
-# reading nest-forge's pyproject.toml / .clang-format).
+# Setup: pip install -e ".[dev]" && pre-commit install
+# Every file: pre-commit run --all-files (CI runs the same)
 repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.10
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
   - repo: local
     hooks:
-      - id: nestforge-format
-        name: format (yapf / clang-format)
-        entry: bash scripts/format.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-        require_serial: true
-      # Copyright / SPDX header on the core package (scope + skip policy live in
-      # the script: nestforge/, scripts/, tests/).
       - id: nestforge-headers
-        name: copyright / SPDX header (core package)
-        # --fix ADDS the header (as the first content line, after any shebang) rather than only
-        # failing -- the same auto-fix contract as the format hook. yapf leaves the header
-        # byte-for-byte untouched, so the two fixers never fight.
+        name: copyright / SPDX header
         entry: python scripts/check_headers.py --fix
         language: system
         require_serial: true
         files: '\.py$'
-      # Reject any staged file over 500 KiB (keep datasets / binaries / dumps out of git).
       - id: nestforge-large-files
         name: block files > 500 KiB
         entry: python scripts/check_large_files.py

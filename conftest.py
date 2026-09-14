@@ -3,6 +3,7 @@
 When NESTFORGE_CI_NO_SKIP is set (CI unit set), a skipped test is a failure: the unit set must run
 with zero skips. Locally the env var is unset, so skips behave normally.
 """
+
 import os
 
 import pytest
@@ -18,6 +19,7 @@ def pytest_configure(config):
         return  # xdist worker: the controller already materialised the corpus
     try:
         from nestforge.corpus.bench import materialize_dace_corpus
+
         materialize_dace_corpus()
     except Exception:
         pass
@@ -48,6 +50,7 @@ def reset_extern_lib_env():
     would have broken it.
     """
     from nestforge.ir.libnode import ExternLibEnv
+
     ExternLibEnv.reset()
     yield
     ExternLibEnv.reset()

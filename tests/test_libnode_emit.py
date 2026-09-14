@@ -6,6 +6,7 @@ The corpus kernels that use these nodes (cholesky2, stockham_fft) each carry a *
 blocker (a nested map, loop-shaped scratch), so these minimal single-op programs exercise the library
 node emitters in isolation -- the "just emit the np / np.linalg op" path.
 """
+
 import numpy as np
 
 import dace as dc

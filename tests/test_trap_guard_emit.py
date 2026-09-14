@@ -4,6 +4,7 @@
 
 Guards are built by the DaCe passes that really produce them, never by a hand-shaped stand-in.
 """
+
 import ast
 
 import dace
@@ -11,8 +12,10 @@ import numpy as np
 import pytest
 
 from dace.sdfg import nodes
-from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (collect_assumptions,
-                                                                                insert_assumption_guards)
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
+    collect_assumptions,
+    insert_assumption_guards,
+)
 
 from nestforge.ir.emit_numpy import UnsupportedNest, load_emitted, sdfg_to_numpy, trap_guard_lines
 
@@ -32,7 +35,9 @@ def compiled(src, name):
 
 def guard_tasklets(sdfg):
     return [
-        n for s in sdfg.states() for n in s.nodes()
+        n
+        for s in sdfg.states()
+        for n in s.nodes()
         if isinstance(n, nodes.Tasklet) and not n.in_connectors and not n.out_connectors
     ]
 
@@ -71,9 +76,9 @@ def test_a_guard_outside_the_canonicalize_guard_state_is_translated_too():
     sdfg.add_array("a", [N], dace.float64)
     sdfg.add_symbol("overlap", dace.int64)
     trap_state = sdfg.add_state("_scatter_guard_trap_a", is_start_block=True)
-    trap = trap_state.add_tasklet("check_assumption_a", {}, {},
-                                  "if ((overlap > 0)) { __builtin_trap(); }",
-                                  language=dace.dtypes.Language.CPP)
+    trap = trap_state.add_tasklet(
+        "check_assumption_a", {}, {}, "if ((overlap > 0)) { __builtin_trap(); }", language=dace.dtypes.Language.CPP
+    )
     trap.side_effects = True
     work = sdfg.add_state_after(trap_state, "work")
     tasklet = work.add_tasklet("w", {"i_a"}, {"o_a"}, "o_a = i_a + 1.0")
@@ -92,18 +97,21 @@ def test_a_guard_outside_the_canonicalize_guard_state_is_translated_too():
         compiled(src, "k")(np.zeros(3), overlap=1)
 
 
-@pytest.mark.parametrize("c_cond, py_cond", [
-    ("(N < 0)", "(N < 0)"),
-    ("(N < 0) && (M < 0)", "(N < 0) and (M < 0)"),
-    ("(N < 0) || (M != 3)", "(N < 0) or (M != 3)"),
-    ("!(N == 0)", "not (N == 0)"),
-])
+@pytest.mark.parametrize(
+    "c_cond, py_cond",
+    [
+        ("(N < 0)", "(N < 0)"),
+        ("(N < 0) && (M < 0)", "(N < 0) and (M < 0)"),
+        ("(N < 0) || (M != 3)", "(N < 0) or (M != 3)"),
+        ("!(N == 0)", "not (N == 0)"),
+    ],
+)
 def test_c_operators_become_python_operators(c_cond, py_cond):
     """``!=`` must survive the ``!`` rewrite; ``not =`` would be a SyntaxError."""
     state = dace.SDFG("g").add_state()
-    trap = state.add_tasklet("check_assumption_0", {}, {},
-                             f"if ({c_cond}) {{ __builtin_trap(); }}",
-                             language=dace.dtypes.Language.CPP)
+    trap = state.add_tasklet(
+        "check_assumption_0", {}, {}, f"if ({c_cond}) {{ __builtin_trap(); }}", language=dace.dtypes.Language.CPP
+    )
     assert trap_guard_lines(trap)[0] == f"if {py_cond}:"
 
 
@@ -113,14 +121,15 @@ def test_a_connectorless_tasklet_that_is_not_a_guard_emits_no_statement():
     other = state.add_tasklet("bookkeeping", {}, {}, 'printf("hi");', language=dace.dtypes.Language.CPP)
     assert trap_guard_lines(other) is None
     from nestforge.ir.emit_numpy import tasklet_lines
+
     assert tasklet_lines(state, state.sdfg, other) == ["# no-op tasklet (bookkeeping): no connectors, no data effect"]
 
 
 def test_an_untranslatable_guard_condition_is_refused():
     """Fail at emission, where the tasklet name is still known."""
     state = dace.SDFG("g").add_state()
-    trap = state.add_tasklet("check_assumption_0", {}, {},
-                             "if (a ? b : c) { __builtin_trap(); }",
-                             language=dace.dtypes.Language.CPP)
+    trap = state.add_tasklet(
+        "check_assumption_0", {}, {}, "if (a ? b : c) { __builtin_trap(); }", language=dace.dtypes.Language.CPP
+    )
     with pytest.raises(UnsupportedNest, match="not translatable to python"):
         trap_guard_lines(trap)

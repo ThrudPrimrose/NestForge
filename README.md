@@ -52,9 +52,10 @@ quickstart_out/
 ## Install and test
 
 ```bash
-uv sync --extra dev                                              # dace @ extended, hpcagent-bench @ main
-uv run pytest -m "not integration and not gpu and not vendor"    # unit set
-uv run pytest -m integration                                     # compiles and runs kernels
+pip install -e ".[dev]"                                   # dace @ extended, hpcagent-bench @ main
+pre-commit install                                        # ruff check and ruff format on every commit
+pytest -m "not integration and not gpu and not vendor"    # unit set
+pytest -m integration                                     # compiles and runs kernels
 ```
 
 Benchmark kernels and the NumPy to C, C++ and Fortran translator come from

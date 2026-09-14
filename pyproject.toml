@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,35 +7,37 @@ name = "nest-forge"
 version = "0.0.1"
 description = "Phased whole-program optimization of DaCe programs for deterministic, human and agent drivers."
 readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 authors = [{ name = "Yakup Budanaz", email = "budanaz.yakup@gmail.com" }]
-keywords = ["dace", "sdfg", "loop-nest", "code-generation", "compilers", "autotuning", "benchmarking", "hpc"]
+keywords = ["dace", "sdfg", "loop-nest", "code-generation", "compilers", "autotuning", "hpc"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "Topic :: Software Development :: Compilers",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Compilers",
+]
+dependencies = [
+    "numpy",
+    "pyyaml",
+    "sympy",
+    # Branches, not pins: DaCe tracks extended, HPCAgent-Bench tracks main.
+    "dace @ git+https://github.com/spcl/dace.git@extended",
+    "hpcagent_bench @ git+https://github.com/spcl/HPCAgent-Bench.git@main",
 ]
 
-# dace and hpcagent_bench resolve through [tool.uv.sources] below -- git, not a version pin.
-dependencies = ["numpy", "pyyaml", "sympy", "dace", "hpcagent_bench"]
-
 [project.optional-dependencies]
-# Single source of truth for the dev/test/format tools.
 dev = [
+    "pre-commit",
     "pytest",
+    "pytest-cov",
     "pytest-timeout",
     "pytest-xdist",
-    # CI's coverage job combines the unit + integration data files; --cov-append is what joins them
-    "pytest-cov",
-    # PINNED: yapf's wrapping changes between releases, so an unpinned one fails the CI format gate
-    "yapf==0.43.0",
-    # the lint pass ([tool.ruff] below); the format gate is yapf + clang-format only
-    # PINNED: newer ruff releases widen the default rule set, which turns the lint gate red on unchanged code
+    # Pinned to the pre-commit hook's rev: a new release widens the default rules.
     "ruff==0.15.10",
-    "clang-format",
 ]
 
 [project.urls]
@@ -45,33 +47,25 @@ Repository = "https://github.com/spcl/NestForge"
 [tool.setuptools.packages.find]
 include = ["nestforge*"]
 
-[tool.uv.sources]
-dace = { git = "https://github.com/spcl/dace.git", branch = "extended" }
-hpcagent_bench = { git = "https://github.com/spcl/HPCAgent-Bench.git", branch = "main" }
+[tool.ruff]
+line-length = 120
+target-version = "py312"
 
-[tool.coverage.run]
-# child processes exit via os._exit (skips the atexit save) -- patch it, and give each its own data file.
-patch = ["_exit"]
-parallel = true
+[tool.ruff.lint.per-file-ignores]
+# Tests import after a module-level skip guard, use lambda helpers, and keep the reference's math names.
+"tests/*" = ["E402", "E731", "E741"]
 
 [tool.pytest.ini_options]
 addopts = "-q -p no:cacheprovider"
 testpaths = ["tests"]
 markers = [
     "integration: compiles and runs kernels; slow, its own CI job",
-    "e2e: end-to-end -- compiles and runs, but only with g++/clang++, so it DOES run on the CI runner",
-    "gpu: needs a CUDA device -- never on CI",
+    "e2e: end-to-end with g++/clang++, so it runs on CI",
+    "gpu: needs a CUDA device, never on CI",
     "vendor: needs a vendor compiler or library not installed on CI",
 ]
 
-[tool.yapf]
-column_limit = 120
-
-[tool.ruff]
-line-length = 120
-target-version = "py312"
-
-[tool.ruff.lint.per-file-ignores]
-# Tests legitimately: guard the module with a skipif/pytestmark before imports (E402), use lambda
-# helpers (E731), and single-letter math names matching the reference (E741).
-"tests/*" = ["E402", "E731", "E741"]
+[tool.coverage.run]
+# Forked children leave through os._exit, which skips coverage's atexit save.
+patch = ["_exit"]
+parallel = true

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Loads hpcagent_bench's benchmark tracks as SDFGs -- the nest-forge kernel corpus. Each kernel's
 ``_dace.py`` binds hpcagent_bench's precision global, so it must be stamped to fp64 before import."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -28,6 +29,7 @@ DACE_TRACKS = ("loop_level_reasoning", "scientific_computing", "machine_learning
 def set_precision_fp64() -> None:
     """Fix hpcagent_bench's kernel dtype global to float64 before kernel modules import it."""
     import hpcagent_bench.frameworks.dace_framework as dfw
+
     dfw.dc_float = dace.float64
     dfw.dc_complex_float = dace.complex128
 
@@ -35,6 +37,7 @@ def set_precision_fp64() -> None:
 @dataclass(slots=True)
 class CorpusKernel:
     """One optarena kernel that ships a ``@dace.program`` dace impl."""
+
     short_name: str  # registry key, e.g. "hpc/dense_linear_algebra/gemm/gemm"
     module_path: str  # canonical dotted name, used only as the sys.modules cache key
     dace_file: Path  # the kernel's ``_dace.py`` on disk (source of truth)
@@ -79,19 +82,22 @@ def iter_dace_kernels(track: Optional[str] = None) -> Iterator[CorpusKernel]:
     # deferred: hpcagent_bench imports nestforge at top level
     from hpcagent_bench import autogen
     from hpcagent_bench.spec import KERNELS, BenchSpec
+
     for short_name in KERNELS:
         if track is not None and not short_name.startswith(f"{track}/"):
             continue
         module_name = short_name.rsplit("/", 1)[-1]
         dace_file = KERNELS[short_name].parent / f"{module_name}_dace.py"
         if not dace_file.exists() and short_name.split("/", 1)[0] in DACE_TRACKS:
-            autogen.ensure(short_name, ("dace", ))  # regenerate hpcagent_bench's gitignored _dace.py on demand
+            autogen.ensure(short_name, ("dace",))  # regenerate hpcagent_bench's gitignored _dace.py on demand
         if not dace_file.exists():
             continue
-        yield CorpusKernel(short_name=short_name,
-                           module_path=module_path(short_name),
-                           dace_file=dace_file,
-                           spec=BenchSpec.load(short_name))
+        yield CorpusKernel(
+            short_name=short_name,
+            module_path=module_path(short_name),
+            dace_file=dace_file,
+            spec=BenchSpec.load(short_name),
+        )
 
 
 def materialize_dace_corpus(track: Optional[str] = None) -> None:
@@ -100,12 +106,13 @@ def materialize_dace_corpus(track: Optional[str] = None) -> None:
     # deferred: hpcagent_bench imports nestforge at top level
     from hpcagent_bench import autogen
     from hpcagent_bench.spec import KERNELS
+
     for short_name in KERNELS:
         if short_name.split("/", 1)[0] not in DACE_TRACKS:
             continue
         if track is not None and not short_name.startswith(f"{track}/"):
             continue
-        autogen.ensure(short_name, ("dace", ))
+        autogen.ensure(short_name, ("dace",))
 
 
 def dace_kernel_names(track: Optional[str] = None) -> List[str]:
@@ -116,20 +123,21 @@ def preset_sizes(kernel: CorpusKernel, preset: str) -> Dict[str, int]:
     """Concrete shape-symbol sizes for one preset rung, read from the kernel's manifest (skips
     non-int fuzz-spec entries)."""
     from hpcagent_bench.sizing import is_plain_int  # deferred: hpcagent_bench imports nestforge at top level
+
     rung = kernel.spec.parameters.get(preset, {})
     return {sym: int(size) for sym, size in rung.items() if is_plain_int(size)}
 
 
-def index_fills(manifest_name: Optional[str],
-                boundary: Boundary,
-                sizes: Dict[str, int],
-                seed: Optional[int] = 0) -> Dict[str, np.ndarray]:
+def index_fills(
+    manifest_name: Optional[str], boundary: Boundary, sizes: Dict[str, int], seed: Optional[int] = 0
+) -> Dict[str, np.ndarray]:
     """Valid-subscript fill values for the nest's manifest-declared integer INDEX arrays, at the SDFG
     descriptor's dtype -- a permutation fill, not the default all-zero uniform-float-cast fill that
     would degrade a gather/scatter to a same-index race once lowered to a ``dace.map``."""
     # deferred: hpcagent_bench imports nestforge at top level
     from hpcagent_bench.initialize import fill_index_array
     from hpcagent_bench.spec import BenchSpec
+
     if manifest_name is None:
         return {}
     spec = BenchSpec.load(manifest_name)

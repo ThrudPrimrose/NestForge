@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Regression tests for the code-review findings (corpus selection, C-style emission, emit guards)."""
+
 import numpy as np
 import pytest
 import dace
@@ -11,12 +12,13 @@ from nestforge.ir.emit_numpy import load_emitted, maxsize_loop_scratch, nest_to_
 from nestforge.ir.extract import Boundary
 from nestforge.phases.scopes import lower_nests_to_external_call
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 # ----- corpus: pick the kernel's entry @dace.program, not the first helper (Finder B#1) ----------
 def test_corpus_program_is_the_entry_not_a_helper():
     from nestforge.corpus.bench import iter_dace_kernels
+
     ks = {k.short_name: k for k in iter_dace_kernels()}
     # mlp_dace defines relu, softmax, then mlp; resnet has resnet_basicblock + a _gpu variant after it.
     assert ks["machine_learning/mlp/mlp"].program().name.endswith("mlp")
@@ -25,9 +27,12 @@ def test_corpus_program_is_the_entry_not_a_helper():
 
 def test_corpus_module_path_independent_of_namespace_path():
     from nestforge.corpus.bench import module_path
+
     # Derived from the registry key, not hpcagent_bench.benchmarks.__path__ (which can be stale/multi-root).
-    assert module_path("scientific_computing/dense_linear_algebra/gemm/gemm") == \
-        "hpcagent_bench.benchmarks.scientific_computing.dense_linear_algebra.gemm.gemm_dace"
+    assert (
+        module_path("scientific_computing/dense_linear_algebra/gemm/gemm")
+        == "hpcagent_bench.benchmarks.scientific_computing.dense_linear_algebra.gemm.gemm_dace"
+    )
 
 
 # ----- C-style emission: pre-allocated buffers, no internal allocation ----------------------------
@@ -146,7 +151,7 @@ def test_returning_kernel_survives_arena_oracle_and_manifest_matches(tmp_path):
     # emit_yaml.arg_order and emit_numpy.nest_to_numpy build the signature independently, so the manifest is
     # only usable while they agree: arrays in array_args order (inputs, extra outputs, scratch), then symbols.
     header = prep.numpy_source.splitlines()[0]
-    signature = [a.strip() for a in header[header.index("(") + 1:header.rindex(")")].split(",")]
+    signature = [a.strip() for a in header[header.index("(") + 1 : header.rindex(")")].split(",")]
     args = list(prep.manifest["input_args"])
     arrays = list(prep.manifest["array_args"])
     assert args == arrays + [s for s in boundary.symbols if s not in arrays]
@@ -214,15 +219,12 @@ def loop_scratch_boundary():
     loop = LoopRegion("loop", "loop_i < N", "loop_i", "loop_i = 0", "loop_i = loop_i + 1")
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state("body", is_start_block=True)
-    body.add_edge(body.add_read("a"), None, body.add_tasklet("t", {"i0"}, {"o0"}, "o0 = i0 + 1.0"), "i0",
-                  dace.Memlet("a[0]"))
-    return Boundary(inputs=["a"],
-                    outputs=["a"],
-                    symbols=["N"],
-                    nsdfg_node=None,
-                    state=None,
-                    standalone_sdfg=sdfg,
-                    parent_sdfg=None)
+    body.add_edge(
+        body.add_read("a"), None, body.add_tasklet("t", {"i0"}, {"o0"}, "o0 = i0 + 1.0"), "i0", dace.Memlet("a[0]")
+    )
+    return Boundary(
+        inputs=["a"], outputs=["a"], symbols=["N"], nsdfg_node=None, state=None, standalone_sdfg=sdfg, parent_sdfg=None
+    )
 
 
 def test_make_inputs_sizes_scratch_the_way_the_emitter_widened_it():
@@ -235,7 +237,7 @@ def test_make_inputs_sizes_scratch_the_way_the_emitter_widened_it():
     assert str(widened.shape[0]) == "N + 1"  # the extent the emitted kernel addresses
 
     got = make_inputs(boundary, sizes, seed=0)["tmp"]
-    assert got.shape == (sizes["N"] + 1, ), "scratch allocated from the raw (smaller) shape, not the emitted one"
+    assert got.shape == (sizes["N"] + 1,), "scratch allocated from the raw (smaller) shape, not the emitted one"
 
 
 def test_scratch_names_reports_the_emitted_scratch_buffers():

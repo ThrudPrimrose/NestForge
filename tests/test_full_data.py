@@ -1,18 +1,19 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Extraction passes whole arrays to the external call (no shrink/rebase to the accessed slice)."""
+
 import numpy as np
 import dace
 
 from nestforge.phases.scopes import lower_nests_to_external_call
 from nestforge.ir.libnode import ExternalCall
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
 def stencil(A: dace.float64[N], B: dace.float64[N]):
-    for i in dace.map[1:N - 1]:
+    for i in dace.map[1 : N - 1]:
         B[i] = A[i - 1] + A[i + 1]
 
 
@@ -41,5 +42,5 @@ def test_full_array_stencil_runs_bit_exact():
     B = np.zeros(n)
     sdfg(A=A, B=B, N=n)
     ref = np.zeros(n)
-    ref[1:n - 1] = A[0:n - 2] + A[2:n]
+    ref[1 : n - 1] = A[0 : n - 2] + A[2:n]
     np.testing.assert_array_equal(B, ref)

@@ -6,6 +6,7 @@ Covers the contract/robustness bugs that silently mislead rather than crash -- `
 with ``enumerate_fusions``, a runtime linked without an rpath, a rank>=2 size-1 buffer indexed as a
 sub-array, and extern-call ABI args with no connector.
 """
+
 import re
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from nestforge.ir.libnode import ExternLibEnv, ExternalCall, proto_and_call
 from nestforge.build import flags
 from nestforge.phases.scopes import top_level_map_entries
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -100,15 +101,7 @@ def extern_call(abi_order, inputs):
     manifest = {
         "array_args": list(abi_order),
         "output_args": [],
-        "init": {
-            "arrays": {
-                a: {
-                    "dtype": "float64"
-                }
-                for a in abi_order
-            },
-            "scalars": {}
-        },
+        "init": {"arrays": {a: {"dtype": "float64"} for a in abi_order}, "scalars": {}},
     }
     node = ExternalCall("k", inputs=set(inputs), outputs=set(), config=manifest)
     node.symbol, node.abi_order = "k_fp64", list(abi_order)
@@ -116,7 +109,7 @@ def extern_call(abi_order, inputs):
     state = sdfg.add_state()
     state.add_node(node)
     for conn in inputs:
-        name = conn[len("_in_"):]
+        name = conn[len("_in_") :]
         sdfg.add_array(name, [8], dace.float64)
         state.add_edge(state.add_read(name), None, node, conn, dace.Memlet.from_array(name, sdfg.arrays[name]))
     return node, state
@@ -157,7 +150,7 @@ def test_every_link_search_path_is_paired_with_an_rpath():
         for num, line in enumerate(lines):
             if not re.search(r"""["']-L""", line):
                 continue
-            window = " ".join(lines[num:num + 2])  # the flag list may wrap onto the next line
+            window = " ".join(lines[num : num + 2])  # the flag list may wrap onto the next line
             if "rpath" not in window:
                 offenders.append(f"{path.name}:{num + 1}: {line.strip()}")
     assert not offenders, "a -L without a paired -Wl,-rpath:\n" + "\n".join(offenders)

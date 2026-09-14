@@ -11,6 +11,7 @@ including that the parent is still alive afterwards to report it.
 A child that dies takes its coverage data with it; that is why these tests assert on the returned
 dict rather than on lines executed inside the fork.
 """
+
 import os
 import signal
 import time

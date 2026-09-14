@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The configuration sweep: what it enumerates, how a build shared by several cells is measured once and gated per
 cell, and that the winning ``lib<kernel>.a`` links into the parent program and computes the right answer."""
+
 import subprocess
 
 import numpy as np
@@ -36,7 +37,7 @@ def lowered_vadd():
     sdfg = vadd.to_sdfg(simplify=True)
     normalize(sdfg, Targets())
     full_fusion(sdfg, Targets())
-    (ext, boundary), = lower_nests_to_external_call(sdfg)
+    ((ext, boundary),) = lower_nests_to_external_call(sdfg)
     return sdfg, ext, boundary
 
 
@@ -127,8 +128,9 @@ def test_the_winning_archive_links_statically_into_the_parent_and_matches_numpy(
     sdfg, ext, boundary = lowered_vadd()
     src = schedule_kernel(ext, boundary, Targets(), tmp_path / "gen")
     prep = prepare(boundary, ext.name, tmp_path / "ref")
-    result = select_variant(src, prep, {"N": 257}, 1, gcc_variants(fp_mode="strict-ieee", cost_model="default"),
-                            tmp_path / "variants")
+    result = select_variant(
+        src, prep, {"N": 257}, 1, gcc_variants(fp_mode="strict-ieee", cost_model="default"), tmp_path / "variants"
+    )
     assert result.library is not None, [c.verdict.error for c in result.cells]
 
     use_kernel_library(ext, result.library, result.symbol, result.abi_order)

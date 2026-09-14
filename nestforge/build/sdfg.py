@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Owns the DaCe build: codegen then compile/link via ctypes (manual init/program/exit), not
 ``dace.compile()``, whose ``__call__`` re-marshals args and confounds timing."""
+
 from __future__ import annotations
 
 import contextlib
@@ -21,8 +22,19 @@ import dace
 from dace.codegen import codegen
 from dace.codegen import compiler as dace_compiler
 
-from nestforge.build.toolchain import (CXX_STD, DEFAULT_COMPILER, DEFAULT_FLAGS, OpenMPRuntime, Param, ar_for,
-                                       parse_params, run, signature, support_rpath_flags, usable_openmp)
+from nestforge.build.toolchain import (
+    CXX_STD,
+    DEFAULT_COMPILER,
+    DEFAULT_FLAGS,
+    OpenMPRuntime,
+    Param,
+    ar_for,
+    parse_params,
+    run,
+    signature,
+    support_rpath_flags,
+    usable_openmp,
+)
 
 
 @functools.lru_cache(maxsize=None, typed=True)
@@ -37,6 +49,7 @@ def dace_runtime_include() -> Path:
 @dataclass(slots=True)
 class BuiltSDFG:
     """A nest-forge-built DaCe ``.so`` with its entry points bound and init/exit managed."""
+
     name: str
     so_path: Path
     _lib: ctypes.CDLL
@@ -126,6 +139,7 @@ def include_flags(folder: Path) -> List[str]:
 @dataclass(slots=True)
 class BuildOptions:
     """Toolchain + optimization knobs for the owned build; each axis is independent."""
+
     compiler: str = DEFAULT_COMPILER
     flags: Optional[List[str]] = None  # None -> DEFAULT_FLAGS
     expand_libnodes: bool = False
@@ -163,20 +177,25 @@ def build_commands(folder: Optional[Path], opts: BuildOptions) -> BuildCommands:
     # dace emits `#pragma omp parallel for` for every multicore map; a build without OpenMP runs it serially.
     omp = opts.openmp or usable_openmp(compiler)
     if omp is None:
-        warnings.warn(f"{Path(compiler).name} can link no OpenMP runtime; building SERIAL -- any parallel "
-                      "map in this SDFG is emitted as an ignored pragma and the timing is single-threaded")
+        warnings.warn(
+            f"{Path(compiler).name} can link no OpenMP runtime; building SERIAL -- any parallel "
+            "map in this SDFG is emitted as an ignored pragma and the timing is single-threaded"
+        )
     omp_c = omp.compile_flags(compiler) if omp else []
     omp_l = omp.link_flags(compiler) if omp else []
     # icx auto-links libsvml/libimf off the loader path with no RUNPATH; without this dlopen fails.
     libs = [*omp_l, *(opts.blas_link or []), *(opts.extra_link or []), *support_rpath_flags(compiler)]
-    return BuildCommands(compiler=compiler,
-                         cflags=[f for f in opts.resolved_flags() if f != "-shared"],
-                         compile_extra=[*omp_c, *(include_flags(folder) if folder is not None else [])],
-                         link_libs=libs)
+    return BuildCommands(
+        compiler=compiler,
+        cflags=[f for f in opts.resolved_flags() if f != "-shared"],
+        compile_extra=[*omp_c, *(include_flags(folder) if folder is not None else [])],
+        link_libs=libs,
+    )
 
 
-def build_archive(sources: Sequence[Path], folder: Optional[Path], archive: Path, shared: Path,
-                  opts: BuildOptions) -> float:
+def build_archive(
+    sources: Sequence[Path], folder: Optional[Path], archive: Path, shared: Path, opts: BuildOptions
+) -> float:
     """Compile ``sources`` (against ``folder``'s headers, if given), archive them, and link ``shared`` from the
     whole archive."""
     cmds = build_commands(folder, opts)
@@ -189,11 +208,19 @@ def build_archive(sources: Sequence[Path], folder: Optional[Path], archive: Path
     for src, obj in zip(sources, objs):
         run([cmds.compiler, *cmds.cflags, "-c", *cmds.compile_extra, str(src), "-o", str(obj)])
     run([ar, "rcs", str(archive), *[str(obj) for obj in objs]])
-    run([
-        cmds.compiler, "-shared", "-Wl,--export-dynamic", "-Wl,--whole-archive",
-        str(archive), "-Wl,--no-whole-archive", *cmds.link_libs, "-o",
-        str(shared)
-    ])
+    run(
+        [
+            cmds.compiler,
+            "-shared",
+            "-Wl,--export-dynamic",
+            "-Wl,--whole-archive",
+            str(archive),
+            "-Wl,--no-whole-archive",
+            *cmds.link_libs,
+            "-o",
+            str(shared),
+        ]
+    )
     return time.perf_counter() - t0
 
 
@@ -214,12 +241,14 @@ def apply_vectorizer(sdfg: dace.SDFG, config: object) -> None:
     """Apply the DaCe multi-dim tile-op CPU vectorizer to ``sdfg`` in place."""
     import dataclasses  # lazy: closes an import cycle
     from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
+
     VectorizeCPUMultiDim(dataclasses.replace(config, expand_tile_nodes=True)).apply_pass(sdfg, {})
 
 
 @dataclass(slots=True)
 class GeneratedProgram:
     """The optimization phase's output: emitted source, not yet compiled."""
+
     frame: Path  # the frame .cpp DaCe emitted
     name: str
     source: str
@@ -240,10 +269,9 @@ def generate_program(sdfg: dace.SDFG, out_dir: Path, opts: Optional[BuildOptions
     if opts.vectorize is not None:
         apply_vectorizer(sdfg, opts.vectorize)
     frame, name = generate_program_folder(sdfg, out_dir)
-    return GeneratedProgram(frame=frame,
-                            name=name,
-                            source=frame.read_text(),
-                            codegen_seconds=time.perf_counter() - t_opt)
+    return GeneratedProgram(
+        frame=frame, name=name, source=frame.read_text(), codegen_seconds=time.perf_counter() - t_opt
+    )
 
 
 def compile_program(gen: GeneratedProgram, opts: Optional[BuildOptions] = None) -> BuiltSDFG:
@@ -252,13 +280,15 @@ def compile_program(gen: GeneratedProgram, opts: Optional[BuildOptions] = None) 
     init_params = parse_params(signature(gen.source, f"__dace_init_{gen.name}"))
     prog_params = parse_params(signature(gen.source, f"__program_{gen.name}"))
     so, compile_seconds = compile(gen.frame, gen.folder, gen.name, opts)
-    return BuiltSDFG(name=gen.name,
-                     so_path=so,
-                     _lib=ctypes.CDLL(str(so)),
-                     _init_params=init_params,
-                     _prog_params=prog_params,
-                     codegen_seconds=gen.codegen_seconds,
-                     compile_seconds=compile_seconds)
+    return BuiltSDFG(
+        name=gen.name,
+        so_path=so,
+        _lib=ctypes.CDLL(str(so)),
+        _init_params=init_params,
+        _prog_params=prog_params,
+        codegen_seconds=gen.codegen_seconds,
+        compile_seconds=compile_seconds,
+    )
 
 
 def build_sdfg(sdfg: dace.SDFG, out_dir: Path, opts: Optional[BuildOptions] = None) -> BuiltSDFG:

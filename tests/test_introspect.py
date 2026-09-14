@@ -4,6 +4,7 @@
 can_fuse ("yes" or a reason). can_fuse shares the exact gates of enumerate_fusions, so a "yes" here is a
 move apply_fusion would accept and a reason marks a pair that never appears in enumerate_fusions.
 """
+
 import numpy as np
 import dace
 
@@ -11,7 +12,7 @@ from nestforge.ir.introspect import describe_graph, nest_reads_writes
 from nestforge.phases.schedule import can_fuse, enumerate_fusions
 from nestforge.phases.scopes import top_level_map_entries
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -59,8 +60,8 @@ def test_nest_reads_writes_matches_the_tree():
     sdfg = vertical_pair.to_sdfg(simplify=True)
     entries = map_entries(sdfg)
     reads_writes = [nest_reads_writes(st, me) for st, me in entries]
-    assert (['A', 'B'], ['T']) in reads_writes
-    assert (['T'], ['C']) in reads_writes
+    assert (["A", "B"], ["T"]) in reads_writes
+    assert (["T"], ["C"]) in reads_writes
 
 
 def test_can_fuse_yes_for_vertical_transient():

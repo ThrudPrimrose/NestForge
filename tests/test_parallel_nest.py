@@ -6,6 +6,7 @@
 nested-map recursion in ``map_lines`` lets a map-inside-a-map (e.g. tsvc_2_s2275's 2-D
 FMA) emit as nested ``for`` loops instead of raising. Both are pure/emit-level -- no compile.
 """
+
 import numpy as np
 
 import dace

@@ -6,6 +6,7 @@ A ``out[0] += a[i]`` reduction or a ``hist[bin] += w`` scatter is a tasklet whos
 a WCR. Sequential numpy emission turns it into ``target = target + tmp`` (Sum; ``np.maximum`` for Max,
 ...), correct even when many iterations hit the same element.
 """
+
 import inspect
 
 import numpy as np
@@ -116,8 +117,9 @@ def test_wcr_scatter_data_dependent_index():
     idx = rng.integers(0, Mv, Nv).astype(np.int64)
     w = rng.random(Nv)
     try:
-        call, src = run(hist_scatter, "hist_scatter", dict(N=Nv, M=Mv),
-                        dict(idx=idx.copy(), w=w.copy(), hist=np.zeros(Mv)))
+        call, src = run(
+            hist_scatter, "hist_scatter", dict(N=Nv, M=Mv), dict(idx=idx.copy(), w=w.copy(), hist=np.zeros(Mv))
+        )
     except UnsupportedNest:
         # Genuine upstream gap, not a missing tool: xfail (not skip) so CI's zero-skip unit set stays
         # green while the day this DaCe gains indirect-write nesting the test starts validating for real.
@@ -144,12 +146,15 @@ def tasklet_wcr_at_exit(name, wcr):
     return sdfg
 
 
-@pytest.mark.parametrize("wcr, seed, reduce_fn, token", [
-    ("lambda x, y: x + y", 0.0, lambda a: a.sum(), "+ __wcr_"),
-    ("lambda x, y: x * y", 1.0, lambda a: a.prod(), "* __wcr_"),
-    ("lambda x, y: max(x, y)", -np.inf, lambda a: a.max(), "np.maximum"),
-    ("lambda x, y: min(x, y)", np.inf, lambda a: a.min(), "np.minimum"),
-])
+@pytest.mark.parametrize(
+    "wcr, seed, reduce_fn, token",
+    [
+        ("lambda x, y: x + y", 0.0, lambda a: a.sum(), "+ __wcr_"),
+        ("lambda x, y: x * y", 1.0, lambda a: a.prod(), "* __wcr_"),
+        ("lambda x, y: max(x, y)", -np.inf, lambda a: a.max(), "np.maximum"),
+        ("lambda x, y: min(x, y)", np.inf, lambda a: a.min(), "np.minimum"),
+    ],
+)
 def test_tasklet_wcr_combine_ops_at_map_exit(wcr, seed, reduce_fn, token):
     """Each supported reduction op (Sum/Product/Max/Min) emitted at a Tasklet's WCR out-edge crossing the
     map exit must accumulate across the whole range, not overwrite -- exercises every _WCR_BINOP entry."""
@@ -262,8 +267,9 @@ def test_copy_edge_wcr_accumulates():
     st = sdfg.add_state()
     s = st.add_access("src")
     d = st.add_access("dst")
-    st.add_edge(s, None, d, None,
-                dc.Memlet("dst[0]", wcr="lambda x, y: x + y", other_subset=dc.subsets.Range([(0, 0, 1)])))
+    st.add_edge(
+        s, None, d, None, dc.Memlet("dst[0]", wcr="lambda x, y: x + y", other_subset=dc.subsets.Range([(0, 0, 1)]))
+    )
     sdfg.validate()
     src = sdfg_to_numpy(sdfg, "cp")
     assert "dst[0] + src[0]" in src

@@ -11,6 +11,7 @@ Three contracts:
   * an **unstructured goto** (a conditional inter-state edge, i.e. a state-machine branch DaCe did not
     lift into a ``ConditionalBlock``) is refused rather than emitted as straight-line code.
 """
+
 import numpy as np
 import pytest
 
@@ -18,8 +19,13 @@ import dace as dc
 
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 
-from nestforge.ir.emit_numpy import (UnsupportedNest, load_emitted, nest_to_numpy, reject_nonexternalizable,
-                                     sdfg_to_numpy)
+from nestforge.ir.emit_numpy import (
+    UnsupportedNest,
+    load_emitted,
+    nest_to_numpy,
+    reject_nonexternalizable,
+    sdfg_to_numpy,
+)
 from nestforge.ir.extract import Boundary
 
 N = dc.symbol("N", dtype=dc.int64)
@@ -63,12 +69,9 @@ def test_early_return_whole_sdfg_emits_and_short_circuits():
 def test_return_nest_is_not_externalizable():
     """Externalizing a nest that carries a return changes its target (nest-function vs enclosing SDFG),
     so :func:`nest_to_numpy` refuses it up front."""
-    boundary = Boundary(inputs=[],
-                        outputs=[],
-                        symbols=[],
-                        nsdfg_node=None,
-                        state=None,
-                        standalone_sdfg=build_early_return())
+    boundary = Boundary(
+        inputs=[], outputs=[], symbols=[], nsdfg_node=None, state=None, standalone_sdfg=build_early_return()
+    )
     with pytest.raises(UnsupportedNest, match="early return"):
         nest_to_numpy(boundary, "k")
 
@@ -79,12 +82,9 @@ def build_loop_with_break():
     sdfg = dc.SDFG("loopbreak")
     sdfg.add_array("out", [N], dc.float64)
     sdfg.add_symbol("sel", dc.int64)
-    loop = LoopRegion("L",
-                      condition_expr="i < N",
-                      loop_var="i",
-                      initialize_expr="i = 0",
-                      update_expr="i = i + 1",
-                      sdfg=sdfg)
+    loop = LoopRegion(
+        "L", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1", sdfg=sdfg
+    )
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state("body", is_start_block=True)
     body.add_nedge(body.add_read("out"), body.add_write("out"), dc.Memlet("out[0:N]"))
@@ -121,12 +121,9 @@ def test_break_with_enclosing_loop_is_externalizable():
 def test_orphan_break_is_not_externalizable():
     """A break whose target loop was cut out lands outside any ``while`` -- refuse rather than emit a
     ``break`` at function-body top level (a SyntaxError / wrong target)."""
-    boundary = Boundary(inputs=[],
-                        outputs=[],
-                        symbols=[],
-                        nsdfg_node=None,
-                        state=None,
-                        standalone_sdfg=build_orphan_break())
+    boundary = Boundary(
+        inputs=[], outputs=[], symbols=[], nsdfg_node=None, state=None, standalone_sdfg=build_orphan_break()
+    )
     with pytest.raises(UnsupportedNest, match="target loop is outside"):
         nest_to_numpy(boundary, "k")
 

@@ -8,7 +8,7 @@ from nestforge.ir.extract import extract_nest_to_sdfg
 from nestforge.ir.emit_numpy import load_emitted, nest_to_numpy
 from nestforge.corpus.translate import prepare, emit_sources
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -54,6 +54,7 @@ if __name__ == "__main__":
     test_numpy_emit_runs()
     import tempfile
     import pathlib
+
     test_translate_to_c(pathlib.Path(tempfile.mkdtemp()))
     print("translate OK")
 

@@ -3,6 +3,7 @@
 """Shared compile-flag matrix for the variant sweep: FP-precision level axis crossed with a vectorizer
 cost-model axis, per compiler family, for C/C++ and Fortran. ``intel`` is split from ``llvm`` because
 icx/icpx/ifx default to ``-fp-model=fast``."""
+
 from __future__ import annotations
 
 from typing import Dict, List, Tuple

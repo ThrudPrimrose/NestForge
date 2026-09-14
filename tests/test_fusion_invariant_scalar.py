@@ -6,6 +6,7 @@ Unfused, loop2 sees the FINAL value loop1 left in that location; fused, it sees 
 current iteration. That is a genuine dependence, and it is exactly the one a carried-offset dependence
 classifier reports no offset for -- there is no iterator in either subset to carry.
 """
+
 import numpy as np
 
 import dace

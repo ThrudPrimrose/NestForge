@@ -3,6 +3,7 @@
 """Extract any loop-nest (CFG ``LoopRegion``) or map-nest (``MapEntry``) into a standalone SDFG, via
 DaCe's ``nest_state_subgraph``/``nest_sdfg_subgraph`` outliners. :class:`Boundary` records the
 in/out data and symbols and keeps a handle on the placed node for a later ``ExternalCall`` swap."""
+
 from __future__ import annotations
 
 import copy
@@ -24,6 +25,7 @@ NestNode = Union[nodes.MapEntry, CfgNest]
 @dataclass(slots=True)
 class Boundary:
     """The interface of an extracted nest, in the order the arena/libnode will use."""
+
     inputs: List[str]
     outputs: List[str]
     symbols: List[str]
@@ -55,13 +57,15 @@ def boundary_from_nsdfg(nsdfg_node: nodes.NestedSDFG, state: SDFGState, parent_s
     inputs = sorted(nsdfg_node.in_connectors.keys())
     outputs = sorted(nsdfg_node.out_connectors.keys())
     symbols = sorted(str(s) for s in nsdfg_node.symbol_mapping.keys())
-    return Boundary(inputs=inputs,
-                    outputs=outputs,
-                    symbols=symbols,
-                    nsdfg_node=nsdfg_node,
-                    state=state,
-                    standalone_sdfg=detach(nsdfg_node.sdfg),
-                    parent_sdfg=parent_sdfg)
+    return Boundary(
+        inputs=inputs,
+        outputs=outputs,
+        symbols=symbols,
+        nsdfg_node=nsdfg_node,
+        state=state,
+        standalone_sdfg=detach(nsdfg_node.sdfg),
+        parent_sdfg=parent_sdfg,
+    )
 
 
 def extract_map_nest(parent_sdfg: dace.SDFG, map_entry: nodes.MapEntry, name: Optional[str] = None) -> Boundary:
@@ -150,8 +154,9 @@ def extract_nest_to_sdfg(parent_sdfg: dace.SDFG, node: NestNode, name: Optional[
         return extract_map_nest(parent_sdfg, node, name=name)
     if isinstance(node, (LoopRegion, ConditionalBlock)):
         return extract_cfg_nest(parent_sdfg, node, name=name)
-    raise TypeError(f"cannot extract node of type {type(node).__name__}; expected MapEntry, LoopRegion, "
-                    "or ConditionalBlock")
+    raise TypeError(
+        f"cannot extract node of type {type(node).__name__}; expected MapEntry, LoopRegion, or ConditionalBlock"
+    )
 
 
 def whole_program_boundary(sdfg: dace.SDFG) -> Boundary:
@@ -164,10 +169,12 @@ def whole_program_boundary(sdfg: dace.SDFG) -> Boundary:
     inputs = sorted(a for a in arrays if a in read)
     outputs = sorted(a for a in arrays if a in write)
     symbols = [a for a in detached.arglist() if a not in detached.arrays]
-    return Boundary(inputs=inputs,
-                    outputs=outputs,
-                    symbols=symbols,
-                    nsdfg_node=None,
-                    state=None,
-                    standalone_sdfg=detached,
-                    parent_sdfg=None)
+    return Boundary(
+        inputs=inputs,
+        outputs=outputs,
+        symbols=symbols,
+        nsdfg_node=None,
+        state=None,
+        standalone_sdfg=detached,
+        parent_sdfg=None,
+    )

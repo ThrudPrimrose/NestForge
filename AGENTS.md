@@ -39,8 +39,8 @@ also use the bench language skills (`lang-cpp`, `lang-cuda`, `lang-fortran`, `la
 
 ## Rules for coding agents
 
-- Setup: `uv sync --extra dev`. Unit tests: `uv run pytest -m "not integration and not gpu"`.
-- Format with yapf (120 columns), lint with ruff. Format only the files you touched.
+- Setup: `pip install -e ".[dev]" && pre-commit install`. Unit tests: `pytest -m "not integration and not gpu"`.
+- Format and lint with ruff (120 columns); `pre-commit run --all-files` runs both, as CI does.
 - Python is written as if statically typed: annotate every function, one name keeps one type, no
   `getattr`/`hasattr`, no leading-underscore names, absolute imports.
 - Keep cyclomatic complexity per function at 20 or below (`radon cc -s`).

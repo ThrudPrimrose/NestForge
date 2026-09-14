@@ -29,6 +29,7 @@ from nestforge.phases.normalize import FUSE_STAGE, Targets
 class FusionMove:
     """One legal fusion the agent may apply. ``where`` maps the transformation's ``PatternNode`` names to
     the matched nodes (the ``apply_to`` / ``can_be_applied_to`` keyword arguments)."""
+
     kind: str
     where: Dict[str, nodes.Node]
     xform: Type = field(repr=False)
@@ -48,8 +49,11 @@ def iter_loop_fusion_moves(sdfg: dace.SDFG) -> Iterator[FusionMove]:
             if len(out) != 1:
                 continue
             second = out[0].dst
-            if isinstance(second, LoopRegion) and second is not first and \
-                    FuseLoops.can_be_applied_to(sdfg, first=first, second=second):
+            if (
+                isinstance(second, LoopRegion)
+                and second is not first
+                and FuseLoops.can_be_applied_to(sdfg, first=first, second=second)
+            ):
                 yield FusionMove("fuse-loops", {"first": first, "second": second}, FuseLoops)
 
 
@@ -70,11 +74,11 @@ def iter_vertical_map_moves(sdfg: dace.SDFG) -> Iterator[FusionMove]:
             for mx in producers:
                 for me in consumers:
                     if MapFusionVertical.can_be_applied_to(sdfg, first_map_exit=mx, array=node, second_map_entry=me):
-                        yield FusionMove("fuse-map-vertical", {
-                            "first_map_exit": mx,
-                            "array": node,
-                            "second_map_entry": me
-                        }, MapFusionVertical)
+                        yield FusionMove(
+                            "fuse-map-vertical",
+                            {"first_map_exit": mx, "array": node, "second_map_entry": me},
+                            MapFusionVertical,
+                        )
 
 
 def vertical_map_moves(sdfg: dace.SDFG) -> List[FusionMove]:
@@ -89,16 +93,17 @@ def iter_horizontal_map_moves(sdfg: dace.SDFG) -> Iterator[FusionMove]:
         scope = state.scope_dict()
         entries = [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]
         for i, first in enumerate(entries):
-            for second in entries[i + 1:]:
+            for second in entries[i + 1 :]:
                 if scope[first] is not scope[second]:
                     continue
-                if MapFusionHorizontal.can_be_applied_to(sdfg,
-                                                         first_parallel_map_entry=first,
-                                                         second_parallel_map_entry=second):
-                    yield FusionMove("fuse-map-horizontal", {
-                        "first_parallel_map_entry": first,
-                        "second_parallel_map_entry": second
-                    }, MapFusionHorizontal)
+                if MapFusionHorizontal.can_be_applied_to(
+                    sdfg, first_parallel_map_entry=first, second_parallel_map_entry=second
+                ):
+                    yield FusionMove(
+                        "fuse-map-horizontal",
+                        {"first_parallel_map_entry": first, "second_parallel_map_entry": second},
+                        MapFusionHorizontal,
+                    )
 
 
 def horizontal_map_moves(sdfg: dace.SDFG) -> List[FusionMove]:
@@ -120,8 +125,9 @@ def first_fusion(sdfg: dace.SDFG) -> Optional[FusionMove]:
     :func:`nestforge.feedback.default_fuse_step`) apply one move then re-scan, so they only ever use
     ``moves[0]`` -- building the whole list (notably the O(entries^2) horizontal ``can_be_applied_to``
     sweep) just to discard all but the first is wasted work."""
-    return next(chain(iter_loop_fusion_moves(sdfg), iter_vertical_map_moves(sdfg), iter_horizontal_map_moves(sdfg)),
-                None)
+    return next(
+        chain(iter_loop_fusion_moves(sdfg), iter_vertical_map_moves(sdfg), iter_horizontal_map_moves(sdfg)), None
+    )
 
 
 def apply_fusion(sdfg: dace.SDFG, move: FusionMove) -> None:
@@ -131,9 +137,11 @@ def apply_fusion(sdfg: dace.SDFG, move: FusionMove) -> None:
     move.xform.apply_to(sdfg, verify=True, annotate=False, save=False, **move.where)
 
 
-STATE_BARRIER = ("nests are in different states -- a State boundary is a control-flow dependency, and map "
-                 "fusion never crosses one. It is not permanent: merge the enclosing regions first "
-                 "(fuse_regions / list_region_fusions, i.e. StateFusion) and these nests become fusable.")
+STATE_BARRIER = (
+    "nests are in different states -- a State boundary is a control-flow dependency, and map "
+    "fusion never crosses one. It is not permanent: merge the enclosing regions first "
+    "(fuse_regions / list_region_fusions, i.e. StateFusion) and these nests become fusable."
+)
 
 
 def can_fuse(sdfg: dace.SDFG, first: nodes.Node, second: nodes.Node) -> str:
@@ -145,20 +153,26 @@ def can_fuse(sdfg: dace.SDFG, first: nodes.Node, second: nodes.Node) -> str:
         return fuse_loops_reason(sdfg, first, second)
     if isinstance(first, nodes.MapEntry) and isinstance(second, nodes.MapEntry):
         return fuse_maps_reason(sdfg, first, second)
-    return ("cannot fuse a map-nest with a loop-nest directly -- bring both to the same granularity first "
-            "(fission the loop to maps, or keep both as loops).")
+    return (
+        "cannot fuse a map-nest with a loop-nest directly -- bring both to the same granularity first "
+        "(fission the loop to maps, or keep both as loops)."
+    )
 
 
 def fuse_loops_reason(sdfg: dace.SDFG, first: LoopRegion, second: LoopRegion) -> str:
     if first.parent_graph is not second.parent_graph:
-        return ("loops are in different control-flow regions (a control-flow dependency separates them); "
-                "fuse the ENCLOSING loops first (a fuse-loops move one level up), then these become "
-                "siblings -- cannot fuse across the region boundary directly.")
+        return (
+            "loops are in different control-flow regions (a control-flow dependency separates them); "
+            "fuse the ENCLOSING loops first (a fuse-loops move one level up), then these become "
+            "siblings -- cannot fuse across the region boundary directly."
+        )
     cfg = first.parent_graph
     out = cfg.out_edges(first)
     if len(out) != 1 or out[0].dst is not second:
-        return ("loops are not adjacent: they must be joined by exactly one sequencing edge (first -> "
-                "second) with nothing between.")
+        return (
+            "loops are not adjacent: they must be joined by exactly one sequencing edge (first -> "
+            "second) with nothing between."
+        )
     if FuseLoops.can_be_applied_to(sdfg, first=first, second=second):
         return "yes"
     return "blocked by FuseLoops: different iteration ranges, or a loop-carried dependency between the two."
@@ -179,13 +193,15 @@ def fuse_maps_reason(sdfg: dace.SDFG, first: nodes.MapEntry, second: nodes.MapEn
     if MapFusionHorizontal.can_be_applied_to(sdfg, first_parallel_map_entry=first, second_parallel_map_entry=second):
         return "yes"
     if first.map.range != second.map.range:
-        return (f"different map ranges: {first.map.range} vs {second.map.range} -- horizontal fusion needs "
-                "the same range.")
+        return (
+            f"different map ranges: {first.map.range} vs {second.map.range} -- horizontal fusion needs the same range."
+        )
     return "blocked by MapFusionHorizontal: not both parallel-compatible, or a data dependency links them."
 
 
-def vertical_reason(sdfg: dace.SDFG, state: dace.SDFGState, producer: nodes.MapEntry,
-                    consumer: nodes.MapEntry) -> Optional[str]:
+def vertical_reason(
+    sdfg: dace.SDFG, state: dace.SDFGState, producer: nodes.MapEntry, consumer: nodes.MapEntry
+) -> Optional[str]:
     """``"yes"``/reason if ``producer`` feeds ``consumer`` through a transient (vertical fusion), else
     ``None`` when no such data path exists (so the caller can try the other direction, then horizontal)."""
     exit_p = state.exit_node(producer)
@@ -252,7 +268,8 @@ def fission_multi_output_maps(sdfg: dace.SDFG) -> int:
                     n for n in state.scope_subgraph(entry, False, False).nodes() if isinstance(n, nodes.NestedSDFG)
                 ]
                 if len(bodies) == 1 and MapFission.can_be_applied_to(
-                        sdfg, expr_index=1, map_entry=entry, nested_sdfg=bodies[0]):
+                    sdfg, expr_index=1, map_entry=entry, nested_sdfg=bodies[0]
+                ):
                     target = (1, {"map_entry": entry, "nested_sdfg": bodies[0]})
                 elif MapFission.can_be_applied_to(sdfg, expr_index=0, map_entry=entry):
                     target = (0, {"map_entry": entry})
@@ -293,6 +310,7 @@ def map_fission_moves(sdfg: dace.SDFG) -> List[Tuple[nodes.MapEntry, nodes.Neste
 class FissionMove:
     """One legal single-pair split from :func:`map_fission_moves`: ``map_entry``'s nested-SDFG body,
     split at ``nested_sdfg`` into its independent output groups."""
+
     map_entry: nodes.MapEntry
     nested_sdfg: nodes.NestedSDFG
 
@@ -309,19 +327,22 @@ def enumerate_map_fissions(sdfg: dace.SDFG) -> List[FissionMove]:
 def apply_map_fission(sdfg: dace.SDFG, move: FissionMove) -> None:
     """Commit one map-fission split (from a CURRENT :func:`enumerate_map_fissions`). ``expr_index=1`` is
     MapFission's map-with-nested-SDFG pattern -- see :func:`map_fission_moves`."""
-    MapFission.apply_to(sdfg,
-                        expr_index=1,
-                        verify=True,
-                        annotate=False,
-                        save=False,
-                        map_entry=move.map_entry,
-                        nested_sdfg=move.nested_sdfg)
+    MapFission.apply_to(
+        sdfg,
+        expr_index=1,
+        verify=True,
+        annotate=False,
+        save=False,
+        map_entry=move.map_entry,
+        nested_sdfg=move.nested_sdfg,
+    )
 
 
 @dataclass(slots=True)
 class RegionMove:
     """One legal region merge. ``where`` maps the transformation's ``PatternNode`` names to the matched
     control-flow blocks."""
+
     kind: str
     where: Dict[str, object]
     xform: Type = field(repr=False)
@@ -338,11 +359,12 @@ def enumerate_region_fusions(sdfg: dace.SDFG) -> List[RegionMove]:
     Loop-region merges ride the fusion arms instead (fuse the enclosing loops). Applying one move stales
     the rest -- re-enumerate after each."""
     return [
-        RegionMove("fuse-states", {
-            "first_state": edge.src,
-            "second_state": edge.dst
-        }, StateFusion) for cfg in sdfg.all_control_flow_regions(recursive=True) for edge in cfg.edges()
-        if isinstance(edge.src, SDFGState) and isinstance(edge.dst, SDFGState) and edge.src is not edge.dst
+        RegionMove("fuse-states", {"first_state": edge.src, "second_state": edge.dst}, StateFusion)
+        for cfg in sdfg.all_control_flow_regions(recursive=True)
+        for edge in cfg.edges()
+        if isinstance(edge.src, SDFGState)
+        and isinstance(edge.dst, SDFGState)
+        and edge.src is not edge.dst
         and StateFusion.can_be_applied_to(sdfg, first_state=edge.src, second_state=edge.dst)
     ]
 
@@ -359,6 +381,7 @@ CACHE_MODEL = "map_perfect_loop_none"
 @dataclass(slots=True, frozen=True)
 class ScopeMetrics:
     """Symbolic cost of one scope; ``oi`` is ``work / bytes``, ``None`` when no counted byte moves."""
+
     work: sympy.Expr
     depth: sympy.Expr
     bytes: sympy.Expr
@@ -403,7 +426,7 @@ def scope_metrics(sdfg: dace.SDFG, node: Union[nodes.MapEntry, LoopRegion]) -> S
 def post_fusion_stages(targets: Targets) -> List[str]:
     """Canonicalization stages after :data:`FUSE_STAGE`; they run once the granularity is chosen."""
     labels = stage_labels(targets.canon_target)
-    return labels[labels.index(FUSE_STAGE) + 1:]
+    return labels[labels.index(FUSE_STAGE) + 1 :]
 
 
 def full_fusion(sdfg: dace.SDFG, targets: Targets) -> dace.SDFG:

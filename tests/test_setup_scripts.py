@@ -5,6 +5,7 @@
 These don't run apt/installs -- they guard that each script is syntactically valid, self-documents
 (``--help`` exits 0), rejects a bad flag, and that the tree is actually formatted (so a future edit that
 skips ``scripts/format.sh`` is caught in CI, not in review)."""
+
 import shutil
 import subprocess
 from pathlib import Path

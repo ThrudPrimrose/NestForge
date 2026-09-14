@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Correctness and timing machinery shared by the build lanes: seeded inputs from a kernel's boundary, the
 NumPy oracle, the FP-rung gate, and the bind-once / rewind-per-rep ctypes call."""
+
 from __future__ import annotations
 
 import ctypes
@@ -28,7 +29,7 @@ CTYPE = {
     "float32": ctypes.c_float,
     "int64": ctypes.c_int64,
     "int32": ctypes.c_int32,
-    "bool": ctypes.c_bool
+    "bool": ctypes.c_bool,
 }
 
 
@@ -52,10 +53,9 @@ def scratch_names(boundary: Boundary) -> List[str]:
 INPUT_HIGH = 0.25
 
 
-def make_inputs(boundary: Boundary,
-                sizes: Dict[str, int],
-                seed: int = 0,
-                given: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, np.ndarray]:
+def make_inputs(
+    boundary: Boundary, sizes: Dict[str, int], seed: int = 0, given: Optional[Dict[str, np.ndarray]] = None
+) -> Dict[str, np.ndarray]:
     """Random arrays for inputs; zeros for outputs and scratch buffers (all caller-pre-allocated).
     :param given: ready-made values (e.g. index arrays) that must match the resolved shape/dtype exactly."""
     sdfg = emitted_sdfg(boundary)  # widened scratch: allocate what the kernel indexes, not the raw shape
@@ -71,21 +71,26 @@ def make_inputs(boundary: Boundary,
         if name in given:
             value = given[name]
             if value.shape != shape or value.dtype != dt:
-                raise ValueError(f"given array {name!r} is {value.dtype}{value.shape}, but the nest declares "
-                                 f"{dt}{shape}; it is passed straight across the ABI, so it must match exactly")
+                raise ValueError(
+                    f"given array {name!r} is {value.dtype}{value.shape}, but the nest declares "
+                    f"{dt}{shape}; it is passed straight across the ABI, so it must match exactly"
+                )
             arrays[name] = value.copy()
         else:
-            arrays[name] = (np.zeros(shape, dt) if name in zero_filled else (rng.random(shape) * INPUT_HIGH).astype(dt))
+            arrays[name] = np.zeros(shape, dt) if name in zero_filled else (rng.random(shape) * INPUT_HIGH).astype(dt)
     return arrays
 
 
-def run_oracle(prep: Prepared, boundary: Boundary, inputs: Dict[str, np.ndarray],
-               sizes: Dict[str, int]) -> Dict[str, np.ndarray]:
+def run_oracle(
+    prep: Prepared, boundary: Boundary, inputs: Dict[str, np.ndarray], sizes: Dict[str, int]
+) -> Dict[str, np.ndarray]:
     """Run the emitted numpy kernel to get reference outputs."""
     missing = [s for s in boundary.symbols if s not in sizes]
     if missing:
-        raise KeyError(f"no value for boundary symbol(s) {missing} (e.g. a loop index carried into an "
-                       f"extracted nest); pass them in `sizes`")
+        raise KeyError(
+            f"no value for boundary symbol(s) {missing} (e.g. a loop index carried into an "
+            f"extracted nest); pass them in `sizes`"
+        )
     module = load_emitted(prep.numpy_source, prep.name)
     args = {k: v.copy() for k, v in inputs.items()}
     call = {**args, **{s: int(sizes[s]) for s in boundary.symbols}}
@@ -118,16 +123,18 @@ def rewind(snapshot: List[Tuple[np.ndarray, np.ndarray]]) -> None:
         buf[...] = pristine
 
 
-def call_native(so: Path,
-                symbol: str,
-                order: List[str],
-                argtypes: list,
-                boundary: Boundary,
-                inputs: Dict[str, np.ndarray],
-                sizes: Dict[str, int],
-                reps: int,
-                copy_inputs: bool = True,
-                copy_outputs: bool = True) -> Tuple[Optional[Dict[str, np.ndarray]], float]:
+def call_native(
+    so: Path,
+    symbol: str,
+    order: List[str],
+    argtypes: list,
+    boundary: Boundary,
+    inputs: Dict[str, np.ndarray],
+    sizes: Dict[str, int],
+    reps: int,
+    copy_inputs: bool = True,
+    copy_outputs: bool = True,
+) -> Tuple[Optional[Dict[str, np.ndarray]], float]:
     """Bind + call the compiled entry, then time ``reps`` calls on the same buffers.
     ``order`` must be the EMITTED-signature order (not the manifest's), or same-typed buffers land in the
     wrong slot silently. A read-write output is restored before every timed rep, outside the timed region,
@@ -185,8 +192,9 @@ def maxdiff(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> float:
 
 def dtype_floor(arrays: Dict[str, np.ndarray]) -> float:
     """The loosest :data:`flags.DTYPE_ATOL` floor among ``arrays`` (one ULP of the narrowest format present)."""
-    return max((flags.DTYPE_ATOL[v.dtype.name] for v in arrays.values() if v.dtype.name in flags.DTYPE_ATOL),
-               default=0.0)
+    return max(
+        (flags.DTYPE_ATOL[v.dtype.name] for v in arrays.values() if v.dtype.name in flags.DTYPE_ATOL), default=0.0
+    )
 
 
 def rung_atol(mode: str, floor: float) -> float:

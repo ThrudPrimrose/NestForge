@@ -16,6 +16,7 @@ Most tests here only LINK -- linking is what selects a runtime, and it keeps thi
 libgomp fork hazard. The one end-to-end test that must RUN both nests does so in a fresh interpreter,
 because a forked child inherits every mapping the worker already had.
 """
+
 import json
 import shutil
 import subprocess
@@ -103,16 +104,24 @@ def build_cell(tmp_path, compiler, runtime, src=OMP_SRC, tag="k"):
     csrc.write_text(src)
     so = tmp_path / f"{tag}_{compiler}_{runtime.name}.so"
     cmd = [
-        compiler, "-O2", "-fPIC", "-shared", *runtime.compile_flags(compiler),
-        str(csrc), *runtime.link_flags(compiler), "-o",
-        str(so)
+        compiler,
+        "-O2",
+        "-fPIC",
+        "-shared",
+        *runtime.compile_flags(compiler),
+        str(csrc),
+        *runtime.link_flags(compiler),
+        "-o",
+        str(so),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         pytest.fail(f"{compiler} {runtime.name} failed to link:\n{proc.stderr[-1500:]}")
     # The pragma is in the source, so a cell that links a runtime but opens no region was silently serialized.
-    assert emits_parallel_region(so), (f"{compiler} + {runtime.name}: the cell links "
-                                       f"{sorted(linked_openmp_runtimes(so))} but emits NO OpenMP fork call")
+    assert emits_parallel_region(so), (
+        f"{compiler} + {runtime.name}: the cell links "
+        f"{sorted(linked_openmp_runtimes(so))} but emits NO OpenMP fork call"
+    )
     return so, None
 
 
@@ -182,7 +191,7 @@ def test_libgomp_is_pruned_for_llvm_but_kept_for_gnu():
 
 #: Loads BOTH node libraries into one process, runs both nests, and reports what got mapped. Run via EXEC,
 #: not fork: a forked child inherits runtimes other tests deliberately loaded.
-RUN_BOTH_SRC = '''
+RUN_BOTH_SRC = """
 import ctypes, json, sys
 import numpy as np
 so_a, so_b, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
@@ -203,7 +212,7 @@ p = a.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
 lib_a.kern(p, n)                 # gcc's nest:   a[i] += 1.0, in place
 total = lib_b.kern2(p, n)        # clang's nest: sum(a[i] * 2.0), over gcc's output
 print(json.dumps({"a": a.tolist(), "total": float(total), "runtimes": mapped(), "before": before}))
-'''
+"""
 
 
 def run_both_in_a_clean_process(tmp_path, so_a, so_b, n):
@@ -211,7 +220,8 @@ def run_both_in_a_clean_process(tmp_path, so_a, so_b, n):
     script = tmp_path / "run_both.py"
     script.write_text(RUN_BOTH_SRC)
     proc = subprocess.run(
-        [sys.executable, str(script), str(so_a), str(so_b), str(n)], capture_output=True, text=True, timeout=120)
+        [sys.executable, str(script), str(so_a), str(so_b), str(n)], capture_output=True, text=True, timeout=120
+    )
     assert proc.returncode == 0, f"running both nests together failed:\n{proc.stderr[-1500:]}"
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
@@ -219,8 +229,9 @@ def run_both_in_a_clean_process(tmp_path, so_a, so_b, n):
 def test_two_compilers_nests_run_together_on_one_runtime_and_match_numpy(tmp_path):
     """One nest built by gcc and a different nest built by clang, loaded into ONE process and RUN -- sharing
     a single OpenMP runtime, and computing the right answer."""
-    assert shutil.which("gcc") and shutil.which("clang"), \
+    assert shutil.which("gcc") and shutil.which("clang"), (
         f"needs gcc AND clang, found {available_compilers()} (setup_apt.sh installs both)"
+    )
     built = {}
     for cc, src, tag in (("gcc", OMP_SRC, "kern"), ("clang", OMP_SRC_REDUCE, "kern2")):
         so, reason = build_cell(tmp_path, cc, LIBOMP, src=src, tag=f"e2e_{tag}")
@@ -247,11 +258,13 @@ def test_a_kmpc_compiler_on_libgomp_would_be_caught_not_silently_serialized(tmp_
     csrc.write_text(OMP_SRC)
     so = tmp_path / "mismatch.so"
     proc = subprocess.run(
-        ["clang", "-O2", "-fPIC", "-shared", "-fopenmp=libgomp",
-         str(csrc), "-o", str(so)],
+        ["clang", "-O2", "-fPIC", "-shared", "-fopenmp=libgomp", str(csrc), "-o", str(so)],
         capture_output=True,
-        text=True)
+        text=True,
+    )
     assert proc.returncode == 0, f"clang -fopenmp=libgomp failed to link:\n{proc.stderr[-1500:]}"
     assert "libgomp" in linked_openmp_runtimes(so), "expected the mismatch to link libgomp"
-    assert not emits_parallel_region(so), ("clang -fopenmp=libgomp emitted a fork call -- libgomp now has a kmpc "
-                                           "layer, so the single-runtime prune for kmpc families can be revisited")
+    assert not emits_parallel_region(so), (
+        "clang -fopenmp=libgomp emitted a fork call -- libgomp now has a kmpc "
+        "layer, so the single-runtime prune for kmpc families can be revisited"
+    )

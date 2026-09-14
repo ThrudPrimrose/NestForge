@@ -5,14 +5,21 @@ them, with the correctness net that any sequence of applied moves preserves the 
 against the un-fused reference. Exercises all three arms -- loop, vertical map, horizontal map -- and the
 agent's real pattern of applying a random legal sequence.
 """
+
 import numpy as np
 import pytest
 
 import dace
 from dace.transformation.interstate.state_fusion import StateFusion
 
-from nestforge.phases.schedule import (FusionMove, apply_fusion, enumerate_fusions, horizontal_map_moves,
-                                       loop_fusion_moves, vertical_map_moves)
+from nestforge.phases.schedule import (
+    FusionMove,
+    apply_fusion,
+    enumerate_fusions,
+    horizontal_map_moves,
+    loop_fusion_moves,
+    vertical_map_moves,
+)
 
 N = dace.symbol("N")
 f64 = dace.float64
@@ -109,11 +116,14 @@ def test_enumerated_moves_carry_apply_kwargs():
 # --- applying moves preserves value bit-for-bit -----------------------------------------------------
 
 
-@pytest.mark.parametrize("prog,names,colocate", [
-    (two_recurrences, ("a", "b", "c"), False),
-    (producer_consumer_maps, ("a", "b"), True),
-    (sibling_maps, ("a", "b", "c"), True),
-])
+@pytest.mark.parametrize(
+    "prog,names,colocate",
+    [
+        (two_recurrences, ("a", "b", "c"), False),
+        (producer_consumer_maps, ("a", "b"), True),
+        (sibling_maps, ("a", "b", "c"), True),
+    ],
+)
 def test_apply_all_fusions_is_value_preserving(prog, names, colocate):
     inputs = mk(names=names)
     ref = run(prog.to_sdfg(simplify=True), inputs, 48)

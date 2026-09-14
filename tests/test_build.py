@@ -6,6 +6,7 @@ ctypes with manual init/program/exit -- not ``dace.compile``.
 Tests build real corpus nests through :mod:`nestforge.build.sdfg` and check the owned-built kernel matches the
 numpy oracle: source-tree layout, the init/program/exit call sequence, and per-parameter ctype marshaling.
 """
+
 import ctypes.util
 import os
 import shutil
@@ -32,9 +33,19 @@ from nestforge.ir.extract import extract_nest_to_sdfg
 from nestforge.corpus.translate import prepare
 from nestforge.build.arena import make_inputs, run_oracle
 from nestforge.build.sdfg import BuildOptions, build_sdfg, dace_runtime_include
-from nestforge.build.toolchain import (LIBOMP, OpenMPRuntime, compiler_family, driver_lib_path, driver_search_dirs,
-                                       hint_dirs, ldconfig_dirs, linkable_lib_dir, llvm_version, parse_params,
-                                       runtime_installed)
+from nestforge.build.toolchain import (
+    LIBOMP,
+    OpenMPRuntime,
+    compiler_family,
+    driver_lib_path,
+    driver_search_dirs,
+    hint_dirs,
+    ldconfig_dirs,
+    linkable_lib_dir,
+    llvm_version,
+    parse_params,
+    runtime_installed,
+)
 
 
 def kernels():
@@ -50,8 +61,7 @@ def first_nest(short):
 def owned_build_matches_oracle(short, size=48, opts=None):
     boundary = first_nest(short)
     shape_syms = {
-        s
-        for s in boundary.symbols if any(s in str(d.shape) for d in boundary.standalone_sdfg.arrays.values())
+        s for s in boundary.symbols if any(s in str(d.shape) for d in boundary.standalone_sdfg.arrays.values())
     }
     sizes = {s: (size if s in shape_syms else 0) for s in boundary.symbols}
     inputs = make_inputs(boundary, sizes, seed=0)
@@ -108,11 +118,11 @@ def test_library_dirs_come_from_the_toolchain_not_from_hardcoded_layouts():
 
 
 def test_llvm_version_parses_the_number_not_the_string():
-    assert llvm_version(Path("/usr/lib/llvm-21/lib")) == (21, )
-    assert llvm_version(Path("/usr/lib/llvm-9/lib")) == (9, )
+    assert llvm_version(Path("/usr/lib/llvm-21/lib")) == (21,)
+    assert llvm_version(Path("/usr/lib/llvm-9/lib")) == (9,)
     assert llvm_version(Path("/usr/lib/llvm-18.1/lib")) == (18, 1)  # point release ranks ABOVE bare 18
     assert llvm_version(Path("/usr/lib/llvm-18/lib")) < llvm_version(Path("/usr/lib/llvm-18.1/lib"))
-    assert llvm_version(Path("/usr/lib/x86_64-linux-gnu")) == (-1, )  # not an llvm-N dir at all
+    assert llvm_version(Path("/usr/lib/x86_64-linux-gnu")) == (-1,)  # not an llvm-N dir at all
 
 
 def test_hint_dirs_rank_by_version_across_all_roots(tmp_path, monkeypatch):
@@ -144,7 +154,7 @@ def test_hint_dirs_is_a_total_order_so_two_identical_boxes_agree(tmp_path, monke
     for name in ("llvm-18", "llvm-18.1"):
         (root / name / "lib").mkdir(parents=True)
     (root / "llvm-18" / "lib64").mkdir()  # same version, two dirs -> the tiebreaker has to decide
-    monkeypatch.setattr(toolchain_mod, "_LIB_DIR_HINT_ROOTS", (str(root), ))
+    monkeypatch.setattr(toolchain_mod, "_LIB_DIR_HINT_ROOTS", (str(root),))
     monkeypatch.setattr(toolchain_mod, "_LIB_DIR_HINTS", ())
 
     assert hint_dirs() == hint_dirs()  # stable across calls
@@ -189,6 +199,7 @@ def test_openmp_runtime_registry_covers_the_popular_runtimes():
     """The three popular runtimes are ready knobs: libgomp (GNU), libomp (LLVM), libiomp5 (Intel,
     ABI-compat with libomp)."""
     from nestforge.build.toolchain import LIBGOMP, LIBIOMP5, OPENMP_RUNTIMES
+
     assert set(OPENMP_RUNTIMES) == {"libomp", "libgomp", "libiomp5"}
     # gcc on Intel's runtime (GOMP-compat); search paths filtered (see without_search_paths).
     assert without_search_paths(LIBIOMP5.link_flags("g++")) == ["-liomp5"]
@@ -200,6 +211,7 @@ def test_openmp_abi_compatibility_is_enforced():
     selects a runtime, not ABI alone: gcc links any gomp-capable runtime by soname; LLVM name-selects
     only libomp/libiomp5 (kmpc ABI). Mismatches raise."""
     from nestforge.build.toolchain import LIBGOMP, LIBIOMP5, LIBOMP
+
     # clang name-selects libomp/libiomp5 but NOT libgomp (no __kmpc_*).
     assert LIBOMP.compatible("clang++") and LIBIOMP5.compatible("clang++")
     assert not LIBGOMP.compatible("clang++")
@@ -216,15 +228,17 @@ def test_gcc_compiled_kernel_links_against_libomp():
     assert ctypes.util.find_library("omp") is not None, "libomp not installed (setup_apt.sh: libomp-dev)"
     boundary = first_nest("scientific_computing/dense_linear_algebra/gemm/gemm")
     shape_syms = {
-        s
-        for s in boundary.symbols if any(s in str(d.shape) for d in boundary.standalone_sdfg.arrays.values())
+        s for s in boundary.symbols if any(s in str(d.shape) for d in boundary.standalone_sdfg.arrays.values())
     }
     sizes = {s: (32 if s in shape_syms else 0) for s in boundary.symbols}
     inputs = make_inputs(boundary, sizes, seed=0)
     prep = prepare(boundary, "k", Path(tempfile.mkdtemp()))
     oracle = run_oracle(prep, boundary, inputs, sizes)
-    built = build_sdfg(boundary.standalone_sdfg, Path(tempfile.mkdtemp(prefix="nf_omp_")),
-                       BuildOptions(compiler="g++", openmp=OpenMPRuntime()))  # gcc object on libomp
+    built = build_sdfg(
+        boundary.standalone_sdfg,
+        Path(tempfile.mkdtemp(prefix="nf_omp_")),
+        BuildOptions(compiler="g++", openmp=OpenMPRuntime()),
+    )  # gcc object on libomp
     buf = {k: v.copy() for k, v in inputs.items()}
     built.run(buf, sizes)
     for o in oracle:
@@ -306,6 +320,7 @@ def test_parallel_map_emits_omp_pragma():
     """The sanity nest is actually parallel: DaCe lowers ``CPU_Multicore`` to an OpenMP pragma in the
     generated C++ (so the cross-compiler tests below really exercise the runtime link)."""
     from nestforge.build.sdfg import generate_program_folder
+
     frame, _ = generate_program_folder(parallel_axpy_sdfg(), Path(tempfile.mkdtemp(prefix="nf_omp_src_")))
     assert "#pragma omp parallel for" in frame.read_text()
 
@@ -319,7 +334,8 @@ def test_parallel_map_emits_omp_pragma():
         "g++",
         "clang++",
         pytest.param("icpx", marks=pytest.mark.vendor),  # vendor compiler: absent on the CI runner
-    ])
+    ],
+)
 def test_parallel_loop_links_openmp_across_compilers(compiler):
     assert shutil.which(compiler) is not None, f"{compiler} not on PATH"
     rt = LIBOMP
@@ -328,8 +344,11 @@ def test_parallel_loop_links_openmp_across_compilers(compiler):
     n = 256
     x, y = np.random.default_rng(0).random(n), np.random.default_rng(1).random(n)
     buf = {"X": x.copy(), "Y": y.copy(), "Z": np.zeros(n)}
-    built = build_sdfg(parallel_axpy_sdfg(), Path(tempfile.mkdtemp(prefix="nf_par_")),
-                       BuildOptions(compiler=compiler, flags=["-O2", "-fPIC", "-shared", "-std=c++20"], openmp=rt))
+    built = build_sdfg(
+        parallel_axpy_sdfg(),
+        Path(tempfile.mkdtemp(prefix="nf_par_")),
+        BuildOptions(compiler=compiler, flags=["-O2", "-fPIC", "-shared", "-std=c++20"], openmp=rt),
+    )
     built.run(buf, {"N": n})
     np.testing.assert_allclose(buf["Z"], x + y, rtol=1e-12, atol=1e-12)
 
@@ -344,8 +363,9 @@ def test_build_tracks_optimization_and_compile_time():
 def test_external_linking_build_is_correct():
     """A nest built as a separate static ``.a`` (link_external) and linked into the ``.so`` runs identically
     to the monolithic build -- external linking is correct, not merely timeable."""
-    built = owned_build_matches_oracle("scientific_computing/dense_linear_algebra/gemm/gemm",
-                                       opts=BuildOptions(link_external=True))
+    built = owned_build_matches_oracle(
+        "scientific_computing/dense_linear_algebra/gemm/gemm", opts=BuildOptions(link_external=True)
+    )
     assert built.compile_seconds > 0.0
     assert (built.so_path.parent / f"lib{built.name}_nest.a").exists()  # the static node lib was produced
 
@@ -370,8 +390,7 @@ def test_owned_build_reusable_handle_program():
     """After one init, __program can be called repeatedly in place (the timing path) on one handle."""
     boundary = first_nest("scientific_computing/dense_linear_algebra/gemm/gemm")
     shape_syms = {
-        s
-        for s in boundary.symbols if any(s in str(d.shape) for d in boundary.standalone_sdfg.arrays.values())
+        s for s in boundary.symbols if any(s in str(d.shape) for d in boundary.standalone_sdfg.arrays.values())
     }
     sizes = {s: (32 if s in shape_syms else 0) for s in boundary.symbols}
     inputs = make_inputs(boundary, sizes, seed=1)
@@ -389,9 +408,12 @@ def test_vectorized_owned_build_matches_oracle():
     """The DaCe multi-dim tile-op vectorizer plugs into the owned build: a VectorizeConfig on BuildOptions
     still matches the numpy oracle (AUTO resolves to the host ISA, so this stays host-agnostic)."""
     from dace.transformation.passes.vectorization.config import VectorizeConfig
-    owned_build_matches_oracle("scientific_computing/structured_grids/jacobi_1d/jacobi_1d",
-                               size=256,
-                               opts=BuildOptions(vectorize=VectorizeConfig(widths=(8, ), target_isa="AUTO")))
+
+    owned_build_matches_oracle(
+        "scientific_computing/structured_grids/jacobi_1d/jacobi_1d",
+        size=256,
+        opts=BuildOptions(vectorize=VectorizeConfig(widths=(8,), target_isa="AUTO")),
+    )
 
 
 def test_toolchain_is_importable_without_dace():

@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Kernel optimization: render one kernel as a standalone CPF unit with one C entry, build and validate ``lib<kernel>.a``."""
+
 from __future__ import annotations
 
 import copy
@@ -14,9 +15,8 @@ import numpy as np
 import dace
 from dace import dtypes
 from dace.codegen import cpf
-from dace.ordered import OrderedSet
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
-from dace.transformation.passes.length_one_array_scalar_conversion import ConvertScalarsToLengthOneArrays
+from dace.transformation.passes.scalar_promotion import invalidate_array_connectors, promote_scalar_to_array
 
 from nestforge.build.arena import call_native, diff_stats, dtype_floor, make_inputs, rung_atol, run_oracle
 from nestforge.build.isolation import run_isolated
@@ -31,6 +31,7 @@ from nestforge.phases.normalize import Targets
 @dataclass(slots=True)
 class KernelSource:
     """The kernel's CPF translation unit, defining ``extern "C" <name>`` with parameters in ``abi_order``."""
+
     name: str
     unit: Path
     abi_order: List[str]
@@ -44,6 +45,7 @@ class KernelSource:
 @dataclass(slots=True)
 class KernelVerdict:
     """A build compared to the NumPy oracle and timed; ``ok`` gates at ``fp_mode``."""
+
     fp_mode: str
     maxdiff: float
     md_rel: float
@@ -72,13 +74,10 @@ def abi_ready_copy(boundary: Boundary) -> dace.SDFG:
     for name in boundary.symbols:
         if sdfg.symbols[name] in dtypes.INTEGER_TYPES:
             sdfg.symbols[name] = dace.int64
-    scalars = OrderedSet(name for name in boundary.inputs if isinstance(sdfg.arrays[name], dace.data.Scalar))
-    # The pass rewrites a scalar into a length-1 array in place only for transients; these stay arguments.
-    for name in scalars:
-        sdfg.arrays[name].transient = True
-    ConvertScalarsToLengthOneArrays(filter=scalars).apply_pass(sdfg, {})
-    for name in scalars:
-        sdfg.arrays[name].transient = False
+    for name in boundary.inputs:
+        if isinstance(sdfg.arrays[name], dace.data.Scalar):
+            promote_scalar_to_array(sdfg, name)
+    invalidate_array_connectors(sdfg)
     return sdfg
 
 
@@ -114,8 +113,15 @@ def use_kernel_library(ext: ExternalCall, lib_path: Path, symbol: str, abi_order
     ext.implementation = "ExternCall"
 
 
-def measure_kernel(archive: Path, src: KernelSource, inputs: Dict[str, np.ndarray], oracle: Dict[str, np.ndarray],
-                   sizes: Dict[str, int], reps: int, fp_mode: str) -> KernelVerdict:
+def measure_kernel(
+    archive: Path,
+    src: KernelSource,
+    inputs: Dict[str, np.ndarray],
+    oracle: Dict[str, np.ndarray],
+    sizes: Dict[str, int],
+    reps: int,
+    fp_mode: str,
+) -> KernelVerdict:
     """Call the twin's C entry in a forked child: one run compared to ``oracle``, then ``reps`` timed runs.
     A crash or timeout comes back as a verdict with ``error`` set."""
     argtypes = [p.ctype for p in parse_params(raw_signature(src.unit.read_text(), src.symbol))]
@@ -130,16 +136,19 @@ def measure_kernel(archive: Path, src: KernelSource, inputs: Dict[str, np.ndarra
     res = run_isolated(work)
     if "error" in res:
         return failed_verdict(fp_mode, str(res["error"]))
-    return KernelVerdict(fp_mode, float(res["maxdiff"]), float(res["md_rel"]), float(res["dtype_floor"]),
-                         float(res["time_us"]))
+    return KernelVerdict(
+        fp_mode, float(res["maxdiff"]), float(res["md_rel"]), float(res["dtype_floor"]), float(res["time_us"])
+    )
 
 
-def validate_kernel(archive: Path,
-                    src: KernelSource,
-                    prep: Prepared,
-                    sizes: Dict[str, int],
-                    reps: int = 10,
-                    fp_mode: str = "strict-ieee") -> KernelVerdict:
+def validate_kernel(
+    archive: Path,
+    src: KernelSource,
+    prep: Prepared,
+    sizes: Dict[str, int],
+    reps: int = 10,
+    fp_mode: str = "strict-ieee",
+) -> KernelVerdict:
     """:func:`measure_kernel` on seeded inputs against the kernel's NumPy oracle."""
     inputs = make_inputs(src.boundary, sizes)
     oracle = run_oracle(prep, src.boundary, inputs, sizes)

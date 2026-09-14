@@ -6,6 +6,7 @@ Python's `//` on a sympy expression is `sympy.floor(...)`, which sympy distribut
 prints WITHOUT the floor -- the index truncates term by term. Kernel source is safe (dace parses `//`
 into int_floor); transformation code is not, so canonicalization normalizes it.
 """
+
 import dace
 import sympy
 from dace.subsets import Indices, Range

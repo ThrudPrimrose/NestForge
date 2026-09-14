@@ -15,6 +15,7 @@ SOURCE, so an ``exec``-ed function would not work) over a statement grammar with
 recurrences (sequential), element-wise (DOALL), stencil reads, and cross-array producer/consumer chains --
 in sequential ``range`` loops and parallel ``dace.map`` loops.
 """
+
 import importlib.util
 
 import numpy as np
@@ -59,8 +60,15 @@ def gen_source(seed: int) -> str:
     """
     rng = np.random.default_rng(seed)
     lines = [
-        "import dace", "import numpy as np", "", 'N = dace.symbol("N")', "f64 = dace.float64", "", "@dace.program",
-        f"def k({', '.join(f'{x}: f64[N]' for x in ARRAYS)}):", "    s = np.float64(0.0)"
+        "import dace",
+        "import numpy as np",
+        "",
+        'N = dace.symbol("N")',
+        "f64 = dace.float64",
+        "",
+        "@dace.program",
+        f"def k({', '.join(f'{x}: f64[N]' for x in ARRAYS)}):",
+        "    s = np.float64(0.0)",
     ]
     for _ in range(int(rng.integers(2, 5))):
         parallel = bool(rng.integers(0, 2))
@@ -72,8 +80,9 @@ def gen_source(seed: int) -> str:
         safe_offset_srcs = [x for x in ARRAYS if x not in written]  # offset-readable without a race
         # This loop's ONE relationship to the invariant scalar (never both -- see the docstring); only a
         # sequential loop may write it.
-        s_use = ("read", "write", "none")[int(rng.integers(3))] if not parallel else ("read",
-                                                                                      "none")[int(rng.integers(2))]
+        s_use = (
+            ("read", "write", "none")[int(rng.integers(3))] if not parallel else ("read", "none")[int(rng.integers(2))]
+        )
 
         body = []
         for pos, tgt in enumerate(targets):
@@ -159,8 +168,9 @@ def test_fuzz_random_fuse_sequence_is_value_preserving(seed, tmp_path):
     sdfg.validate()
     got = run(sdfg, inputs, n)
     for name in inputs:
-        assert np.allclose(got[name], ref[name], equal_nan=True), \
+        assert np.allclose(got[name], ref[name], equal_nan=True), (
             f"seed={seed} diverged on {name!r} after a random fusion sequence\n--- generated ---\n{src}"
+        )
 
 
 @pytest.mark.parametrize("seed", range(NCASES_FISSION))
@@ -179,8 +189,9 @@ def test_fuzz_fission_then_random_fuse_is_value_preserving(seed, tmp_path):
     sdfg.validate()
     got = run(sdfg, inputs, n)
     for name in inputs:
-        assert np.allclose(got[name], ref[name], equal_nan=True), \
+        assert np.allclose(got[name], ref[name], equal_nan=True), (
             f"seed={seed} diverged on {name!r} after fission + random fusion\n--- generated ---\n{src}"
+        )
 
 
 def test_generator_is_deterministic():

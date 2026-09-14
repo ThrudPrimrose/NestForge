@@ -4,6 +4,7 @@
 id/epoch safety layer :mod:`test_session` proves for fusion, applied to the single-pair
 :func:`nestforge.phases.schedule.map_fission_moves` arm.
 """
+
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -51,7 +52,10 @@ def multi_statement_map_sdfg() -> dace.SDFG:
 
 def all_map_entries(sdfg: dace.SDFG) -> List[nodes.MapEntry]:
     return [
-        n for sd in sdfg.all_sdfgs_recursive() for state in sd.all_states() for n in state.nodes()
+        n
+        for sd in sdfg.all_sdfgs_recursive()
+        for state in sd.all_states()
+        for n in state.nodes()
         if isinstance(n, nodes.MapEntry)
     ]
 

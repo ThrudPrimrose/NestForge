@@ -16,6 +16,7 @@ gated by the input's condition number, exactly as the summation/solver theory pr
 baseline does not explode. This test encodes both the mechanism and that stability definition, and
 guards the size-1-buffer write fix that lets the reduction nest compile (``nrm[0] =`` not ``nrm[:] =``).
 """
+
 import ctypes
 import re
 import shutil
@@ -110,8 +111,7 @@ def sweep(conditioning, tmp_path):
     sizes = {"M": M, "N": N, "j": 0, "k": 0}
     A = make_A(M, N, conditioning)
     outs = {
-        m: run(csrc, order, boundary, flags, A, sizes, tmp_path, f"{conditioning}_{m}")
-        for m, flags in _MODES.items()
+        m: run(csrc, order, boundary, flags, A, sizes, tmp_path, f"{conditioning}_{m}") for m, flags in _MODES.items()
     }
     ref = outs["ieee-strict-seq"]
     return {m: relerr(outs[m], ref) for m in _MODES}

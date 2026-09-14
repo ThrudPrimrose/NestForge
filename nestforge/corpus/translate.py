@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Extracted kernel -> numpy + manifest -> C/C++/Fortran sources through hpcagent_bench's translator."""
+
 from __future__ import annotations
 
 import os
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 @dataclass(slots=True)
 class Prepared:
     """A kernel written as files the translator consumes."""
+
     name: str
     numpy_path: Path
     yaml_path: Path
@@ -30,13 +32,12 @@ class Prepared:
     spec: BenchSpec
 
 
-def prepare(boundary: Boundary,
-            name: str,
-            out_dir: os.PathLike,
-            sizes: Dict[str, int] = None,
-            preset: str = "S") -> Prepared:
+def prepare(
+    boundary: Boundary, name: str, out_dir: os.PathLike, sizes: Dict[str, int] = None, preset: str = "S"
+) -> Prepared:
     """Write ``<name>_numpy.py`` + ``<name>.yaml`` for one extracted kernel and build its ``BenchSpec``."""
     from hpcagent_bench.spec import BenchSpec  # deferred: hpcagent_bench imports nestforge at top level
+
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     numpy_source = nest_to_numpy(boundary, fn_name=name)

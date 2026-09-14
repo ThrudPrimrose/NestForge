@@ -4,6 +4,7 @@
 
 C-style: every array is a pre-allocated buffer parameter written in place; no allocation, no return.
 """
+
 from __future__ import annotations
 
 import ast
@@ -30,8 +31,15 @@ from dace.sdfg import nodes
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, ReturnBlock
 from dace.sdfg.utils import dfs_topological_sort
 
-from nestforge.ir.emit_libnode import (UnsupportedLibraryNode, emit_library_node, index_str, is_scalar, read_expr,
-                                       scalar_local, write_lhs)
+from nestforge.ir.emit_libnode import (
+    UnsupportedLibraryNode,
+    emit_library_node,
+    index_str,
+    is_scalar,
+    read_expr,
+    scalar_local,
+    write_lhs,
+)
 from nestforge.ir.extract import Boundary
 
 try:
@@ -146,8 +154,9 @@ EMITTED_BUILTINS = {"np": numpy, "int_floor": int_floor, "int_ceil": int_ceil}
 
 #: Same names as SOURCE, so a standalone kernel needs no injected namespace; generated from the
 #: functions above so an edit to ``int_ceil`` cannot drift from the emitted text.
-STANDALONE_PREAMBLE = "import numpy as np\n\n\n" + "\n\n\n".join(
-    inspect.getsource(fn).strip() for fn in (int_floor, int_ceil)) + "\n"
+STANDALONE_PREAMBLE = (
+    "import numpy as np\n\n\n" + "\n\n\n".join(inspect.getsource(fn).strip() for fn in (int_floor, int_ceil)) + "\n"
+)
 
 
 def standalone_source(fn_name: str, args: List[str], body: List[str]) -> str:
@@ -217,7 +226,7 @@ def apply_call(code: str, name: str, fn: Callable[..., str]) -> str:
         if depth != 0:
             return code  # unbalanced (should not happen on emitted code): leave it for the caller to hit
         args.append(cur)
-        code = code[:m.start()] + fn(*(a.strip() for a in args)) + code[i + 1:]
+        code = code[: m.start()] + fn(*(a.strip() for a in args)) + code[i + 1 :]
 
 
 def rewrite_userfuncs(code: str) -> str:
@@ -268,8 +277,13 @@ def normalize_casts(code: str) -> str:
 _TRAP_GUARD = re.compile(r"^\s*if\s*\((?P<cond>.+)\)\s*\{\s*__builtin_trap\s*\(\s*\)\s*;?\s*\}\s*;?\s*$", re.DOTALL)
 
 #: C spellings with a Python equivalent. ``!`` needs the lookahead so ``!=`` survives intact.
-_C_TO_PYTHON = ((re.compile(r"&&"), " and "), (re.compile(r"\|\|"), " or "), (re.compile(r"!(?!=)"), " not "),
-                (re.compile(r"\btrue\b"), "True"), (re.compile(r"\bfalse\b"), "False"))
+_C_TO_PYTHON = (
+    (re.compile(r"&&"), " and "),
+    (re.compile(r"\|\|"), " or "),
+    (re.compile(r"!(?!=)"), " not "),
+    (re.compile(r"\btrue\b"), "True"),
+    (re.compile(r"\bfalse\b"), "False"),
+)
 
 
 def trap_guard_lines(tasklet: nodes.Tasklet) -> List[str] | None:
@@ -284,8 +298,9 @@ def trap_guard_lines(tasklet: nodes.Tasklet) -> List[str] | None:
     try:
         ast.parse(cond, mode="eval")
     except SyntaxError as exc:
-        raise UnsupportedNest(f"trap guard {tasklet.label} has a condition that is not translatable to "
-                              f"python: {cond!r}") from exc
+        raise UnsupportedNest(
+            f"trap guard {tasklet.label} has a condition that is not translatable to python: {cond!r}"
+        ) from exc
     return [f"if {cond}:", f"    raise AssertionError({f'violated assumption in {tasklet.label}'!r})"]
 
 
@@ -390,8 +405,13 @@ def copy_lines(state: dace.SDFGState, sdfg: dace.SDFG, dst: nodes.AccessNode) ->
     return lines
 
 
-def copy_sides(sdfg: dace.SDFG, dst_name: str, dst_sub: Optional[dace.subsets.Range], src_name: str,
-               src_sub: Optional[dace.subsets.Range]) -> tuple:
+def copy_sides(
+    sdfg: dace.SDFG,
+    dst_name: str,
+    dst_sub: Optional[dace.subsets.Range],
+    src_name: str,
+    src_sub: Optional[dace.subsets.Range],
+) -> tuple:
     """``(lhs, rhs, dst_read)`` for one data copy -- the shared body of :func:`copy_lines` and
     :func:`map_exit_writes`. ``dst_read`` is the destination rendered for reading (a WCR accumulates into it).
     """
@@ -400,11 +420,16 @@ def copy_sides(sdfg: dace.SDFG, dst_name: str, dst_sub: Optional[dace.subsets.Ra
             # mirror a missing subset only between equal shapes: a same-rank reshape must keep its own subset
             src_sub = src_sub if src_sub is not None else dst_sub
             dst_sub = dst_sub if dst_sub is not None else src_sub
-        return (copy_side(sdfg, dst_name, dst_sub), copy_side(sdfg, src_name,
-                                                              src_sub), copy_side(sdfg, dst_name, dst_sub))
-    return (reshape_side(sdfg, dst_name, dst_sub,
-                         write=True), reshape_side(sdfg, src_name, src_sub,
-                                                   write=False), reshape_side(sdfg, dst_name, dst_sub, write=False))
+        return (
+            copy_side(sdfg, dst_name, dst_sub),
+            copy_side(sdfg, src_name, src_sub),
+            copy_side(sdfg, dst_name, dst_sub),
+        )
+    return (
+        reshape_side(sdfg, dst_name, dst_sub, write=True),
+        reshape_side(sdfg, src_name, src_sub, write=False),
+        reshape_side(sdfg, dst_name, dst_sub, write=False),
+    )
 
 
 def reshape_side(sdfg: dace.SDFG, name: str, subset: Optional[dace.subsets.Range], write: bool) -> str:
@@ -442,7 +467,8 @@ def reject_underranked_codeblock_index(inner: dace.SDFG) -> None:
                     if ndims < len(desc.shape):
                         raise UnsupportedNest(
                             f"nested SDFG under-indexes {sub.value.id!r} ({ndims} of {len(desc.shape)} dims) "
-                            "in inter-state code -- ExpandNestedSDFGInputs offsets multi-dim conditions incompletely")
+                            "in inter-state code -- ExpandNestedSDFGInputs offsets multi-dim conditions incompletely"
+                        )
 
 
 def reconcile_connector_descriptor(inner: dace.SDFG, sdfg: dace.SDFG, outer: str) -> None:
@@ -455,9 +481,11 @@ def reconcile_connector_descriptor(inner: dace.SDFG, sdfg: dace.SDFG, outer: str
     inner_desc, outer_desc = inner.arrays[outer], sdfg.arrays[outer]
     same_shape = [str(d) for d in inner_desc.shape] == [str(d) for d in outer_desc.shape]
     if not same_shape and not (is_scalar(inner_desc) and is_scalar(outer_desc)):
-        raise UnsupportedNest(f"nested SDFG connector {outer!r} is {inner_desc.shape} inside but "
-                              f"{outer_desc.shape} outside; the extents differ, so the inner body indexes a "
-                              "different shape than the buffer it aliases -- not emittable as numpy")
+        raise UnsupportedNest(
+            f"nested SDFG connector {outer!r} is {inner_desc.shape} inside but "
+            f"{outer_desc.shape} outside; the extents differ, so the inner body indexes a "
+            "different shape than the buffer it aliases -- not emittable as numpy"
+        )
     inner.arrays[outer] = copy.deepcopy(outer_desc)
 
 
@@ -469,7 +497,8 @@ def emit_nested_sdfg(state: dace.SDFGState, sdfg: dace.SDFG, node: nodes.NestedS
             # would silently become an overwrite. map_exit_writes guards a map exit; this covers state body too.
             raise UnsupportedNest(
                 f"nested SDFG output into {e.data.data} carries a reduction (WCR) that emit_nested_sdfg does "
-                "not apply; not emittable as numpy -- fall back to the DaCe variant")
+                "not apply; not emittable as numpy -- fall back to the DaCe variant"
+            )
     if ExpandNestedSDFGInputs is None:
         raise UnsupportedNest("nested SDFG emission needs ExpandNestedSDFGInputs (DaCe extended branch)")
     inner = copy.deepcopy(node.sdfg)
@@ -511,7 +540,7 @@ def symbol_mapping_lines(mapping: Dict[str, object], node_id: int) -> List[str]:
     if not (targets & reads):
         return [f"{sym} = {expr}" for sym, expr in binds]
     temps = [(f"_nsym{node_id}_{sym}", sym, expr) for sym, expr in binds]
-    return ([f"{tmp} = {expr}" for tmp, _, expr in temps] + [f"{sym} = {tmp}" for tmp, sym, _ in temps])
+    return [f"{tmp} = {expr}" for tmp, _, expr in temps] + [f"{sym} = {tmp}" for tmp, sym, _ in temps]
 
 
 def map_exit_writes(state: dace.SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry) -> List[str]:
@@ -524,7 +553,8 @@ def map_exit_writes(state: dace.SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntr
             if e.data.wcr is not None and not isinstance(e.src, nodes.Tasklet):
                 raise UnsupportedNest(
                     f"reduction (WCR) leaves the map exit from a {type(e.src).__name__}, not an in-scope "
-                    "accumulator access node; not emittable as numpy -- fall back to the DaCe variant")
+                    "accumulator access node; not emittable as numpy -- fall back to the DaCe variant"
+                )
             continue
         m = e.data
         dst_name, dst_sub, src_sub = m.data, m.subset, m.other_subset
@@ -556,8 +586,10 @@ def map_headers(entry: nodes.MapEntry) -> List[str]:
     for param, (beg, end, step) in zip(entry.map.params, entry.map.range.ranges):
         stop = range_stop(end, step, f"map parameter {param!r}")
         headers.append(
-            normalize_casts(f"for {param} in range({symbolic.symstr(beg)}, {symbolic.symstr(stop)}, "
-                            f"{symbolic.symstr(step)}):"))  # a bound may render an int_floor/int_ceil
+            normalize_casts(
+                f"for {param} in range({symbolic.symstr(beg)}, {symbolic.symstr(stop)}, {symbolic.symstr(step)}):"
+            )
+        )  # a bound may render an int_floor/int_ceil
     return headers
 
 
@@ -639,9 +671,11 @@ def emit_loop(loop: LoopRegion, sdfg: dace.SDFG) -> List[str]:
     update = normalize_casts(loop.update_statement.as_string.strip()) if loop.update_statement is not None else None
     if loop.inverted and targets_continue(loop):
         # python's while puts the update/exit test in the body, where continue would skip both and hang forever
-        raise UnsupportedNest(f"loop {loop.label} is inverted (do-while) and contains a continue; the emitted "
-                              "`while True:` carries its exit test in the body, so a `continue` would skip the "
-                              "test and loop forever")
+        raise UnsupportedNest(
+            f"loop {loop.label} is inverted (do-while) and contains a continue; the emitted "
+            "`while True:` carries its exit test in the body, so a `continue` would skip the "
+            "test and loop forever"
+        )
     body = body_or_pass(emit_region(loop, sdfg, continue_update=None if loop.inverted else update))
     ind = "    "
 
@@ -671,9 +705,11 @@ def emit_conditional(cond_block: ConditionalBlock, sdfg: dace.SDFG, continue_upd
     last = len(cond_block.branches) - 1
     for index, (condition, region) in enumerate(cond_block.branches):
         if condition is None and index != last:  # DaCe codegen itself refuses a non-final unconditional branch
-            raise UnsupportedNest(f"conditional block {cond_block.label!r} has an unconditional branch at "
-                                  f"position {index} of {last + 1}; DaCe codegen refuses a non-final "
-                                  "unconditional branch, so there is no order to preserve")
+            raise UnsupportedNest(
+                f"conditional block {cond_block.label!r} has an unconditional branch at "
+                f"position {index} of {last + 1}; DaCe codegen refuses a non-final "
+                "unconditional branch, so there is no order to preserve"
+            )
         if condition is None:
             lines.append("else:")
         else:
@@ -691,8 +727,9 @@ def strip_scalar_local_subscript(code: str, sdfg: dace.SDFG) -> str:
     return code
 
 
-def interstate_lines(region: dace.sdfg.state.ControlFlowRegion, sdfg: dace.SDFG,
-                     block: dace.sdfg.state.ControlFlowBlock) -> List[str]:
+def interstate_lines(
+    region: dace.sdfg.state.ControlFlowRegion, sdfg: dace.SDFG, block: dace.sdfg.state.ControlFlowBlock
+) -> List[str]:
     """Assignments carried on the edge(s) entering ``block`` (e.g. an indirect index ``s = A[i]``)."""
     lines: List[str] = []
     carrying = []
@@ -700,23 +737,25 @@ def interstate_lines(region: dace.sdfg.state.ControlFlowRegion, sdfg: dace.SDFG,
         if not e.data.is_unconditional():
             # a conditional inter-state edge is an unstructured goto; straight-line emission cannot model it
             raise UnsupportedNest(
-                f"conditional inter-state edge into {block.label} (unstructured goto/branch) is not emitted")
+                f"conditional inter-state edge into {block.label} (unstructured goto/branch) is not emitted"
+            )
         if e.data.assignments:
             carrying.append(e)
     if len(carrying) > 1:
         # Emitting both would double-apply them at runtime, when only one predecessor actually executes
         raise UnsupportedNest(
             f"{len(carrying)} inter-state edges into {block.label} carry assignments (an unstructured join); "
-            "straight-line emission would apply every predecessor's assignments -- not emittable as numpy")
+            "straight-line emission would apply every predecessor's assignments -- not emittable as numpy"
+        )
     for e in carrying:
         for lhs, rhs in e.data.assignments.items():
             lines.append(f"{lhs} = {strip_scalar_local_subscript(normalize_casts(rhs), sdfg)}")
     return lines
 
 
-def emit_region(region: dace.sdfg.state.ControlFlowRegion,
-                sdfg: dace.SDFG,
-                continue_update: Optional[str] = None) -> List[str]:
+def emit_region(
+    region: dace.sdfg.state.ControlFlowRegion, sdfg: dace.SDFG, continue_update: Optional[str] = None
+) -> List[str]:
     """Numpy statements for every block of a control-flow region, in execution order.
 
     :param continue_update: the enclosing loop's update statement, emitted in front of each
@@ -797,8 +836,10 @@ def symbol_ranges(sdfg: dace.SDFG) -> tuple:
             if isinstance(rel, (sympy.StrictLessThan, sympy.LessThan)) and str(rel.lhs) == var:
                 his.setdefault(var, []).append(rel.rhs + (1 if isinstance(rel, sympy.LessThan) else 0))
                 los.setdefault(var, []).append(
-                    symbolic.pystr_to_symbolic(cfg.init_statement.as_string.split("=", 1)[1]) if cfg.
-                    init_statement is not None else sympy.Integer(0))
+                    symbolic.pystr_to_symbolic(cfg.init_statement.as_string.split("=", 1)[1])
+                    if cfg.init_statement is not None
+                    else sympy.Integer(0)
+                )
         for e in cfg.edges():
             for var, rhs in e.data.assignments.items():
                 try:
@@ -825,8 +866,13 @@ def symbol_ranges(sdfg: dace.SDFG) -> tuple:
     return resolve(los, sympy.Min), resolve(his, sympy.Max)
 
 
-def max_over_loops(dim: sympy.Expr, lo_of: Dict[str, sympy.Expr], hi_of: Dict[str, sympy.Expr], known: set,
-                   arrays: Mapping[str, dace.data.Data]) -> Optional[sympy.Expr]:
+def max_over_loops(
+    dim: sympy.Expr,
+    lo_of: Dict[str, sympy.Expr],
+    hi_of: Dict[str, sympy.Expr],
+    known: set,
+    arrays: Mapping[str, dace.data.Data],
+) -> Optional[sympy.Expr]:
     """Largest value a shape dimension takes over the loop variables' ranges, or ``None`` if unresolved."""
     result = dim
     for s in list(dim.free_symbols):
@@ -843,9 +889,11 @@ def maxsize_loop_scratch(sdfg: dace.SDFG, symbols: List[str]) -> dace.SDFG:
     """Widen a scratch transient sized by loop variables to a caller-sizable bound; runs on a copy."""
     known = set(symbols)
     # cheap filter before symbol_ranges walks the whole CFG: most kernels have no such candidate
-    candidates = [(name, desc) for name, desc in sdfg.arrays.items()
-                  if desc.transient and not is_scalar(desc) and {str(s)
-                                                                 for s in desc.free_symbols} - known]
+    candidates = [
+        (name, desc)
+        for name, desc in sdfg.arrays.items()
+        if desc.transient and not is_scalar(desc) and {str(s) for s in desc.free_symbols} - known
+    ]
     if not candidates:
         return sdfg
 
@@ -879,10 +927,14 @@ def reject_unsizable_scratch(sdfg: dace.SDFG, scratch: List[str], symbols: List[
             sdim = sympy.sympify(dim)
             if sizable(sdim, known, sdfg.arrays):
                 continue
-            why = ("reads array data" if reads_array_data(sdim, sdfg.arrays) else
-                   f"depends on {sorted({str(s) for s in sdim.free_symbols} - known)} (not kernel symbols)")
-            raise UnsupportedNest(f"scratch buffer {name!r} has extent {dim} that {why}; "
-                                  "cannot be pre-allocated C-style")
+            why = (
+                "reads array data"
+                if reads_array_data(sdim, sdfg.arrays)
+                else f"depends on {sorted({str(s) for s in sdim.free_symbols} - known)} (not kernel symbols)"
+            )
+            raise UnsupportedNest(
+                f"scratch buffer {name!r} has extent {dim} that {why}; cannot be pre-allocated C-style"
+            )
 
 
 def innermost_loop(block: dace.sdfg.state.ControlFlowBlock) -> Optional[LoopRegion]:
@@ -907,15 +959,18 @@ def reject_orphan_break_continue(sdfg: dace.SDFG) -> None:
         if isinstance(block, (BreakBlock, ContinueBlock)) and not has_enclosing_loop(block):
             raise UnsupportedNest(
                 f"nest contains a {type(block).__name__} ({block.label}) whose target loop is outside the "
-                "extracted scope; externalize the loop it breaks out of, not an inner nest")
+                "extracted scope; externalize the loop it breaks out of, not an inner nest"
+            )
 
 
 def reject_nonexternalizable(sdfg: dace.SDFG) -> None:
     """Refuse a nest with an early return (exits the enclosing SDFG, not just the nest) or an orphan break/continue."""
     for block in sdfg.all_control_flow_blocks():
         if isinstance(block, ReturnBlock):
-            raise UnsupportedNest(f"nest contains an early return ({block.label}); a return out of the enclosing SDFG "
-                                  "cannot be externalized into a standalone kernel")
+            raise UnsupportedNest(
+                f"nest contains an early return ({block.label}); a return out of the enclosing SDFG "
+                "cannot be externalized into a standalone kernel"
+            )
     reject_orphan_break_continue(sdfg)
 
 

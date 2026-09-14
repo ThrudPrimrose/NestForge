@@ -5,6 +5,7 @@
 The SDFG lives here; callers name graph objects by epoch-stamped string ids. Any mutation bumps the
 epoch, so an id from before it raises :class:`StaleHandle` instead of acting on a moved graph.
 """
+
 from __future__ import annotations
 
 import re
@@ -24,12 +25,29 @@ from nestforge.phases.feedback import run_feedback_loop
 from nestforge.phases.kernel import KernelSource, schedule_kernel, use_kernel_library
 from nestforge.phases.normalize import Targets, normalize
 from nestforge.phases.offload import offload
-from nestforge.phases.schedule import (FissionMove, FusionMove, RegionMove, apply_fusion, apply_map_fission,
-                                       apply_region_fusion, can_fuse, enumerate_fusions, enumerate_map_fissions,
-                                       enumerate_region_fusions, finish_schedule, fission_to_statements, full_fusion,
-                                       scope_metrics)
-from nestforge.phases.scopes import (is_parallel_nest, label_nest, lower_nests_to_external_call, offload_candidates,
-                                     top_level_map_entries)
+from nestforge.phases.schedule import (
+    FissionMove,
+    FusionMove,
+    RegionMove,
+    apply_fusion,
+    apply_map_fission,
+    apply_region_fusion,
+    can_fuse,
+    enumerate_fusions,
+    enumerate_map_fissions,
+    enumerate_region_fusions,
+    finish_schedule,
+    fission_to_statements,
+    full_fusion,
+    scope_metrics,
+)
+from nestforge.phases.scopes import (
+    is_parallel_nest,
+    label_nest,
+    lower_nests_to_external_call,
+    offload_candidates,
+    top_level_map_entries,
+)
 from nestforge.phases.variants import VariantCell, enumerate_variants, select_variant
 
 #: kernel_source language -> (translator target, generated file suffix). C and C++ come from one C emit.
@@ -45,11 +63,13 @@ class Session:
 
     __slots__ = ("sdfg", "name", "targets", "epoch", "handles", "work_dir", "prepared", "kernel_sources")
 
-    def __init__(self,
-                 sdfg: dace.SDFG,
-                 targets: Optional[Targets] = None,
-                 name: Optional[str] = None,
-                 work_dir: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        sdfg: dace.SDFG,
+        targets: Optional[Targets] = None,
+        name: Optional[str] = None,
+        work_dir: Optional[str] = None,
+    ) -> None:
         self.sdfg = sdfg
         self.targets = targets if targets is not None else Targets()
         self.name = name or sdfg.label
@@ -97,10 +117,9 @@ class Session:
 
     def describe(self, bodies: bool = False, metrics: bool = False) -> str:
         """The program as a text tree; nest lines carry :meth:`can_fuse` ids, and scope metrics if ``metrics``."""
-        return describe_graph(self.sdfg,
-                              handle=self.tree_handle,
-                              bodies=bodies,
-                              metrics=self.metrics_suffix if metrics else None)
+        return describe_graph(
+            self.sdfg, handle=self.tree_handle, bodies=bodies, metrics=self.metrics_suffix if metrics else None
+        )
 
     def metrics_suffix(self, entry: nodes.MapEntry) -> str:
         return scope_metrics(self.sdfg, entry).suffix()
@@ -113,14 +132,16 @@ class Session:
         out: List[dict] = []
         for container, nest in fusion_units(self.sdfg):
             reads, writes = nest_reads_writes(container, nest)
-            out.append({
-                "id": self.mint("nest", nest),
-                "kind": "map" if isinstance(nest, nodes.MapEntry) else "loop",
-                "label": label_nest(nest),
-                "parallel": is_parallel_nest(nest),
-                "reads": reads,
-                "writes": writes,
-            })
+            out.append(
+                {
+                    "id": self.mint("nest", nest),
+                    "kind": "map" if isinstance(nest, nodes.MapEntry) else "loop",
+                    "label": label_nest(nest),
+                    "parallel": is_parallel_nest(nest),
+                    "reads": reads,
+                    "writes": writes,
+                }
+            )
         return out
 
     def can_fuse(self, first_id: str, second_id: str) -> str:
@@ -138,11 +159,10 @@ class Session:
 
     def list_region_fusions(self) -> List[dict]:
         """Adjacent state pairs that may merge, so nests in them can fuse afterwards."""
-        return [{
-            "id": self.mint("regmove", m),
-            "kind": m.kind,
-            "label": m.label()
-        } for m in enumerate_region_fusions(self.sdfg)]
+        return [
+            {"id": self.mint("regmove", m), "kind": m.kind, "label": m.label()}
+            for m in enumerate_region_fusions(self.sdfg)
+        ]
 
     def fuse_regions(self, move_id: str) -> str:
         move: RegionMove = self.resolve(move_id, "regmove")
@@ -220,13 +240,15 @@ class Session:
         for cand in offload_candidates(self.sdfg):
             container = find_state_of_node(cand.parent_sdfg, cand.node)
             reads, writes = nest_reads_writes(container, cand.node)
-            out.append({
-                "id": self.mint("cand", cand),
-                "label": cand.label,
-                "parallel": cand.parallel,
-                "reads": reads,
-                "writes": writes
-            })
+            out.append(
+                {
+                    "id": self.mint("cand", cand),
+                    "label": cand.label,
+                    "parallel": cand.parallel,
+                    "reads": reads,
+                    "writes": writes,
+                }
+            )
         return out
 
     def define_scopes(self) -> List[dict]:
@@ -234,13 +256,16 @@ class Session:
         lowered = lower_nests_to_external_call(self.sdfg)
         if lowered:
             self.bump()
-        return [{
-            "id": self.mint("kernel", (ext, boundary)),
-            "name": ext.name,
-            "reads": list(boundary.inputs),
-            "writes": list(boundary.outputs),
-            "symbols": list(boundary.symbols),
-        } for ext, boundary in lowered]
+        return [
+            {
+                "id": self.mint("kernel", (ext, boundary)),
+                "name": ext.name,
+                "reads": list(boundary.inputs),
+                "writes": list(boundary.outputs),
+                "symbols": list(boundary.symbols),
+            }
+            for ext, boundary in lowered
+        ]
 
     def kernel_boundary(self, kernel_id: str) -> dict:
         """The kernel's interface; ``boundary_order`` is the argument order a library must accept."""
@@ -274,11 +299,9 @@ class Session:
             self.bump()
             kernels = [(self.mint("kernel", obj), obj) for _, obj in kernels]
         return {
-            "kernels": [{
-                "id": hid,
-                "name": ext.name,
-                "device": placement.devices[ext.name]
-            } for hid, (ext, _) in kernels],
+            "kernels": [
+                {"id": hid, "name": ext.name, "device": placement.devices[ext.name]} for hid, (ext, _) in kernels
+            ],
             "copies": [list(pair) for pair in placement.copies],
         }
 
@@ -300,16 +323,14 @@ class Session:
         return {
             "kernel": ext.name,
             "abi_order": list(ext.abi_order),
-            "boundary_order": [*boundary.inputs, *boundary.outputs, *boundary.symbols]
+            "boundary_order": [*boundary.inputs, *boundary.outputs, *boundary.symbols],
         }
 
     # Phase 5: sweep configurations
 
-    def sweep_configurations(self,
-                             kernel_id: str,
-                             sizes: Dict[str, int],
-                             reps: int = 10,
-                             compilers: Optional[List[str]] = None) -> dict:
+    def sweep_configurations(
+        self, kernel_id: str, sizes: Dict[str, int], reps: int = 10, compilers: Optional[List[str]] = None
+    ) -> dict:
         """Build and time the kernel's variants, link the fastest correct one, and summarize the sweep.
 
         :param sizes: Value of every symbol the kernel needs, used for validation and timing.
@@ -320,8 +341,14 @@ class Session:
         src = self.kernel_sources[kernel_id]
         ext, _ = self.resolve(kernel_id, "kernel")
         toolchains = [tc for tc in discover_toolchains() if compilers is None or tc.name in compilers]
-        result = select_variant(src, self.prepare_kernel(kernel_id), sizes, reps, enumerate_variants(toolchains),
-                                self.work_dir / ext.name / "variants")
+        result = select_variant(
+            src,
+            self.prepare_kernel(kernel_id),
+            sizes,
+            reps,
+            enumerate_variants(toolchains),
+            self.work_dir / ext.name / "variants",
+        )
         winner = result.winner
         if winner is not None and result.library is not None:
             use_kernel_library(ext, result.library, result.symbol, result.abi_order)
@@ -345,7 +372,7 @@ class Session:
         return {
             "rounds": res.rounds,
             "best_name": best.name if best is not None else None,
-            "best_us": best.median_us if best is not None else None
+            "best_us": best.median_us if best is not None else None,
         }
 
 

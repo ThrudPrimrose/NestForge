@@ -3,6 +3,7 @@
 """What the machine's toolchains can actually do: compiler families, OpenMP runtimes, and
 C-signature parsing. No DaCe. Every answer is discovered rather than assumed, and subprocess probes
 are cached (``typed=True``)."""
+
 from __future__ import annotations
 
 import ctypes
@@ -23,7 +24,7 @@ _C_SCALAR = {
     "int": ctypes.c_int,
     "float": ctypes.c_float,
     "double": ctypes.c_double,
-    "bool": ctypes.c_bool
+    "bool": ctypes.c_bool,
 }
 
 _C_PTR = {"float": ctypes.c_float, "double": ctypes.c_double, "int32_t": ctypes.c_int32, "int64_t": ctypes.c_int64}
@@ -57,6 +58,7 @@ _LLVM_SELECTABLE = frozenset({"libomp", "libgomp", "libiomp5"})
 class OpenMPRuntime:
     """One OpenMP runtime the whole program links. ``libomp`` is default: LLVM-selectable by name and
     GOMP_*-compatible, so gcc- and clang-built libraries share one thread pool."""
+
     name: str = "libomp"  # selected by name on LLVM (``-fopenmp=<name>``)
     soname: str = "omp"  # ``-l<soname>`` for explicit linking
     #: ``-L`` for the runtime; None -> discovered via linkable_lib_dir. ``""`` forces bare ``-l<soname>``.
@@ -78,15 +80,21 @@ class OpenMPRuntime:
         fam = compiler_family(compiler)
         if fam == "llvm":
             if _COMPILER_ABI["llvm"] not in self.provides:
-                raise ValueError(f"{Path(compiler).name} emits the 'kmpc' OpenMP ABI, which {self.name} does not "
-                                 f"implement (it provides {sorted(self.provides)}); libgomp is gomp-only. Use a "
-                                 f"kmpc runtime (libomp/libiomp5).")
-            raise ValueError(f"{Path(compiler).name} selects the OpenMP runtime by name and only knows "
-                             f"{sorted(_LLVM_SELECTABLE)}; {self.name} is not name-selectable by an LLVM compiler. "
-                             f"Use libomp/libiomp5, or build with gcc (which links {self.name} via -l{self.soname}).")
-        raise ValueError(f"{Path(compiler).name} emits the 'gomp' OpenMP ABI, which {self.name} does not implement "
-                         f"(it provides {sorted(self.provides)}). Use a gomp-capable runtime "
-                         f"(libomp/libiomp5 carry a GOMP-compat layer; libgomp is gomp-only).")
+                raise ValueError(
+                    f"{Path(compiler).name} emits the 'kmpc' OpenMP ABI, which {self.name} does not "
+                    f"implement (it provides {sorted(self.provides)}); libgomp is gomp-only. Use a "
+                    f"kmpc runtime (libomp/libiomp5)."
+                )
+            raise ValueError(
+                f"{Path(compiler).name} selects the OpenMP runtime by name and only knows "
+                f"{sorted(_LLVM_SELECTABLE)}; {self.name} is not name-selectable by an LLVM compiler. "
+                f"Use libomp/libiomp5, or build with gcc (which links {self.name} via -l{self.soname})."
+            )
+        raise ValueError(
+            f"{Path(compiler).name} emits the 'gomp' OpenMP ABI, which {self.name} does not implement "
+            f"(it provides {sorted(self.provides)}). Use a gomp-capable runtime "
+            f"(libomp/libiomp5 carry a GOMP-compat layer; libgomp is gomp-only)."
+        )
 
     def compile_flags(self, compiler: str) -> List[str]:
         """Flags to compile a translation unit with OpenMP against this runtime."""
@@ -118,14 +126,15 @@ SUPPORT_LIB_PROBE = "svml"
 def support_rpath_flags(compiler: str) -> Tuple[str, ...]:
     """-Wl,-rpath for the compiler's own auto-linked support libs (icx svml/imf/irng/intlc), or () if none."""
     found = driver_lib_path(SUPPORT_LIB_PROBE, compiler)
-    return ("-Wl,-rpath,%s" % found.parent, ) if found else ()
+    return ("-Wl,-rpath,%s" % found.parent,) if found else ()
 
 
 #: Ready-made OpenMP runtimes; libomp/libgomp/libiomp5 share the GOMP ABI.
 LIBOMP = OpenMPRuntime(name="libomp", soname="omp")
 
-LIBGOMP = OpenMPRuntime(name="libgomp", soname="gomp",
-                        provides=frozenset({"gomp"}))  # GOMP-only; unusable by a kmpc compiler
+LIBGOMP = OpenMPRuntime(
+    name="libgomp", soname="gomp", provides=frozenset({"gomp"})
+)  # GOMP-only; unusable by a kmpc compiler
 
 LIBIOMP5 = OpenMPRuntime(name="libiomp5", soname="iomp5")
 
@@ -153,10 +162,9 @@ def driver_lib_path(soname: str, compiler: str) -> Optional[Path]:
     """Where ``compiler`` resolves ``lib<soname>.so``, or ``None`` (a different question from what
     ldconfig/find_library find); cached since it sits on the hot flag-composition path."""
     try:
-        out = subprocess.run([compiler, f"-print-file-name=lib{soname}.so"],
-                             capture_output=True,
-                             text=True,
-                             timeout=PROBE_TIMEOUT_S).stdout.strip()
+        out = subprocess.run(
+            [compiler, f"-print-file-name=lib{soname}.so"], capture_output=True, text=True, timeout=PROBE_TIMEOUT_S
+        ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return None
     if not out or out == f"lib{soname}.so":
@@ -169,8 +177,9 @@ def driver_lib_path(soname: str, compiler: str) -> Optional[Path]:
 def driver_search_dirs(compiler: str) -> List[str]:
     """Library directories ``compiler`` itself searches, via -print-search-dirs."""
     try:
-        out = subprocess.run([compiler, "-print-search-dirs"], capture_output=True, text=True,
-                             timeout=PROBE_TIMEOUT_S).stdout
+        out = subprocess.run(
+            [compiler, "-print-search-dirs"], capture_output=True, text=True, timeout=PROBE_TIMEOUT_S
+        ).stdout
     except (OSError, subprocess.SubprocessError):
         return []
     for line in out.splitlines():
@@ -223,7 +232,7 @@ def llvm_version(path: Path) -> Tuple[int, ...]:
     """Version tuple of an llvm-N[.M] dir, or (-1,); string sort ranks llvm-9 above llvm-21, so parsed as ints."""
     parts = path.parent.name.partition("llvm-")[2].split(".")
     if not parts or not parts[0].isdigit():
-        return (-1, )
+        return (-1,)
     return tuple(int(p) for p in parts if p.isdigit())
 
 
@@ -322,15 +331,17 @@ def parse_params(param_str: str) -> List[Param]:
             continue
         is_ptr = "*" in tok
         name = re.split(r"[\s*]+", tok)[-1]
-        base = tok[:tok.rfind(name)].replace("*", "").strip()
+        base = tok[: tok.rfind(name)].replace("*", "").strip()
         if is_ptr:
             params.append(Param(name, ctypes.POINTER(_C_PTR.get(base, ctypes.c_double)), True))
         else:
             # an unmapped type would guess a width silently -- an ABI bug ctypes can't catch -- so refuse
             ctype = _C_SCALAR.get(base)
             if ctype is None:
-                raise ValueError(f"parameter {name!r} of entry point has C type {base!r}, which has no ctypes "
-                                 f"mapping (known: {sorted(_C_SCALAR)}); add it to _C_SCALAR")
+                raise ValueError(
+                    f"parameter {name!r} of entry point has C type {base!r}, which has no ctypes "
+                    f"mapping (known: {sorted(_C_SCALAR)}); add it to _C_SCALAR"
+                )
             params.append(Param(name, ctype, False))
     return params
 
@@ -378,10 +389,9 @@ def signature(code: str, symbol: str) -> str:
 def clang_major_via_preprocessor(compiler: str) -> Optional[int]:
     """Underlying clang major via __clang_major__, for icx/icpx/ifx whose --version hides it; None if unknown."""
     try:
-        p = subprocess.run([compiler, "-dM", "-E", "-x", "c", "/dev/null"],
-                           capture_output=True,
-                           text=True,
-                           timeout=PROBE_TIMEOUT_S)
+        p = subprocess.run(
+            [compiler, "-dM", "-E", "-x", "c", "/dev/null"], capture_output=True, text=True, timeout=PROBE_TIMEOUT_S
+        )
     except (OSError, subprocess.SubprocessError):
         return None
     m = re.search(r"#define __clang_major__ (\d+)", p.stdout)
@@ -416,6 +426,7 @@ def compiler_version(compiler: str) -> Tuple[int, int]:
 @dataclass(slots=True)
 class Toolchain:
     """One discovered toolchain family: C compiler, optional C++ compiler, and where it was found."""
+
     name: str
     cc: str
     cxx: Optional[str]  # None -> no native column
@@ -526,8 +537,10 @@ def run(cmd: List[str], timeout: Optional[float] = COMPILE_TIMEOUT_S) -> None:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         # child already SIGKILLed; surface as a normal build failure so the sweep moves on
-        raise RuntimeError(f"command timed out after {timeout:.0f}s: {' '.join(cmd[:2])} ... "
-                           f"(pathological compile/link; ceiling is NF_COMPILE_TIMEOUT)")
+        raise RuntimeError(
+            f"command timed out after {timeout:.0f}s: {' '.join(cmd[:2])} ... "
+            f"(pathological compile/link; ceiling is NF_COMPILE_TIMEOUT)"
+        )
     if p.returncode != 0:
         raise RuntimeError(f"command failed: {' '.join(cmd[:2])} ...\n{p.stderr[-2000:]}")
     if p.stderr.strip():

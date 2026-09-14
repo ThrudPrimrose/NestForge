@@ -5,12 +5,19 @@ rules -- ``best_outcome`` (fastest bit-exact wins) and ``improved`` (a round tha
 the loop). Driven with a fake ``measure`` (no compiler), plus one real SDFG proving ``default_fuse_step``
 re-enumerates + fuses to the fixed point.
 """
+
 import numpy as np
 import pytest
 
 import dace
-from nestforge.phases.feedback import (FeedbackResult, Outcome, best_outcome, default_fuse_step, improved,
-                                       run_feedback_loop)
+from nestforge.phases.feedback import (
+    FeedbackResult,
+    Outcome,
+    best_outcome,
+    default_fuse_step,
+    improved,
+    run_feedback_loop,
+)
 from nestforge.phases.scopes import parallel_top_level_maps
 
 N = dace.symbol("N")
@@ -83,10 +90,9 @@ def test_loop_stops_the_round_a_move_stops_helping():
 def test_loop_is_bounded_by_max_rounds():
     # a move that always applies + always improves must still terminate at max_rounds.
     t = iter(float(x) for x in range(100, 0, -1))
-    res = run_feedback_loop(two_nests.to_sdfg(simplify=True),
-                            lambda s: oc(next(t)),
-                            apply_move=lambda s: True,
-                            max_rounds=3)
+    res = run_feedback_loop(
+        two_nests.to_sdfg(simplify=True), lambda s: oc(next(t)), apply_move=lambda s: True, max_rounds=3
+    )
     assert res.rounds == 3
     assert len(res.outcomes) == 4  # baseline + 3 rounds
 

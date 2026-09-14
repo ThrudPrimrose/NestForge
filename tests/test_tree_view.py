@@ -6,6 +6,7 @@ The tree is the agent's whole view of the program, so its FORMAT is an interface
 changes what every agent prompt sees. The golden test below pins it in full, so a format change has
 to be made deliberately rather than drifting out of an unrelated edit.
 """
+
 import re
 
 import numpy as np
@@ -68,8 +69,11 @@ def test_the_tree_format_is_pinned():
 
 def test_every_line_is_a_guide_then_one_labelled_thing():
     for line in tree_of(shaped).splitlines()[1:]:
-        assert re.match(r"^(\|  |   )*(\|- |`- )"
-                        r"(state|for|while|if|block|continue|break|return|kernel)\d+_\d+\b", line), line
+        assert re.match(
+            r"^(\|  |   )*(\|- |`- )"
+            r"(state|for|while|if|block|continue|break|return|kernel)\d+_\d+\b",
+            line,
+        ), line
 
 
 def test_indentation_tracks_the_level_in_the_label():
@@ -126,8 +130,12 @@ def test_a_name_with_two_definitions_is_left_alone():
     assert "A_index" in interstate_definitions(sdfg), "fixture no longer hoists the scalar read"
     # Give the same name a second, different definition on another edge -- as two branches assigning
     # one variable do.
-    edge = next(e for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges()
-                if "A_index" in e.data.assignments)
+    edge = next(
+        e
+        for cfg in sdfg.all_control_flow_regions(recursive=True)
+        for e in cfg.edges()
+        if "A_index" in e.data.assignments
+    )
     other = next(e for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges() if e is not edge)
     other.data.assignments["A_index"] = "A[0]"
     assert "A_index" not in interstate_definitions(sdfg)
@@ -190,14 +198,23 @@ def test_a_kernel_containing_a_kernel_has_no_body_of_its_own():
     so emitting at both levels would print the inner kernel twice."""
     sdfg = nested_maps.to_sdfg(simplify=True)
     normalize_for_tree(sdfg)
-    nested = [(st, n) for st in sdfg.all_states() for n in st.nodes() if isinstance(n, dc.sdfg.nodes.MapEntry) and any(
-        isinstance(c, dc.sdfg.nodes.MapEntry) for c in st.scope_children()[n])]
+    nested = [
+        (st, n)
+        for st in sdfg.all_states()
+        for n in st.nodes()
+        if isinstance(n, dc.sdfg.nodes.MapEntry)
+        and any(isinstance(c, dc.sdfg.nodes.MapEntry) for c in st.scope_children()[n])
+    ]
     assert nested, "fixture no longer nests one kernel inside another"
     for state, entry in nested:
         assert kernel_body(state, sdfg, entry, state.scope_children()) == []
     # and the inner one, which is a leaf, does carry the statement
-    inner = [(st, n) for st in sdfg.all_states() for n in st.nodes()
-             if isinstance(n, dc.sdfg.nodes.MapEntry) and st.entry_node(n) is not None]
+    inner = [
+        (st, n)
+        for st in sdfg.all_states()
+        for n in st.nodes()
+        if isinstance(n, dc.sdfg.nodes.MapEntry) and st.entry_node(n) is not None
+    ]
     assert any(kernel_body(st, sdfg, n, st.scope_children()) for st, n in inner), "inner printed nothing"
 
 
@@ -246,7 +263,8 @@ def test_the_reduction_op_is_read_off_the_wcr():
     sdfg = matvec.to_sdfg(simplify=True)
     normalize_for_tree(sdfg)
     state, entry = next(
-        (st, n) for st in sdfg.all_states() for n in st.nodes() if isinstance(n, dc.sdfg.nodes.MapEntry))
+        (st, n) for st in sdfg.all_states() for n in st.nodes() if isinstance(n, dc.sdfg.nodes.MapEntry)
+    )
     assert introspect.kernel_reductions(state, entry) == ["+ over i1 -> C"]
     # A different op reads as itself, not as "+".
     exit_node = state.exit_node(entry)
@@ -261,8 +279,12 @@ def test_a_body_is_not_recovered_by_slicing_the_emitted_block():
     line and every body line carried the full indent."""
     sdfg = shaped.to_sdfg(simplify=True)
     normalize_for_tree(sdfg)
-    state, entry = next((st, n) for st in sdfg.all_states() for n in st.nodes()
-                        if isinstance(n, dc.sdfg.nodes.MapEntry) and st.entry_node(n) is None)
+    state, entry = next(
+        (st, n)
+        for st in sdfg.all_states()
+        for n in st.nodes()
+        if isinstance(n, dc.sdfg.nodes.MapEntry) and st.entry_node(n) is None
+    )
     body = kernel_body(state, sdfg, entry, state.scope_children())
     assert body, "the fixture kernel emits nothing"
     for line in body:

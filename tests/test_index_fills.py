@@ -9,6 +9,7 @@ collapses to ALL-ZEROS, which silently degrades a gather ``a[i] = b[ip[i]]`` int
 into a maximal write conflict on ``a[0]``. Both are invisible to validation -- the oracle reads the same
 degenerate ``ip`` -- so only an explicit test pins the property.
 """
+
 import numpy as np
 import pytest
 

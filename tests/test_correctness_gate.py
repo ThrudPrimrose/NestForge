@@ -11,6 +11,7 @@ a number that is wrong -- so the properties are pinned here rather than inferred
 Each test names the failure it prevents. Two of them are regressions of bugs that shipped: a NaN that
 was reported as a PERFECT match, and a verdict read off zero elements.
 """
+
 import numpy as np
 import pytest
 
@@ -102,8 +103,10 @@ def test_diff_stats_agrees_with_computing_both_numbers_separately():
     rng = np.random.default_rng(0)
     for case in ({"x": rng.random(32)}, {"x": rng.random(32) * 1e6}, {"x": rng.random(8), "y": rng.random((4, 4))}):
         perturbed = {k: v + rng.random(v.shape) * 1e-9 for k, v in case.items()}
-        assert arena.diff_stats(case, perturbed) == (arena.maxdiff(case,
-                                                                   perturbed), arena.relative_maxdiff(case, perturbed))
+        assert arena.diff_stats(case, perturbed) == (
+            arena.maxdiff(case, perturbed),
+            arena.relative_maxdiff(case, perturbed),
+        )
 
 
 def test_the_gate_is_never_tighter_than_the_output_dtype_can_express():

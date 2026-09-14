@@ -4,6 +4,7 @@
 reaches the same fixed point as draining the per-move arm surface -- so the deterministic default and the
 agent's move-by-move policy agree.
 """
+
 import numpy as np
 
 import dace
@@ -35,8 +36,8 @@ def sibling_maps(a: f64[N], b: f64[N], c: f64[N]):
 
 def map_count(sdfg):
     return sum(
-        isinstance(n, nodes.MapEntry) for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states()
-        for n in st.nodes())
+        isinstance(n, nodes.MapEntry) for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for n in st.nodes()
+    )
 
 
 def test_full_fusion_reaches_a_state_with_no_legal_fusions_left():

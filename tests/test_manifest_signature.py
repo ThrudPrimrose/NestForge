@@ -11,6 +11,7 @@ Scratch transients are the case that breaks the tie: the C-style memory model ma
 transient a caller-allocated parameter, so it sits in the numpy signature between the outputs and the size
 symbols and must appear in the manifest at exactly that position.
 """
+
 import ast
 
 import numpy as np

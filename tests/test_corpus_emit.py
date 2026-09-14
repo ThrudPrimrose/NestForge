@@ -6,6 +6,7 @@ Emission is C-style: the kernel allocates nothing, so the caller pre-allocates e
 outputs, the DaCe ``__return`` value, and scratch transients -- and reads the results back out of the
 in-place buffers. ``alloc_run`` does exactly that, driven by the emitted function's own signature.
 """
+
 import inspect
 
 import numpy as np
@@ -29,8 +30,10 @@ def test_emit_numpy_labels_regions_and_states():
     import ast
 
     from nestforge.ir.emit_numpy import body_or_pass
-    src = sdfg_to_numpy(kernels()["scientific_computing/map_reduce/azimint_hist/azimint_hist"].to_sdfg(simplify=True),
-                        "k")
+
+    src = sdfg_to_numpy(
+        kernels()["scientific_computing/map_reduce/azimint_hist/azimint_hist"].to_sdfg(simplify=True), "k"
+    )
     ast.parse(src)  # valid python despite the interleaved comments
     assert "# loop region (" in src
     assert "# state (" in src
@@ -94,8 +97,9 @@ def test_foundation_track_reachable_via_iter_dace_kernels():
     """Guards against foundation silently yielding 0 kernels again (it did until DACE_TRACKS included
     it): sample the first two non-TSVC foundation kernels and check each still builds to an SDFG.
     ``to_sdfg`` runs isolated -- a freshly-generated ``_dace.py`` can crash the codegen it drives."""
-    foundation = sorted((k for k in iter_dace_kernels("foundation") if "tsvc" not in k.short_name),
-                        key=lambda k: k.short_name)
+    foundation = sorted(
+        (k for k in iter_dace_kernels("foundation") if "tsvc" not in k.short_name), key=lambda k: k.short_name
+    )
     assert foundation, "foundation track yielded no kernels"
     for kernel in foundation[:2]:
         result = run_isolated(lambda k=kernel: {"ok": k.program().to_sdfg(simplify=True) is not None})
@@ -108,8 +112,12 @@ def test_gemm_matmul_emits_and_computes():
     A, B, C = rng.random((NI, NK)), rng.random((NK, NJ)), rng.random((NI, NJ))
     alpha, beta = np.array([1.5]), np.array([2.0])
     ref = alpha[0] * A @ B + beta[0] * C
-    call, src = alloc_run("scientific_computing/dense_linear_algebra/gemm/gemm", "gemm", dict(NI=NI, NJ=NJ, NK=NK),
-                          dict(A=A, B=B, C=C.copy(), alpha=alpha, beta=beta))
+    call, src = alloc_run(
+        "scientific_computing/dense_linear_algebra/gemm/gemm",
+        "gemm",
+        dict(NI=NI, NJ=NJ, NK=NK),
+        dict(A=A, B=B, C=C.copy(), alpha=alpha, beta=beta),
+    )
     assert "@" in src and "np.empty" not in src  # MatMul -> numpy matmul, no internal allocation
     np.testing.assert_allclose(call["C"], ref)
 
@@ -134,8 +142,12 @@ def test_nussinov_conditionalblock_emits_and_computes():
     # complement_sum / pair_bonus are read-only config scalars (a complementary base pair sums to 3 and
     # scores 1); the emit takes them by value, so supply them -- unsupplied, they default to 0 and the DP
     # never scores a pairing.
-    call, src = alloc_run("scientific_computing/dynamic_programming/nussinov/nussinov", "nussinov", dict(N=N),
-                          dict(seq=seq, complement_sum=3, pair_bonus=1))
+    call, src = alloc_run(
+        "scientific_computing/dynamic_programming/nussinov/nussinov",
+        "nussinov",
+        dict(N=N),
+        dict(seq=seq, complement_sum=3, pair_bonus=1),
+    )
     assert "if " in src and "else:" in src  # the guards lower through ConditionalBlock
 
     def match(b1, b2):
@@ -155,8 +167,9 @@ def test_nussinov_conditionalblock_emits_and_computes():
                     t[i, j] = np.maximum(t[i, j], t[i + 1, j - 1])
             for k in range(i + 1, j):
                 t[i, j] = np.maximum(t[i, j], t[i, k] + t[k + 1, j])
-    np.testing.assert_array_equal(call["table"],
-                                  t)  # functional->in-place: DP table is a named buffer; int DP -> bit-exact
+    np.testing.assert_array_equal(
+        call["table"], t
+    )  # functional->in-place: DP table is a named buffer; int DP -> bit-exact
 
 
 def test_contour_integral_two_returns_solve_and_indirect_negate():
@@ -165,13 +178,16 @@ def test_contour_integral_two_returns_solve_and_indirect_negate():
     NR, NM, slab = 5, 3, 2
     rng = np.random.default_rng(1)
     crand = lambda shape: (rng.random(shape) + 1j * rng.random(shape)).astype(np.complex128)
-    Ham, int_pts, Y = crand((slab + 1, NR, NR)), crand((32, )), crand((NR, NM))
+    Ham, int_pts, Y = crand((slab + 1, NR, NR)), crand((32,)), crand((NR, NM))
     # contour_radius is a read-only config scalar (the reference's 1.0 default = the unit circle); dace lowers
     # it to a required by-value param -- the python kwarg default is lost -- so supply it, else it reads 0 and
     # the |z| < radius residue negate never fires (garbage vs the oracle below, which uses 1.0).
-    call, src = alloc_run("scientific_computing/dense_linear_algebra/contour_integral/contour_integral",
-                          "contour_integral", dict(NR=NR, NM=NM, slab_per_bc=slab, num_int_pts=32),
-                          dict(Ham=Ham, int_pts=int_pts, Y=Y, contour_radius=1.0))
+    call, src = alloc_run(
+        "scientific_computing/dense_linear_algebra/contour_integral/contour_integral",
+        "contour_integral",
+        dict(NR=NR, NM=NM, slab_per_bc=slab, num_int_pts=32),
+        dict(Ham=Ham, int_pts=int_pts, Y=Y, contour_radius=1.0),
+    )
     assert "np.complex128(" in src and "dace." not in src  # casts normalized to numpy
 
     P0 = np.zeros((NR, NM), np.complex128)
@@ -224,7 +240,7 @@ def test_mandelbrot_nested_sdfg_in_map_emits_and_computes():
         for j in range(YN):
             for k in range(XN):
                 if I[j, k]:
-                    Z[j, k] = Z[j, k]**2 + C[j, k]
+                    Z[j, k] = Z[j, k] ** 2 + C[j, k]
     Nc[Nc == scal["maxiter"] - 1] = 0
     np.testing.assert_array_equal(call["N_out"], Nc)
     np.testing.assert_array_equal(call["Z_out"], Z)  # bit-exact
@@ -234,13 +250,16 @@ def test_emission_does_not_mutate_caller_sdfg():
     """``sdfg_to_numpy`` must be read-only: widening nested SDFGs runs on a copy, so a caller that
     inspects or compiles the same SDFG afterwards (e.g. the DaCe-reference competitor) is unaffected."""
     from dace.sdfg import nodes
+
     sdfg = kernels()["scientific_computing/map_reduce/mandelbrot1/mandelbrot1"].to_sdfg(simplify=True)
 
     def nsdfg_in_subsets(g):
         return {
             e.dst_conn: str(e.data.subset)
             for st in g.all_states()
-            for n in st.nodes() if isinstance(n, nodes.NestedSDFG) for e in st.in_edges(n)
+            for n in st.nodes()
+            if isinstance(n, nodes.NestedSDFG)
+            for e in st.in_edges(n)
         }
 
     before = nsdfg_in_subsets(sdfg)
@@ -253,6 +272,7 @@ def test_nbody_nested_where_emits_and_computes():
     it emits correctly once ExpandNestedSDFGInputs offsets the multi-dim mask condition fully."""
     from nestforge.ir.emit_numpy import UnsupportedNest
     from dace.frontend.python.common import DaceSyntaxError
+
     N, Nt = 6, 4
     rng = np.random.default_rng(0)
     mass, pos, vel = rng.random(N) + 0.5, rng.random((N, 3)), rng.random((N, 3))
@@ -275,14 +295,13 @@ def test_nbody_nested_where_emits_and_computes():
         # IndexError, and ``np.empty(Nt + 1)`` registers ``Nt_plus_1`` as BOTH a scalar and a shape symbol so
         # add_symbol raises FileExistsError. The test runs once DaCe promotes the scalar instead of colliding.
         pytest.xfail(
-            f"stock DaCe cannot lower nbody's masked assignment / Nt+1 scalar-symbol collision: {type(e).__name__}")
+            f"stock DaCe cannot lower nbody's masked assignment / Nt+1 scalar-symbol collision: {type(e).__name__}"
+        )
     inputs = dict(mass=mass, pos=pos, vel=vel, dt=np.array([dt]), G=np.array([G]), softening=np.array([soft]))
     try:
-        call, _ = alloc_run("scientific_computing/n_body_methods/nbody/nbody",
-                            "nbody",
-                            dict(N=N, Nt=Nt),
-                            inputs,
-                            sdfg=sdfg)
+        call, _ = alloc_run(
+            "scientific_computing/n_body_methods/nbody/nbody", "nbody", dict(N=N, Nt=Nt), inputs, sdfg=sdfg
+        )
     except UnsupportedNest:
         # The emitter's own explicit refusal: it names the DaCe-side ExpandNestedSDFGInputs gap it hit.
         pytest.xfail("ExpandNestedSDFGInputs multi-dim condition offset not fixed in this DaCe")
@@ -359,12 +378,17 @@ def test_azimint_hist_three_level_nested_return_and_computes():
     size-1 array read as ``compute_bin_ret_0[0]`` in an inter-state assignment but written as a scalar
     local -- the emitter reconciles the two by stripping the scalar-local ``[0]``. Returns histw/histu."""
     from nestforge.ir.emit_numpy import UnsupportedNest
+
     N, npt = 200, 8
     rng = np.random.default_rng(0)
     data, radius = rng.random(N), rng.random(N)
     try:
-        call, _ = alloc_run("scientific_computing/map_reduce/azimint_hist/azimint_hist", "azimint_hist",
-                            dict(N=N, npt=npt, bins=npt), dict(data=data, radius=radius))
+        call, _ = alloc_run(
+            "scientific_computing/map_reduce/azimint_hist/azimint_hist",
+            "azimint_hist",
+            dict(N=N, npt=npt, bins=npt),
+            dict(data=data, radius=radius),
+        )
     except UnsupportedNest:
         # Genuine upstream gap, not a missing tool -- xfail (see the nbody test above for why xfail,
         # never skip: CI's zero-skip unit set must stay green while a real fix still shows up as PASS.
@@ -388,12 +412,17 @@ def test_azimint_naive_wcr_reduction_emits_and_computes():
     accumulation inside a nested SDFG. Exercises WCR augmented-assignment plus the inner/outer size-1
     descriptor reconciliation (a nested scalar accumulator read back as a size-1 array)."""
     from nestforge.ir.emit_numpy import UnsupportedNest
+
     N, npt = 150, 8
     rng = np.random.default_rng(0)
     data, radius = rng.random(N), rng.random(N)
     try:
-        call, _ = alloc_run("scientific_computing/map_reduce/azimint_naive/azimint_naive", "azimint_naive",
-                            dict(N=N, npt=npt), dict(data=data, radius=radius))
+        call, _ = alloc_run(
+            "scientific_computing/map_reduce/azimint_naive/azimint_naive",
+            "azimint_naive",
+            dict(N=N, npt=npt),
+            dict(data=data, radius=radius),
+        )
     except UnsupportedNest:
         pytest.xfail("nested-SDFG emission unavailable in this DaCe")
 
@@ -420,8 +449,9 @@ def test_trisolv_loop_shaped_scratch_maxsized_and_computes():
     rng = np.random.default_rng(0)
     L = np.tril(rng.random((N, N))) + N * np.eye(N)
     b = rng.random(N)
-    call, src = alloc_run("scientific_computing/dense_linear_algebra/trisolv/trisolv", "trisolv", dict(N=N),
-                          dict(L=L, b=b))
+    call, src = alloc_run(
+        "scientific_computing/dense_linear_algebra/trisolv/trisolv", "trisolv", dict(N=N), dict(L=L, b=b)
+    )
     assert "np.empty" not in src  # still C-style: no in-kernel allocation
     x = call.get("x", call.get("__return"))
     np.testing.assert_allclose(x, np.linalg.solve(L, b))
@@ -452,8 +482,12 @@ def test_covariance_decreasing_loop_scratch_and_computes():
     rng = np.random.default_rng(0)
     data = rng.random((Nrows, M))
     fn = 8.0
-    call, _ = alloc_run("scientific_computing/dense_linear_algebra/covariance/covariance", "covariance",
-                        dict(M=M, N=Nrows), dict(data=data.copy(), float_n=np.array([fn])))
+    call, _ = alloc_run(
+        "scientific_computing/dense_linear_algebra/covariance/covariance",
+        "covariance",
+        dict(M=M, N=Nrows),
+        dict(data=data.copy(), float_n=np.array([fn])),
+    )
     cov = call.get("cov", call.get("__return"))
     d2 = data - data.mean(axis=0)
     ref = np.zeros((M, M))
@@ -469,14 +503,18 @@ def test_syrk_increasing_loop_scratch_and_computes():
     rng = np.random.default_rng(1)
     A, C = rng.random((N, Mk)), rng.random((N, N))
     alpha, beta = 1.5, 1.2
-    call, _ = alloc_run("scientific_computing/dense_linear_algebra/syrk/syrk", "syrk", dict(N=N, M=Mk),
-                        dict(A=A.copy(), C=C.copy(), alpha=np.array([alpha]), beta=np.array([beta])))
+    call, _ = alloc_run(
+        "scientific_computing/dense_linear_algebra/syrk/syrk",
+        "syrk",
+        dict(N=N, M=Mk),
+        dict(A=A.copy(), C=C.copy(), alpha=np.array([alpha]), beta=np.array([beta])),
+    )
     Cout = call.get("C", call.get("__return"))
     ref = C.copy()
     for i in range(N):
-        ref[i, :i + 1] *= beta
+        ref[i, : i + 1] *= beta
         for k in range(Mk):
-            ref[i, :i + 1] += alpha * A[i, k] * A[:i + 1, k]
+            ref[i, : i + 1] += alpha * A[i, k] * A[: i + 1, k]
     np.testing.assert_allclose(np.tril(Cout), np.tril(ref))
 
 
@@ -485,8 +523,12 @@ def test_jacobi_1d_loopregion_emits_and_computes():
     N, T = 32, 20
     A, B = rng.random(N), rng.random(N)
     Ar, Br = A.copy(), B.copy()
-    call, src = alloc_run("scientific_computing/structured_grids/jacobi_1d/jacobi_1d", "jacobi_1d", dict(N=N, TSTEPS=T),
-                          dict(A=A.copy(), B=B.copy()))
+    call, src = alloc_run(
+        "scientific_computing/structured_grids/jacobi_1d/jacobi_1d",
+        "jacobi_1d",
+        dict(N=N, TSTEPS=T),
+        dict(A=A.copy(), B=B.copy()),
+    )
     assert "while" in src  # the TSTEPS time loop (a LoopRegion)
     for _ in range(1, T):
         Br[1:-1] = 0.33333 * (Ar[:-2] + Ar[1:-1] + Ar[2:])

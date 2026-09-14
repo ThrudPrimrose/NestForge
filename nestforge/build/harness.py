@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """ABI binding for translator-emitted kernels: parse the emitted signature and call it through ctypes."""
+
 from __future__ import annotations
 
 import ctypes
@@ -32,24 +33,19 @@ def c_argtypes(order: List[str], boundary) -> list:
     ]
 
 
-def call_c(so: Path,
-           symbol: str,
-           order: List[str],
-           argtypes: list,
-           boundary,
-           inputs,
-           sizes,
-           reps: int,
-           copy_outputs: bool = True) -> Tuple[Optional[Dict[str, np.ndarray]], float]:
+def call_c(
+    so: Path,
+    symbol: str,
+    order: List[str],
+    argtypes: list,
+    boundary,
+    inputs,
+    sizes,
+    reps: int,
+    copy_outputs: bool = True,
+) -> Tuple[Optional[Dict[str, np.ndarray]], float]:
     """Bind by the C signature order, run once for correctness, then time ``reps`` calls, mutating
     ``inputs`` in place. Callers must run this in a forked child."""
-    return call_native(so,
-                       symbol,
-                       order,
-                       argtypes,
-                       boundary,
-                       inputs,
-                       sizes,
-                       reps,
-                       copy_inputs=False,
-                       copy_outputs=copy_outputs)
+    return call_native(
+        so, symbol, order, argtypes, boundary, inputs, sizes, reps, copy_inputs=False, copy_outputs=copy_outputs
+    )

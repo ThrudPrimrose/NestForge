@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Run the default optimizer's phases on HPCAgent-Bench's fuse_diamond and save what each phase produced."""
+
 from __future__ import annotations
 
 import argparse
@@ -57,8 +58,9 @@ def run_phases_0_to_3(session: Session, out: Path) -> List[dict]:
     print(f"1 shape kernels     {before} -> {nest_count(session)}")
     scopes = session.define_scopes()
     save(session, out, "2-define-scopes")
-    described = ", ".join(f"{k['name']} (reads {', '.join(k['reads'])}; writes {', '.join(k['writes'])})"
-                          for k in scopes)
+    described = ", ".join(
+        f"{k['name']} (reads {', '.join(k['reads'])}; writes {', '.join(k['writes'])})" for k in scopes
+    )
     print(f"2 define scopes     {len(scopes)} kernel(s): {described}; {nest_count(session)} left")
     placement = session.offload()
     if session.targets.gpu:
@@ -83,8 +85,9 @@ def optimize_kernels(session: Session, kernels: List[dict], out: Path) -> None:
         shutil.copy2(built, library)
         session.set_kernel(kernel["id"], str(library), info["symbol"], info["abi_order"])
         entry = f"{info['symbol']}({', '.join(info['abi_order'])})"
-        print(f"4 optimize kernels  {name}: standalone CPF C++, extern \"C\" {entry}, {library.name} by "
-              f"{DEFAULT_COMPILER}")
+        print(
+            f'4 optimize kernels  {name}: standalone CPF C++, extern "C" {entry}, {library.name} by {DEFAULT_COMPILER}'
+        )
 
 
 def sweep_configurations(session: Session, kernels: List[dict], sizes: Dict[str, int]) -> Dict[str, dict]:
@@ -96,8 +99,10 @@ def sweep_configurations(session: Session, kernels: List[dict], sizes: Dict[str,
         if result["winner"] is None:
             raise SystemExit(f"phase 5 found no configuration of {name} that matches its NumPy oracle")
         configs[name] = {key: result[key] for key in CONFIG_KEYS}
-        print(f"5 sweep             {name}: {result['cells']} variants, "
-              f"winner {result['winner']} at {result['time_us']:.1f} us")
+        print(
+            f"5 sweep             {name}: {result['cells']} variants, "
+            f"winner {result['winner']} at {result['time_us']:.1f} us"
+        )
     return configs
 
 

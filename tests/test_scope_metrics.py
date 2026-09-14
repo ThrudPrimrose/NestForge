@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Scope metrics: the work, depth, bytes moved and operational intensity a scheduling agent reads per scope."""
+
 import re
 
 import dace
@@ -25,7 +26,7 @@ def vector_add(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 @dace.program
 def stencil_sweeps(A: dace.float64[N], B: dace.float64[N]):
     for t in range(TSTEPS):
-        for i in dace.map[1:N - 1]:
+        for i in dace.map[1 : N - 1]:
             B[i] = A[i - 1] + A[i] + A[i + 1]
 
 
@@ -48,7 +49,7 @@ def assert_symbolic(actual: sympy.Expr, expected: sympy.Expr) -> None:
 
 def test_a_vector_add_does_one_operation_per_element_over_three_arrays():
     sdfg = vector_add.to_sdfg(simplify=True)
-    (entry, ) = top_level_maps(sdfg)
+    (entry,) = top_level_maps(sdfg)
     metrics = scope_metrics(sdfg, entry)
     assert isinstance(metrics, ScopeMetrics)
     assert_symbolic(metrics.work, N)
@@ -59,8 +60,8 @@ def test_a_vector_add_does_one_operation_per_element_over_three_arrays():
 
 def test_a_loop_around_a_stencil_map_scales_work_and_bytes_by_the_sweeps_but_not_oi():
     sdfg = stencil_sweeps.to_sdfg(simplify=True)
-    (loop, ) = [block for block in sdfg.nodes() if isinstance(block, LoopRegion)]
-    (entry, ) = top_level_maps(sdfg)
+    (loop,) = [block for block in sdfg.nodes() if isinstance(block, LoopRegion)]
+    (entry,) = top_level_maps(sdfg)
     assert entry in [node for state in loop.all_states() for node in state.nodes()]
     in_map = scope_metrics(sdfg, entry)
     in_loop = scope_metrics(sdfg, loop)
@@ -80,9 +81,9 @@ def test_fusing_a_producer_into_its_consumer_raises_oi_above_both_parts():
     producer, consumer = top_level_maps(session.sdfg)
     unfused = [scope_metrics(session.sdfg, entry) for entry in (producer, consumer)]
     assert [m.oi for m in unfused] == [sympy.Rational(1, 24), sympy.Rational(1, 16)]
-    (move, ) = session.list_fusions()
+    (move,) = session.list_fusions()
     session.fuse(move["id"])
-    (fused_entry, ) = top_level_maps(session.sdfg)
+    (fused_entry,) = top_level_maps(session.sdfg)
     fused = scope_metrics(session.sdfg, fused_entry)
     assert_symbolic(fused.work, 2 * N)
     assert_symbolic(fused.bytes, 24 * N)
@@ -92,7 +93,7 @@ def test_fusing_a_producer_into_its_consumer_raises_oi_above_both_parts():
 def test_scope_metrics_leaves_the_program_untouched():
     sdfg = stencil_sweeps.to_sdfg(simplify=True)
     before = sdfg.to_json()
-    (loop, ) = [block for block in sdfg.nodes() if isinstance(block, LoopRegion)]
+    (loop,) = [block for block in sdfg.nodes() if isinstance(block, LoopRegion)]
     scope_metrics(sdfg, loop)
     scope_metrics(sdfg, top_level_maps(sdfg)[0])
     assert sdfg.to_json() == before
@@ -103,7 +104,7 @@ def test_describe_appends_metrics_to_kernel_lines_only_when_asked():
     plain = session.describe()
     with_metrics = session.describe(metrics=True)
     assert "work=" not in plain
-    (kernel, ) = [line for line in with_metrics.splitlines() if "reads=" in line]
+    (kernel,) = [line for line in with_metrics.splitlines() if "reads=" in line]
     assert kernel.endswith("  work=N depth=1 bytes=24*N OI=0.04167"), kernel
     strip = lambda tree: re.sub(r"\[e\d+:nest:\d+\]", "[nest]", tree)
     assert strip(with_metrics.replace("  work=N depth=1 bytes=24*N OI=0.04167", "")) == strip(plain)

@@ -4,6 +4,7 @@
 
 Operand resolution (read/write expressions, scalar handling) plus a flat class-name -> emitter registry.
 """
+
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -24,17 +25,19 @@ class UnsupportedLibraryNode(Exception):
 def index_str(subset: dace.subsets.Range, keep_singleton: bool = False) -> str:
     """Format a subset as a numpy index/slice string (singleton range -> scalar unless ``keep_singleton``)."""
     parts = []
-    for (beg, end, step) in subset.ranges:
+    for beg, end, step in subset.ranges:
         if str(beg) == str(end):
             parts.append(
-                f"{symbolic.symstr(beg)}:{symbolic.symstr(beg + 1)}" if keep_singleton else symbolic.symstr(beg))
+                f"{symbolic.symstr(beg)}:{symbolic.symstr(beg + 1)}" if keep_singleton else symbolic.symstr(beg)
+            )
         elif str(step) == "1":
             parts.append(f"{symbolic.symstr(beg)}:{symbolic.symstr(end + 1)}")
         else:
             stop = exclusive_stop(end, step)
             if stop is None:
-                raise UnsupportedLibraryNode(f"subset range ({beg}, {end}, {step}) has a step of undecidable sign; "
-                                             "no sound numpy slice stop")
+                raise UnsupportedLibraryNode(
+                    f"subset range ({beg}, {end}, {step}) has a step of undecidable sign; no sound numpy slice stop"
+                )
             # numpy reads a negative slice stop as "count from the end", not its arithmetic value, so a
             # provably-negative stop is refused rather than silently selecting nothing.
             maybe_negative = stop is not None and not (stop >= 0)
@@ -42,7 +45,8 @@ def index_str(subset: dace.subsets.Range, keep_singleton: bool = False) -> str:
                 raise UnsupportedLibraryNode(
                     f"descending subset range ({beg}, {end}, {step}) has stop {symbolic.symstr(stop)}, which is not "
                     "provably >= 0; numpy would read a negative value as an offset from the END of the axis "
-                    "and silently select nothing")
+                    "and silently select nothing"
+                )
             if symbolic.symstr(stop) == "-1":
                 parts.append(f"{symbolic.symstr(beg)}::{symbolic.symstr(step)}")
             else:
@@ -148,8 +152,9 @@ def data_edge(edges: list, node: nodes.Node, kind: str) -> dace.sdfg.graph.Multi
     for e in edges:
         if not e.data.is_empty():
             return e
-    raise UnsupportedLibraryNode(f"{type(node).__name__} has no data-carrying {kind} edge (only empty "
-                                 "ordering edges); not emittable as numpy")
+    raise UnsupportedLibraryNode(
+        f"{type(node).__name__} has no data-carrying {kind} edge (only empty ordering edges); not emittable as numpy"
+    )
 
 
 def in_conn_edge(edges: list, node: nodes.Node, conn: str) -> dace.sdfg.graph.MultiConnectorEdge:
@@ -168,33 +173,27 @@ def out_conn_edge(edges: list, node: nodes.Node, conn: str) -> dace.sdfg.graph.M
     return edge
 
 
-def in_expr(state: dace.SDFGState,
-            node: nodes.Node,
-            conn: Optional[str],
-            sdfg: dace.SDFG,
-            edges: Optional[list] = None) -> str:
+def in_expr(
+    state: dace.SDFGState, node: nodes.Node, conn: Optional[str], sdfg: dace.SDFG, edges: Optional[list] = None
+) -> str:
     """Read expression for one input connector; pass a precomputed ``edges`` list to avoid rescanning."""
     edges = list(state.in_edges(node)) if edges is None else edges
     edge = data_edge(edges, node, "input") if conn is None else in_conn_edge(edges, node, conn)
     return memlet_expr(edge.data, sdfg)
 
 
-def out_expr(state: dace.SDFGState,
-             node: nodes.Node,
-             conn: Optional[str],
-             sdfg: dace.SDFG,
-             edges: Optional[list] = None) -> str:
+def out_expr(
+    state: dace.SDFGState, node: nodes.Node, conn: Optional[str], sdfg: dace.SDFG, edges: Optional[list] = None
+) -> str:
     """Read expression for the buffer an output connector writes (for a ``beta`` accumulate with no input)."""
     edges = list(state.out_edges(node)) if edges is None else edges
     edge = data_edge(edges, node, "output") if conn is None else out_conn_edge(edges, node, conn)
     return memlet_expr(edge.data, sdfg)
 
 
-def out_lhs(state: dace.SDFGState,
-            node: nodes.Node,
-            conn: Optional[str],
-            sdfg: dace.SDFG,
-            edges: Optional[list] = None) -> str:
+def out_lhs(
+    state: dace.SDFGState, node: nodes.Node, conn: Optional[str], sdfg: dace.SDFG, edges: Optional[list] = None
+) -> str:
     """Write target for one output connector (see :func:`in_expr` for ``edges``)."""
     edges = list(state.out_edges(node)) if edges is None else edges
     edge = data_edge(edges, node, "output") if conn is None else out_conn_edge(edges, node, conn)
@@ -202,7 +201,8 @@ def out_lhs(state: dace.SDFGState,
         # no emitter applies an output WCR; an accumulate would silently become an overwrite.
         raise UnsupportedLibraryNode(
             f"{type(node).__name__} output into {edge.data.data} carries a reduction (WCR) that no library-node "
-            "emitter applies; not emittable as numpy -- fall back to the DaCe variant")
+            "emitter applies; not emittable as numpy -- fall back to the DaCe variant"
+        )
     return memlet_lhs(edge.data, sdfg)
 
 
@@ -381,7 +381,7 @@ def emit_scan(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -
         ScanOp.SUM: dace.dtypes.ReductionType.Sum,
         ScanOp.PRODUCT: dace.dtypes.ReductionType.Product,
         ScanOp.MIN: dace.dtypes.ReductionType.Min,
-        ScanOp.MAX: dace.dtypes.ReductionType.Max
+        ScanOp.MAX: dace.dtypes.ReductionType.Max,
     }.get(node.op)
     func = _SCAN_FUNC.get(red)
     if func is None:
@@ -424,8 +424,10 @@ def reject_runtime_scalars(node: nodes.LibraryNode, state: dace.SDFGState) -> No
     """Refuse a BLAS node with a runtime ``_alpha``/``_beta`` connector (only compile-time values are folded)."""
     dst_conns = {e.dst_conn for e in state.in_edges(node)}
     if "_alpha" in dst_conns or "_beta" in dst_conns:
-        raise UnsupportedLibraryNode(f"{type(node).__name__} has a runtime _alpha/_beta scalar connector; "
-                                     "only compile-time alpha/beta are emitted -- fall back to the DaCe variant")
+        raise UnsupportedLibraryNode(
+            f"{type(node).__name__} has a runtime _alpha/_beta scalar connector; "
+            "only compile-time alpha/beta are emitted -- fall back to the DaCe variant"
+        )
 
 
 def triangle_funcs(uplo: str) -> Tuple[str, str, int]:
@@ -598,9 +600,11 @@ def emit_library_node(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace
     """Numpy statement(s) for a library node; raises if it is a communication / refused / unregistered node."""
     cls = type(node).__name__
     if is_comm_node(node):  # checked before the name registry: MPI Reduce collides by name with ours
-        raise UnsupportedLibraryNode(f"{cls} is a distributed communication node (dace.libraries.mpi/pblas); "
-                                     "not emittable as single-process numpy -- isolate it in its own state and "
-                                     "externalize the compute before/after it")
+        raise UnsupportedLibraryNode(
+            f"{cls} is a distributed communication node (dace.libraries.mpi/pblas); "
+            "not emittable as single-process numpy -- isolate it in its own state and "
+            "externalize the compute before/after it"
+        )
     if cls in REFUSED_LIBRARY_NODES:
         raise UnsupportedLibraryNode(f"{cls}: {REFUSED_LIBRARY_NODES[cls]}")
     emitter = LIBNODE_EMITTERS.get(cls)

@@ -7,6 +7,7 @@ frontend labels carrying source line numbers, nested SDFGs at the top level, sta
 outside any map -- are things a frontend produces and a hand-built graph does not, so a hand-built
 fixture would test the pass against a shape it never meets.
 """
+
 import re
 
 import numpy as np
@@ -18,9 +19,19 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 
 from nestforge.build.isolation import run_isolated
-from nestforge.ir.names import (WRAP_PARAM, block_kind, free_tasklets, in_order, inline_top_level_nsdfgs,
-                                normalize_for_tree, rename_map_params, rename_transient_data, top_level_nsdfgs,
-                                wrap_free_tasklets, wrap_groups)
+from nestforge.ir.names import (
+    WRAP_PARAM,
+    block_kind,
+    free_tasklets,
+    in_order,
+    inline_top_level_nsdfgs,
+    normalize_for_tree,
+    rename_map_params,
+    rename_transient_data,
+    top_level_nsdfgs,
+    wrap_free_tasklets,
+    wrap_groups,
+)
 
 LABEL = re.compile(r"^(state|for|while|if|block|continue|break|return)(\d+)_(\d+)$")
 KERNEL = re.compile(r"^kernel(\d+)_(\d+)$")
@@ -79,7 +90,10 @@ def all_blocks(sdfg):
 
 def all_maps(sdfg):
     return [
-        n for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for n in st.nodes()
+        n
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.all_states()
+        for n in st.nodes()
         if isinstance(n, nodes.MapEntry)
     ]
 
@@ -272,8 +286,12 @@ def test_a_nested_sdfg_inside_a_map_is_left_alone():
     """That one is a kernel body, not structure."""
     sdfg = nested_call.to_sdfg(simplify=False)
     normalize_for_tree(sdfg)
-    inside = [(st, n) for st in sdfg.all_states() for n in st.nodes()
-              if isinstance(n, nodes.NestedSDFG) and st.entry_node(n) is not None]
+    inside = [
+        (st, n)
+        for st in sdfg.all_states()
+        for n in st.nodes()
+        if isinstance(n, nodes.NestedSDFG) and st.entry_node(n) is not None
+    ]
     assert inside, "fixture no longer has a nested SDFG inside a map"
 
 
@@ -415,8 +433,9 @@ def test_renaming_params_that_shadow_their_targets_preserves_values(program):
     params = list(entry.map.params)
     wanted = [f"i{axis}" for axis in range(len(params))]
     # Without a genuine shadow the fixture takes the safe path and the assertions below prove nothing.
-    assert any(p in wanted and p != w for p, w in zip(params, wanted)), \
+    assert any(p in wanted and p != w for p, w in zip(params, wanted)), (
         f"fixture params {params} do not shadow the rename targets {wanted}; the test would be vacuous"
+    )
 
     rename_map_params(sdfg)
 
@@ -507,8 +526,13 @@ def test_a_reduction_ends_on_an_accessnode_to_mapexit_edge():
     reduced over which axes."""
     sdfg = reduce_kernel.to_sdfg(simplify=True)
     normalize_for_tree(sdfg)
-    wcr_edges = [(st, e) for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states() for e in st.edges()
-                 if e.data is not None and e.data.wcr is not None]
+    wcr_edges = [
+        (st, e)
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.all_states()
+        for e in st.edges()
+        if e.data is not None and e.data.wcr is not None
+    ]
     assert wcr_edges, "the fixture no longer carries a WCR"
     for state, edge in wcr_edges:
         assert isinstance(edge.src, nodes.AccessNode), f"WCR sources from {type(edge.src).__name__}"

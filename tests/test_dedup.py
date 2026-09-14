@@ -6,6 +6,7 @@ The pair exists because neither key subsumes the other, and using the wrong one 
 search axis: compile flags never reach the emitted C++, so a source-level key reports every fp rung as
 the same variant.
 """
+
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,8 +15,17 @@ import pytest
 
 from nestforge.build import flags as flags_mod
 from nestforge.build.flags import FP_LEVELS
-from nestforge.build.dedup import (asm_bodies, asm_body_key, collapse, cpp_body_key, function_bodies, needed_libraries,
-                                   parse_disassembly, representatives, variant_key)
+from nestforge.build.dedup import (
+    asm_bodies,
+    asm_body_key,
+    collapse,
+    cpp_body_key,
+    function_bodies,
+    needed_libraries,
+    parse_disassembly,
+    representatives,
+    variant_key,
+)
 from nestforge.build.sdfg import BuildOptions, build_archive
 from nestforge.build.toolchain import compiler_family
 
@@ -44,8 +54,9 @@ def build(tmp_path: Path, source: str, fp_mode: str, tag: str = "v", compiler: s
     src = tmp_path / f"{tag}.cpp"
     src.write_text(source)
     family = compiler_family(compiler)
-    composed = flags_mod.base_flags(family) + flags_mod.fp_flags(family, fp_mode) + flags_mod.cost_flags(
-        family, "default")
+    composed = (
+        flags_mod.base_flags(family) + flags_mod.fp_flags(family, fp_mode) + flags_mod.cost_flags(family, "default")
+    )
     out = tmp_path / tag
     opts = BuildOptions(compiler=compiler, flags=composed)
     build_archive([src], out, out / f"lib{tag}.a", out / f"lib{tag}.so", opts)
@@ -170,10 +181,11 @@ def test_needed_libraries_reads_the_link_axis_the_object_key_misses(tmp_path):
     obj = build(tmp_path, SIN_KERNEL, "fast-math", tag="need")
     bare, withlib = tmp_path / "libbare.so", tmp_path / "libwith.so"
     subprocess.run(["gcc", "-shared", str(obj), "-o", str(bare)], check=True, capture_output=True)
-    subprocess.run(["gcc", "-shared", str(obj), "-Wl,--no-as-needed", "-lmvec", "-o",
-                    str(withlib)],
-                   check=True,
-                   capture_output=True)
+    subprocess.run(
+        ["gcc", "-shared", str(obj), "-Wl,--no-as-needed", "-lmvec", "-o", str(withlib)],
+        check=True,
+        capture_output=True,
+    )
     assert asm_body_key(bare, SYMBOL) == asm_body_key(withlib, SYMBOL), "the code really is the same"
     assert needed_libraries(bare) != needed_libraries(withlib), "the link really is not"
     assert any("mvec" in soname for soname in needed_libraries(withlib))

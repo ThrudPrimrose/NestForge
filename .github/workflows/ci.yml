@@ -1,8 +1,7 @@
 name: CI
 
-# uv-driven, per pyproject.toml [tool.uv.sources]: dace always tracks spcl/dace@extended and
-# hpcagent_bench always tracks spcl/HPCAgent-Bench@main -- never a commit pin.
-# Must stay credential-free: a dep needing a secret stops CI running on fork PRs.
+# pip installs from pyproject.toml: dace tracks spcl/dace@extended, hpcagent_bench tracks
+# spcl/HPCAgent-Bench@main. Must stay credential-free so CI runs on fork PRs.
 
 on:
   push:
@@ -15,115 +14,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: lint (yapf + ruff)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v10.1.0
-        with:
-          python-version: '3.12'
-      - run: uv sync --extra dev
-      - name: yapf --diff
-        run: uv run yapf --diff --recursive --parallel nestforge tests
-      - name: ruff check
-        run: uv run ruff check .
-
   unit:
-    name: unit
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: system toolchain (scripts/setup_apt.sh)
-        run: sudo bash scripts/setup_apt.sh
-      - run: uv sync --extra dev
-      # Proves the resolved dace is @extended, not a stale/PyPI one -- stage_labels only exists there.
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: sudo bash scripts/setup_apt.sh
+      - run: pip install -e ".[dev]"
+      - run: pre-commit run --all-files --show-diff-on-failure
+      # stage_labels exists only on dace@extended, so a stale or PyPI dace fails here.
       - name: dace is @extended
-        run: uv run python -c "from dace.transformation.passes.canonicalize import stage_labels; stage_labels()"
-      - name: pytest (unit set, 0-skip enforced)
+        run: python -c "from dace.transformation.passes.canonicalize import stage_labels; stage_labels()"
+      - name: pytest (a skip fails the run)
         env:
           NESTFORGE_CI_NO_SKIP: '1'
-        run: |
-          uv run pytest -m "not integration and not gpu and not vendor" -n auto --timeout=900 \
-            --cov=nestforge --cov-report=
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-unit
-          path: .coverage*
-          include-hidden-files: true
+        run: pytest -m "not integration and not gpu and not vendor" -n auto --timeout=900 --cov=nestforge --cov-report=term
 
   integration:
-    name: integration
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: system toolchain (scripts/setup_apt.sh)
-        run: sudo bash scripts/setup_apt.sh
-      - run: uv sync --extra dev
-      - name: pytest (integration set)
-        run: |
-          uv run pytest -m "integration and not gpu and not vendor" --timeout=900 \
-            --cov=nestforge --cov-report=
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-integration
-          path: .coverage*
-          include-hidden-files: true
-
-  coverage:
-    name: coverage
-    needs: [unit, integration]
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      # The unit/integration split just changed the numbers -- raise this once the suite settles.
-      FLOOR: 0
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v10.1.0
-        with:
-          python-version: '3.12'
-      - run: uv sync --extra dev
-      - uses: actions/download-artifact@v4
-        with:
-          name: coverage-unit
-          path: cov-unit
-      - uses: actions/download-artifact@v4
-        with:
-          name: coverage-integration
-          path: cov-integration
-      - name: combine + report
-        run: |
-          cp cov-unit/.coverage* cov-integration/.coverage* .
-          uv run coverage combine
-          uv run coverage report --precision=1 | tee coverage.txt
-          uv run coverage xml -o coverage.xml
-          {
-            echo '### Total coverage (unit + integration)'
-            echo '```'
-            tail -1 coverage.txt
-            echo '```'
-            echo '<details><summary>Per-module</summary>'
-            echo
-            echo '```'
-            cat coverage.txt
-            echo '```'
-            echo '</details>'
-          } >> "$GITHUB_STEP_SUMMARY"
-          # --precision matters here: without it a rounded 89.7 reads as 90 and a floor of 90 passes.
-          uv run coverage report --precision=1 --fail-under="$FLOOR"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: |
-            coverage.txt
-            coverage.xml
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: sudo bash scripts/setup_apt.sh
+      - run: pip install -e ".[dev]"
+      - run: pre-commit run --all-files --show-diff-on-failure
+      - name: pytest
+        run: pytest -m "integration and not gpu and not vendor" --timeout=900 --cov=nestforge --cov-report=term

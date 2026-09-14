@@ -3,6 +3,7 @@
 """Normalize an SDFG into the canonical form the agent's text tree is projected from: no top-level
 nested SDFG, ``0:trip:1`` iteration domains, every computation inside a map, and canonical
 ``<kind><level>_<index>`` labels for every block, map, transient, and map parameter."""
+
 from __future__ import annotations
 
 import copy
@@ -14,8 +15,16 @@ import dace
 from dace import data as dt
 from dace.sdfg import nodes
 from dace.sdfg.replace import replace_dict
-from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion,
-                             LoopRegion, ReturnBlock, SDFGState)
+from dace.sdfg.state import (
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+    SDFGState,
+)
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
@@ -71,9 +80,9 @@ def inline_top_level_nsdfgs(sdfg: dace.SDFG) -> int:
     0 without touching anything when there is none (a cheap scan avoids two pattern-match sweeps)."""
     if not top_level_nsdfgs(sdfg):
         return 0
-    applied = sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs,
-                                                  options={"top_level_only": True},
-                                                  validate=False)
+    applied = sdfg.apply_transformations_repeated(
+        ExpandNestedSDFGInputs, options={"top_level_only": True}, validate=False
+    )
     return applied + sdfg.apply_transformations_repeated(InlineMultistateSDFG, validate=False)
 
 
@@ -115,20 +124,24 @@ def wrap_group(state: SDFGState, group: List[nodes.Tasklet], name: str) -> None:
         out_edges = list(state.out_edges(tasklet))
         for edge in in_edges:
             state.remove_edge(edge)
-            state.add_memlet_path(edge.src,
-                                  entry,
-                                  tasklet,
-                                  memlet=copy.deepcopy(edge.data),
-                                  src_conn=edge.src_conn,
-                                  dst_conn=edge.dst_conn)
+            state.add_memlet_path(
+                edge.src,
+                entry,
+                tasklet,
+                memlet=copy.deepcopy(edge.data),
+                src_conn=edge.src_conn,
+                dst_conn=edge.dst_conn,
+            )
         for edge in out_edges:
             state.remove_edge(edge)
-            state.add_memlet_path(tasklet,
-                                  exit_node,
-                                  edge.dst,
-                                  memlet=copy.deepcopy(edge.data),
-                                  src_conn=edge.src_conn,
-                                  dst_conn=edge.dst_conn)
+            state.add_memlet_path(
+                tasklet,
+                exit_node,
+                edge.dst,
+                memlet=copy.deepcopy(edge.data),
+                src_conn=edge.src_conn,
+                dst_conn=edge.dst_conn,
+            )
         # a tasklet with no data on one side still needs holding, or it floats out of the map
         if not in_edges:
             state.add_nedge(entry, tasklet, dace.Memlet())

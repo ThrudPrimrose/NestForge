@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Phase 3: the default offload runs every kernel on the GPU target and copies data around it."""
+
 import numpy as np
 import pytest
 
@@ -39,7 +40,7 @@ def test_cpu_target_keeps_the_kernel_on_the_host_and_leaves_the_graph_unchanged(
 def test_gpu_target_schedules_the_kernel_on_the_device_over_device_memory(tmp_path):
     session, _ = kernel_session(True, tmp_path)
 
-    (kernel, ) = session.offload()["kernels"]
+    (kernel,) = session.offload()["kernels"]
 
     ext, _ = session.resolve(kernel["id"], "kernel")
     state = next(s for s in session.sdfg.all_states() if ext in s.nodes())

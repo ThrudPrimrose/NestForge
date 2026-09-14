@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The CPU quick start runs every phase on fuse_diamond and leaves each phase's artifact behind."""
+
 import json
 import os
 import subprocess
@@ -26,7 +27,10 @@ def test_cpu_quickstart_prints_one_line_per_phase_and_saves_every_artifact(tmp_p
     phases = [line.split()[0] for line in run.stdout.splitlines() if line[:1].isdigit()]
     assert phases == ["0", "1", "2", "3", "4", "5"]
     assert sorted(p.name for p in tmp_path.glob("*.sdfg")) == [
-        "0-normalize.sdfg", "1-shape-kernels.sdfg", "2-define-scopes.sdfg", "4-optimize-kernels.sdfg"
+        "0-normalize.sdfg",
+        "1-shape-kernels.sdfg",
+        "2-define-scopes.sdfg",
+        "4-optimize-kernels.sdfg",
     ]
     kernel_dir = tmp_path / "kernels" / "extcall_0"
     assert sorted(p.name for p in kernel_dir.iterdir()) == ["extcall_0.cpp", "libextcall_0.a"]

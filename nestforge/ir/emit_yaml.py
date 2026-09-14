@@ -4,6 +4,7 @@
 
 Field names mirror what hpcagent_bench's translator expects.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
@@ -83,9 +84,7 @@ def manifest_dict(boundary: Boundary, name: str, sizes: Optional[Dict[str, int]]
         "func_name": name,
         "relative_path": "extended",
         "level": 1,
-        "parameters": {
-            preset: int_params
-        },
+        "parameters": {preset: int_params},
         "input_args": arg_order(boundary, sdfg, arrays),
         "array_args": arrays,
         "output_args": list(boundary.outputs),

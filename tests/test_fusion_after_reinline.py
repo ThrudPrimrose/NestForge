@@ -6,6 +6,7 @@ A NestedSDFG hides its maps from ``MapFusion``, so a re-inlined program left nes
 reports success while doing it. ``normalize`` + ``full_fusion`` already fold ``two_maps`` to one map, so
 the fixture fissions it back apart first to get two nests worth externalizing.
 """
+
 import numpy as np
 
 import dace

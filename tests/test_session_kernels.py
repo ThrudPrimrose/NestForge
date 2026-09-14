@@ -1,6 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Session phases 4 and 5: optimize a kernel, sweep its configurations, link the winner."""
+
 import numpy as np
 import pytest
 

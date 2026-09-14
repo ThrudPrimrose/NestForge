@@ -6,6 +6,7 @@ the layer Session ADDS -- id minting, the stale-handle guard on every mutation, 
 region/nest distinction, and that each tool returns plain JSON-able data (never a live node). The wrapped
 transforms have their own tests; here we only prove Session drives them safely.
 """
+
 import numpy as np
 import pytest
 import dace
@@ -14,7 +15,7 @@ from nestforge.phases.normalize import Targets
 from nestforge.phases.scopes import top_level_map_entries
 from nestforge.session import Session, StaleHandle
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
