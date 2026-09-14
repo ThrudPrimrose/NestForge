@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nest-forge"
 version = "0.0.1"
-description = "Extract DaCe loop-/map-nests and offload them to external compilers via a compile-and-race arena."
+description = "Phased whole-program optimization of DaCe programs for deterministic, human and agent drivers."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [{ name = "Yakup Budanaz", email = "budanaz.yakup@gmail.com" }]
 keywords = ["dace", "sdfg", "loop-nest", "code-generation", "compilers", "autotuning", "benchmarking", "hpc"]
 classifiers = [
@@ -16,31 +16,20 @@ classifiers = [
     "Topic :: Software Development :: Compilers",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
 
-# Every PyPI-resolvable module-level import of `nestforge`. `dace` and `hpcagent_bench` are deliberately
-# ABSENT although nestforge imports both: hpcagent_bench is not on PyPI at all (listing it makes `pip install
-# -e .` fail), and PyPI's `dace` tops out at 1.0.2 while nest-forge needs the `extended` branch. Both
-# come from requirements-dev.txt as editable sibling checkouts. A PEP 508 git URL is worse than omitting
-# them -- pip treats it as unsatisfied by a local editable and reinstalls over the checkout.
-dependencies = ["numpy", "pyyaml", "sympy"]
-
-[project.scripts]
-nestforge = "nestforge.__main__:main"
+# dace and hpcagent_bench resolve through [tool.uv.sources] below -- git, not a version pin.
+dependencies = ["numpy", "pyyaml", "sympy", "dace", "hpcagent_bench"]
 
 [project.optional-dependencies]
-# Single source of truth for the dev/test/format tools; requirements-dev.txt installs this extra.
+# Single source of truth for the dev/test/format tools.
 dev = [
     "pytest",
     "pytest-timeout",
     "pytest-xdist",
-    # CI phase 5 reports ONE total over phases 3 and 4; --cov-append is what joins them
+    # CI's coverage job combines the unit + integration data files; --cov-append is what joins them
     "pytest-cov",
-    # perf/plot_*.py only -- outside the package, so importing nestforge never needs it
-    "matplotlib",
     # PINNED: yapf's wrapping changes between releases, so an unpinned one fails the CI format gate
     "yapf==0.43.0",
     # the lint pass ([tool.ruff] below); the format gate is yapf + clang-format only
@@ -55,13 +44,12 @@ Repository = "https://github.com/spcl/NestForge"
 [tool.setuptools.packages.find]
 include = ["nestforge*"]
 
+[tool.uv.sources]
+dace = { git = "https://github.com/spcl/dace.git", branch = "extended" }
+hpcagent_bench = { git = "https://github.com/spcl/HPCAgent-Bench.git", branch = "main" }
+
 [tool.coverage.run]
-# `isolation.run_isolated` forks, and the child leaves via ``os._exit`` -- which skips the atexit hook
-# coverage saves from. Everything a test drives INSIDE that fork (most of the emit-and-validate path)
-# therefore read as untested while its tests passed: emit_libnode measured 36.7% from a file whose 35
-# tests all pass. A metric that lies in the direction of "go write tests for code that already has
-# them" is worse than no metric. ``patch = ["_exit"]`` makes the child save before it exits, and
-# ``parallel`` gives each process its own data file to combine.
+# child processes exit via os._exit (skips the atexit save) -- patch it, and give each its own data file.
 patch = ["_exit"]
 parallel = true
 
@@ -69,8 +57,9 @@ parallel = true
 addopts = "-q -p no:cacheprovider"
 testpaths = ["tests"]
 markers = [
-    "integration: needs a vendor compiler (nvc/icx/icpx) or a heavy launcher not present on the CI runner",
+    "integration: compiles and runs kernels; slow, its own CI job",
     "e2e: end-to-end -- compiles and runs, but only with g++/clang++, so it DOES run on the CI runner",
+    "gpu: needs a CUDA device -- never on CI",
 ]
 
 [tool.yapf]
@@ -78,10 +67,7 @@ column_limit = 120
 
 [tool.ruff]
 line-length = 120
-# `external/` is the pinned hpcagent-bench submodule -- a separate repo with its own style gate. Linting
-# it here reports thousands of findings nest-forge cannot fix and buries its own.
-extend-exclude = ["external"]
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint.per-file-ignores]
 # Tests legitimately: guard the module with a skipif/pytestmark before imports (E402), use lambda

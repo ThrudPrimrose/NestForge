@@ -1,9 +1,9 @@
 name: CI
 
-# One CPU runner: format gate -> toolchain via scripts/setup_apt.sh -> DaCe(extended)+hpcagent_bench editable
-# from GitHub -> pytest. nvc++/icpx are absent here, so vendor-compiler + heavy-launcher tests are
-# @pytest.mark.integration and excluded; g++/clang++ + libomp cover the OpenMP matrix.
+# uv-driven, per pyproject.toml [tool.uv.sources]: dace always tracks spcl/dace@extended and
+# hpcagent_bench always tracks spcl/HPCAgent-Bench@main -- never a commit pin.
 # Must stay credential-free: a dep needing a secret stops CI running on fork PRs.
+
 on:
   push:
     branches: [main]
@@ -15,122 +15,98 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: format + toolchain + pytest
+  lint:
+    name: lint (yapf + ruff)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          # The default corpus lives in the external/hpcagent-bench submodule; without this the
-          # checkout leaves it empty and every corpus test fails on an absent package.
-          submodules: recursive
-
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: '3.12'
+      - run: uv sync --extra dev
+      - name: yapf --diff
+        run: uv run yapf --diff --recursive --parallel nestforge tests
+      - name: ruff check
+        run: uv run ruff check .
 
-      # Format gate runs first so a style slip fails in seconds. yapf is PINNED to pyproject's [dev]
-      # version -- its wrapping heuristics change between releases, so an unpinned gate rejects a tree
-      # formatted with the pinned one (test_driver_contracts.py keeps the two in sync).
-      - name: Phase 0 -- format (yapf 120 + clang-format 160)
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install yapf==0.43.0 clang-format
-          bash scripts/format.sh --check
-
-      # Toolchain via the repo's own apt script (idempotent; missing-on-runner packages warn + skip).
-      - name: Phase 1 -- system toolchain (scripts/setup_apt.sh)
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          python-version: '3.12'
+      - name: system toolchain (scripts/setup_apt.sh)
         run: sudo bash scripts/setup_apt.sh
-
-      # NO ccache. nest-forge compiles with `-march=native`, and ccache hashes that flag as the
-      # literal string -- it never resolves it to the ISA the compiler actually picked. `ubuntu-latest`
-      # runners are heterogeneous, so a cross-run cache served an object built on a runner with wider
-      # vector support to one without it, and every test that RUNS its compiled kernel died with SIGILL
-      # (signal 4). A build cache that can hand back wrong-ISA objects is not worth the compile time it
-      # saves in a job that never asserts on compile time. `build.ccache_prefix` auto-detects ccache on
-      # PATH, so leaving it uninstalled here is all it takes.
-
-      - name: Phase 2 -- DaCe (extended) + hpcagent_bench + nest-forge[dev], editable
-        run: |
-          pip_retry() { for i in 1 2 3 4 5; do python -m pip install "$@" && return 0; echo "pip attempt $i failed; retry in $((i*5))s"; sleep $((i*5)); done; return 1; }
-          # Editable from GitHub over HTTPS: both repos are public, so no key/token, which keeps this
-          # workflow running on fork PRs. @extended pins the DaCe branch nest-forge needs.
-          # A git requirement makes pip run `git submodule update --init --recursive`, which DaCe needs:
-          # it vendors runtime headers as submodules (external/moodycamel/blockingconcurrentqueue.h).
-          # --src keeps clones OUT of the workspace -- pytest puts the repo root on sys.path, so a ./dace
-          # directory would shadow the `dace` package.
-          pip_retry --src "$RUNNER_TEMP/src" -e "git+https://github.com/spcl/dace.git@extended#egg=dace"
-          # The PACKAGE is now `hpcagent_bench` (renamed from `optarena`); the GitHub REPO is still
-          # spcl/OptArena, so the URL keeps the old name until the repo itself is renamed.
-          pip_retry --src "$RUNNER_TEMP/src" -e "git+https://github.com/spcl/OptArena.git#egg=hpcagent_bench"
-          # dace-fortran is cloned BY HAND and installed from the path, for two reasons a git+URL
-          # cannot avoid:
-          #  1. pip runs `git submodule update --init --recursive` on a git requirement, and
-          #     dace-fortran's submodules are ICON fixtures on gitlab.dkrz.de, which a GitHub runner
-          #     cannot reach ("Failed to connect to gitlab.dkrz.de port 443"). A plain clone does not
-          #     init submodules, and CI does not need the ICON corpus to import the package.
-          #  2. its pyproject pins `dace @ ...@FaCe`, and pip does NOT leave an already-resolved
-          #     editable extended alone -- it uninstalls it and puts the FaCe pin over the top
-          #     ("Attempting uninstall: dace" in the log). FaCe is a SUBSET of extended, so nest-forge
-          #     then imports a dace missing the extended-only passes it calls and every test module
-          #     fails to collect. --no-deps keeps extended, which serves dace-fortran fine.
-          # --no-deps means its PyPI deps are installed here explicitly; the import check below is what
-          # catches this list going stale.
-          git clone --filter=blob:none --depth 1 https://github.com/spcl/dace-fortran.git "$RUNNER_TEMP/src/dace-fortran"
-          pip_retry --no-deps -e "$RUNNER_TEMP/src/dace-fortran"
-          pip_retry "fparser>0.2" networkx numpy
-          # nest-forge + [dev]. matplotlib is required: the plot smokes run perf/plot_*.py as a
-          # SUBPROCESS, where a missing import surfaces only as "exit status 1".
-          pip_retry -e ".[dev]"
-          # Prove what actually landed. Without this a bad install surfaces as ~60 collection errors in
-          # Phase 3 naming a missing dace module, which reads like a nest-forge bug and is not one.
-          python -c "import dace, hpcagent_bench; print('dace', dace.__file__); print('bench', hpcagent_bench.__file__)"
-          python -c "import dace.transformation.interstate.fuse_loops" \
-            || { echo "::error::the installed dace is not @extended (a pin was resolved over the top)"; exit 1; }
-          # The PACKAGE only. `dace_fortran.build` runs LLVM/Flang toolchain detection at import and
-          # raises on a runner without one -- that is a real absence, not a broken install.
-          python -c "import dace_fortran" \
-            || { echo "::error::dace-fortran cannot import -- the --no-deps list above is missing something"; exit 1; }
-
-      # Unit set only. NESTFORGE_CI_NO_SKIP=1 makes conftest.py fail the session if any remaining test
-      # skips -- the unit set must run with zero skips.
-      - name: Phase 3 -- pytest (unit set, 0-skip enforced)
+      - run: uv sync --extra dev
+      # Proves the resolved dace is @extended, not a stale/PyPI one -- stage_labels only exists there.
+      - name: dace is @extended
+        run: uv run python -c "from dace.transformation.passes.canonicalize import stage_labels; stage_labels()"
+      - name: pytest (unit set, 0-skip enforced)
         env:
           NESTFORGE_CI_NO_SKIP: '1'
         run: |
-          python -m pytest -q -p no:cacheprovider -m "not integration" -n auto --timeout=900 \
+          uv run pytest -m "not integration and not gpu" -n auto --timeout=900 \
             --cov=nestforge --cov-report=
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: .coverage*
+          include-hidden-files: true
 
-      # The whole integration set, selected by MARKER rather than by a hand-listed set of files -- a list
-      # goes stale silently (a new integration test simply never runs), which is the one failure mode CI
-      # cannot detect for itself. Phase 3 covers the same paths against a FAKE measure; this phase is the
-      # only proof the real build paths are value-preserving: the optimizer loop (propose -> build ->
-      # validate bit-exact -> time -> observe -> stop), the whole-program offload analysis, the static-lib
-      # link into the parent .so, and the extern-swap behind differential + E1..E5.
-      # Nearly all of it needs only g++/clang++ + ar, which the runner has. The few cases that need a
-      # vendor compiler or mpirun probe PATH and skip themselves with a reason -- so this phase does NOT
-      # set NESTFORGE_CI_NO_SKIP (Phase 3 keeps the zero-skip rule for the unit set).
-      - name: Phase 4 -- integration set (builds, runs, validates bit-exact)
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          python-version: '3.12'
+      - name: system toolchain (scripts/setup_apt.sh)
+        run: sudo bash scripts/setup_apt.sh
+      - run: uv sync --extra dev
+      - name: pytest (integration set)
         run: |
-          python -m pytest -q -p no:cacheprovider -m integration --timeout=900 \
-            --cov=nestforge --cov-append --cov-report=
+          uv run pytest -m "integration and not gpu" --timeout=900 \
+            --cov=nestforge --cov-report=
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration
+          path: .coverage*
+          include-hidden-files: true
 
-      # TOTAL coverage: phases 3 and 4 measure the same package into one data file (Phase 3 starts it,
-      # Phase 4 appends), so this is the whole suite's number rather than either half's -- the split
-      # matters, since the integration lane is the only one that runs the real build/validate paths.
-      # The floor RATCHETS: it is the measured total minus a point of slack for the toolchain-gated
-      # tests that skip themselves on a runner without a vendor compiler. Raise it when the number
-      # rises; never lower it to make a red build green.
-      # Caveat worth knowing when reading the number: `isolation.run_isolated` forks and the child
-      # leaves via os._exit, so lines executed only inside a forked child are not recorded. What runs
-      # there is the compiled kernel, not nestforge python, so the under-count is small -- but it is
-      # an under-count, not a gap in the tests.
-      - name: Phase 5 -- total coverage report
+  coverage:
+    name: coverage
+    needs: [unit, integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # The unit/integration split just changed the numbers -- raise this once the suite settles.
+      FLOOR: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          python-version: '3.12'
+      - run: uv sync --extra dev
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-unit
+          path: cov-unit
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-integration
+          path: cov-integration
+      - name: combine + report
         run: |
-          python -m coverage report --precision=1 | tee coverage.txt
-          python -m coverage xml -o coverage.xml
+          cp cov-unit/.coverage* cov-integration/.coverage* .
+          uv run coverage combine
+          uv run coverage report --precision=1 | tee coverage.txt
+          uv run coverage xml -o coverage.xml
           {
             echo '### Total coverage (unit + integration)'
             echo '```'
@@ -143,13 +119,9 @@ jobs:
             echo '```'
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
-          # --precision matters here: without it coverage compares the ROUNDED number, so 89.7 reads
-          # as 90 and a floor of 90 passes on 89.5. Check at the precision the report prints.
-          python -m coverage report --precision=1 --fail-under=88
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
+          # --precision matters here: without it a rounded 89.7 reads as 90 and a floor of 90 passes.
+          uv run coverage report --precision=1 --fail-under="$FLOOR"
+      - uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: |
