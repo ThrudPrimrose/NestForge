@@ -1,14 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The ``ExternalCall`` library node and its expansions.
-
-Payload (numpy source + manifest config + the chosen compiled lib) rides on the node as
-properties. Two expansions:
-  * ``ExpandDaceReference`` (default) -- rebuilds the extracted nest as a NestedSDFG (the DaCe
-    competitor and the correctness fallback);
-  * ``ExpandExternCall`` -- a CPP tasklet calling the extern-C entry of the chosen ``.so``,
-    linked via a per-node environment.
-"""
+"""The ``ExternalCall`` library node: wraps an externally compiled kernel call, with
+``ExpandDaceReference`` (NestedSDFG fallback) and ``ExpandExternCall`` (linked ``.so`` call) expansions."""
 from __future__ import annotations
 
 import copy
@@ -42,19 +35,14 @@ def connector_for(arg: str, outputs: set) -> str:
 
 
 def value_connectors(node: "ExternalCall", state: dace.SDFGState) -> set:
-    """Connectors DaCe defines as a VALUE, not a pointer: those whose memlet covers one element.
-
-    A ``double x`` passed where the compiled signature wants ``double*`` is a compile error, and every
-    scalar transient crossing the boundary (symbol write-backs, fused index/reduction scalars) is exactly
-    this case -- so the call must take their address.
-    """
+    """Connectors whose memlet covers one element: DaCe declares these as a VALUE, so the call
+    must take their address, not pass them as a pointer."""
     single = set()
     for edge in state.in_edges(node):
         if edge.dst_conn is not None and bool(edge.data.subset) and edge.data.subset.num_elements() == 1:
             single.add(edge.dst_conn)
     for edge in state.out_edges(node):
-        # dace.sdfg.infer_types adds the dynamic clause on the OUT side only; a dynamic non-WCR output
-        # stays a pointer, and taking its address would be wrong.
+        # infer_types adds the dynamic clause on the OUT side only; a dynamic non-WCR output stays a pointer.
         dynamic_pointer = edge.data.dynamic and edge.data.wcr is None
         if (edge.src_conn is not None and bool(edge.data.subset) and edge.data.subset.num_elements() == 1
                 and not dynamic_pointer):
@@ -63,31 +51,14 @@ def value_connectors(node: "ExternalCall", state: dace.SDFGState) -> set:
 
 
 def proto_and_call(node: "ExternalCall", state: dace.SDFGState) -> Tuple[str, str]:
-    """Build the ``extern "C"`` prototype and the call expression for the linked kernel.
-
-    Array args are passed by their connector variable (``_in_X`` / ``_out_Y``); size symbols are
-    referenced by name (available in the tasklet's symbol scope).
-
-    The parameter order is ``node.abi_order`` -- the order the .so was ACTUALLY compiled with, recorded by
-    the arena from the emitted signature. It is NOT the manifest's ``input_args`` (a role order: inputs,
-    outputs, symbols): numpyto emits ``param_order()`` (arrays sorted, then scalars) and deliberately
-    ignores ``input_args``. Declaring the wrong order here is silent -- C linkage matches on the symbol
-    NAME alone, so a self-consistent-but-wrong prototype compiles and links cleanly and simply passes each
-    buffer to the wrong parameter.
-
-    Scalar C types come from the manifest, not a blanket ``int64_t``: a float value scalar crosses as a
-    ``double``, and declaring it ``int64_t`` both truncates it and breaks the SysV register class (GP vs
-    XMM), so the callee reads garbage.
-    """
+    """Build the ``extern "C"`` prototype and call expression for the linked kernel, in
+    ``node.abi_order`` (the order the .so was actually compiled with, not the manifest's role order --
+    C linkage matches on name alone, so the wrong order links cleanly and silently swaps buffers)."""
     manifest = node.config
     arrays = set(manifest["array_args"])
     outputs = set(manifest["output_args"])
     dtypes_map = {a: v["dtype"] for a, v in manifest["init"]["arrays"].items()}
-    # `init.scalars` carries a bare DEFAULT VALUE, not a descriptor -- emit_yaml writes `{name: 0.0}` and
-    # relies on the value's type to say "double" (see its comment on float value scalars). The dict form is
-    # still accepted, but requiring it made this mapping unconditionally EMPTY, so every float value scalar
-    # fell to the 'int64' default below and was declared int64_t: the truncation + SysV register-class
-    # break this function's own docstring warns about, with nothing to signal it.
+    # A scalar's dtype comes from its dict descriptor; a bare default value falls back to its own type.
     scalar_dtypes = {
         n: (v["dtype"] if isinstance(v, dict) else np.dtype(type(v)).name)
         for n, v in (manifest["init"].get("scalars") or {}).items()
@@ -106,8 +77,7 @@ def proto_and_call(node: "ExternalCall", state: dace.SDFGState) -> Tuple[str, st
         if arg in arrays:
             dt = dtypes_map[arg]
             if dt not in _CPP_SCALAR:
-                # A dtype with no C spelling here (complex, float16, unsigned, ...) would otherwise KeyError
-                # mid-codegen. Refuse with the name + dtype so the caller can keep the DaceReference variant.
+                # No C spelling for this dtype (complex, float16, unsigned, ...): refuse instead of a codegen KeyError.
                 raise ValueError(f"ExternalCall {node.name!r}: array {arg!r} has dtype {dt!r}, which has no "
                                  f"extern-C spelling (known: {sorted(_CPP_SCALAR)}); keep the DaceReference "
                                  "implementation for this nest")
@@ -115,10 +85,7 @@ def proto_and_call(node: "ExternalCall", state: dace.SDFGState) -> Tuple[str, st
             const = "" if arg in outputs else "const "
             conn = connector_for(arg, outputs)
             if conn not in in_conns and conn not in out_conns:
-                # The compiled signature takes an argument this node has no connector for -- typically a
-                # caller-allocated SCRATCH transient, which the emitted C exposes as a parameter but which
-                # never crosses the ExternalCall boundary. Emitting the call anyway would reference an
-                # undefined identifier in the tasklet (and pass no buffer at all). Refuse instead.
+                # A caller-allocated scratch transient: exposed as a parameter but never crosses this boundary.
                 raise ValueError(f"ExternalCall {node.name!r}: abi_order names {arg!r}, but the node has no "
                                  f"{conn!r} connector (a caller-allocated scratch buffer is not passed across "
                                  "the ExternalCall boundary); keep the DaceReference implementation")
@@ -134,13 +101,9 @@ def proto_and_call(node: "ExternalCall", state: dace.SDFGState) -> Tuple[str, st
 
 @dace.library.environment
 class ExternLibEnv:
-    """Links the chosen compiled ``.so`` into the SDFG program.
-
-    The lib path is per-node, so :meth:`configure` stamps it onto the (module-level, hence
-    registry-resolvable) class right before expansion. M0 assumes one extern call per build;
-    per-node isolation is an M1 concern.
-    """
-    __slots__ = ()  # never instantiated: consumed purely as a class (dace resolves environments by class)
+    """Links the chosen compiled ``.so`` into the SDFG program; ``configure`` stamps the path onto
+    this (module-level) class right before expansion."""
+    __slots__ = ()  # dace resolves environments by class, never instantiated
 
     cmake_minimum_version = None
     cmake_packages = []
@@ -158,26 +121,19 @@ class ExternLibEnv:
 
     @classmethod
     def reset(cls) -> None:
-        """Drop every accumulated library. Call before expanding a fresh SDFG so libraries from a PREVIOUS
-        build (whose temp directories may already be gone) are not carried onto this link line."""
+        """Drop every accumulated library; call before expanding a fresh SDFG."""
         cls.cmake_libraries = []
         cls.cmake_link_flags = []
 
     @classmethod
     def configure(cls, lib_path: str) -> None:
-        """ACCUMULATE one nest's library. Every ``ExternalCall`` shares this single environment class, so
-        assigning here (rather than appending) kept only the LAST expanded nest's library: on a multi-nest
-        kernel every earlier nest's extern-C symbol was then unresolved at link, or the wrong .so was
-        called. Entries are deduplicated, so nests sharing one backend library add it once.
-
-        A ``.a`` is linked into the parent .so directly; the generated tasklet references the nest's entry
-        symbol, so ld pulls that member in. NOTE a multi-member archive is NOT reliably pulled under DaCe's
-        sorted link flags -- prefer a shared library for a multi-nest swap (see ``arena.link_shared``).
-        A ``.so`` additionally needs an rpath so the built parent resolves it at load."""
+        """Accumulate one nest's library (every ``ExternalCall`` shares this class, so assigning
+        instead of appending would drop earlier nests' libraries on a multi-nest build)."""
         lib = os.path.abspath(lib_path)
         if lib not in cls.cmake_libraries:
             cls.cmake_libraries = [*cls.cmake_libraries, lib]
         if not lib.endswith(".a"):
+            # .a links directly (a multi-member archive is not reliably pulled); .so needs an rpath.
             rpath = f"-Wl,-rpath,{os.path.dirname(lib)}"
             if rpath not in cls.cmake_link_flags:
                 cls.cmake_link_flags = [*cls.cmake_link_flags, rpath]
@@ -222,8 +178,7 @@ class ExpandExternCall(ExpandTransformation):
 @dace.library.node
 class ExternalCall(nodes.LibraryNode):
     """A loop-/map-nest lowered to an external, separately-compiled call."""
-    # no __slots__: dace LibraryNode (make_properties, __dict__-based); also carries _standalone_sdfg,
-    # an in-memory-only attr outside the Property schema.
+    # no __slots__: dace LibraryNode (make_properties, __dict__-based)
 
     implementations = {"DaceReference": ExpandDaceReference, "ExternCall": ExpandExternCall}
     default_implementation = "DaceReference"
