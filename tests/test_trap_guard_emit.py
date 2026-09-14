@@ -16,6 +16,7 @@ from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
     collect_assumptions,
     insert_assumption_guards,
 )
+from dace.transformation.passes.scatter_conflict_guard import insert_scatter_guard
 
 from nestforge.ir.emit_numpy import UnsupportedNest, load_emitted, sdfg_to_numpy, trap_guard_lines
 
@@ -66,35 +67,31 @@ def test_the_emitted_guard_actually_trips_on_a_violated_assumption():
     insert_assumption_guards(sdfg)
     kernel = compiled(sdfg_to_numpy(sdfg, "k"), "k")
     with pytest.raises(AssertionError):
-        kernel(np.zeros(4), np.zeros(4), -1)  # N < 0 -- __builtin_trap() in the compiled kernel
+        kernel(np.zeros(4), np.zeros(4), -1)  # N < 0 -- std::abort() in the compiled kernel
 
 
 def test_a_guard_outside_the_canonicalize_guard_state_is_translated_too():
-    """scatter_conflict_guard emits the same tasklet under its own state label. Matching on the
-    canonicalize label -- what the emitter used to do -- missed it and failed the nest as 'not Python'."""
+    """scatter_conflict_guard emits its own trap tasklet under its own state label, not the
+    canonicalize guard's label. Matching on the label -- what the emitter used to do -- missed it
+    and failed the nest as 'not Python'."""
     sdfg = dace.SDFG("scatter_guard")
-    sdfg.add_array("a", [N], dace.float64)
-    sdfg.add_symbol("overlap", dace.int64)
-    trap_state = sdfg.add_state("_scatter_guard_trap_a", is_start_block=True)
-    trap = trap_state.add_tasklet(
-        "check_assumption_a", {}, {}, "if ((overlap > 0)) { __builtin_trap(); }", language=dace.dtypes.Language.CPP
-    )
-    trap.side_effects = True
-    work = sdfg.add_state_after(trap_state, "work")
-    tasklet = work.add_tasklet("w", {"i_a"}, {"o_a"}, "o_a = i_a + 1.0")
-    work.add_edge(work.add_read("a"), None, tasklet, "i_a", dace.Memlet("a[0]"))
-    work.add_edge(tasklet, "o_a", work.add_write("a"), None, dace.Memlet("a[0]"))
+    sdfg.add_array("idx", [3], dace.int64)
+    sdfg.add_array("out", [1], dace.float64)
+    work = sdfg.add_state("work", is_start_block=True)
+    tasklet = work.add_tasklet("w", {}, {"o"}, "o = 1.0")
+    work.add_edge(tasklet, "o", work.add_write("out"), None, dace.Memlet("out[0]"))
+    insert_scatter_guard(sdfg, "idx", elide_if_injective=False)
     sdfg.validate()
 
     src = sdfg_to_numpy(sdfg, "k")
     ast.parse(src)
-    assert "if (overlap > 0):" in src, src
+    assert "raise AssertionError" in src, src
 
-    a = np.zeros(3)
-    compiled(src, "k")(a, overlap=0)
-    assert a[0] == 1.0
+    out = np.zeros(1)
+    compiled(src, "k")(np.array([0, 1, 2], dtype=np.int64), out)
+    assert out[0] == 1.0
     with pytest.raises(AssertionError):
-        compiled(src, "k")(np.zeros(3), overlap=1)
+        compiled(src, "k")(np.array([0, 1, 1], dtype=np.int64), np.zeros(1))
 
 
 @pytest.mark.parametrize(
@@ -110,7 +107,7 @@ def test_c_operators_become_python_operators(c_cond, py_cond):
     """``!=`` must survive the ``!`` rewrite; ``not =`` would be a SyntaxError."""
     state = dace.SDFG("g").add_state()
     trap = state.add_tasklet(
-        "check_assumption_0", {}, {}, f"if ({c_cond}) {{ __builtin_trap(); }}", language=dace.dtypes.Language.CPP
+        "check_assumption_0", {}, {}, f"if ({c_cond}) {{ std::abort(); }}", language=dace.dtypes.Language.CPP
     )
     assert trap_guard_lines(trap)[0] == f"if {py_cond}:"
 
@@ -129,7 +126,7 @@ def test_an_untranslatable_guard_condition_is_refused():
     """Fail at emission, where the tasklet name is still known."""
     state = dace.SDFG("g").add_state()
     trap = state.add_tasklet(
-        "check_assumption_0", {}, {}, "if (a ? b : c) { __builtin_trap(); }", language=dace.dtypes.Language.CPP
+        "check_assumption_0", {}, {}, "if (a ? b : c) { std::abort(); }", language=dace.dtypes.Language.CPP
     )
     with pytest.raises(UnsupportedNest, match="not translatable to python"):
         trap_guard_lines(trap)

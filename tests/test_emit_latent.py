@@ -19,8 +19,18 @@ import sympy
 import dace
 from dace import symbolic
 
+from dace.sdfg.state import LoopRegion
+
 from nestforge.ir.emit_libnode import UnsupportedLibraryNode, data_edge
-from nestforge.ir.emit_numpy import EMITTED_BUILTINS, UnsupportedNest, int_floor, normalize_casts, sdfg_to_numpy
+from nestforge.ir.emit_numpy import (
+    EMITTED_BUILTINS,
+    UnsupportedNest,
+    int_floor,
+    load_emitted,
+    loop_init_value,
+    normalize_casts,
+    sdfg_to_numpy,
+)
 from nestforge.ir.libnode import ExternalCall, proto_and_call
 
 I = sympy.Symbol("i")
@@ -149,7 +159,7 @@ def test_a_one_element_connector_is_passed_by_address():
 
 
 def test_unspellable_array_dtype_is_refused_not_keyerror():
-    # a complex/fp16/unsigned array used to raise a bare KeyError from _CPP_SCALAR mid-codegen; it must be an
+    # a complex/fp16/unsigned array used to raise a bare KeyError from CPP_SCALAR mid-codegen; it must be an
     # actionable refusal naming the array and dtype so the caller can keep the DaceReference variant.
     with pytest.raises(ValueError, match="complex128"):
         proto_and_call(*extern_call_with_dtype("complex128"))
@@ -460,3 +470,70 @@ def test_the_operator_agrees_with_the_helper_on_both_signs(a, b):
     """The rewrite is only safe because it is the SAME function; C's `/` is where they part company."""
     rendered = normalize_casts(f"int_floor({a}, {b})")
     assert eval(rendered) == int_floor(a, b)  # noqa: S307 -- a literal expression this test built
+
+
+def test_classic_c_scalar_cast_names_resolve_through_dace_own_alias_table():
+    """A tasklet may spell a cast the classic C way (``double``, ``long``, ``short``) instead of the
+    numpy-style ``dace.float64`` -- DaCe's own C++ codegen (``cppunparse``) accepts both spellings as
+    the same cast (verified against a compiled DaCe kernel: ``double``/``long``/``short`` truncate
+    exactly like ``.astype``). Before the fix these three were not in the cast table and reached the
+    oracle verbatim, dying with ``NameError`` at exec."""
+    sdfg = dace.SDFG("ccast")
+    sdfg.add_array("a", [4], dace.float64)
+    sdfg.add_array("out_double", [4], dace.float64)
+    sdfg.add_array("out_long", [4], dace.int64)
+    sdfg.add_array("out_short", [4], dace.int16)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", dict(i="0:4"))
+    t = state.add_tasklet(
+        "t",
+        {"inp": None},
+        {"rd": None, "rl": None, "rs": None},
+        "rd = double(inp)\nrl = long(inp)\nrs = short(inp)",
+    )
+    state.add_memlet_path(state.add_read("a"), me, t, dst_conn="inp", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(t, mx, state.add_write("out_double"), src_conn="rd", memlet=dace.Memlet("out_double[i]"))
+    state.add_memlet_path(t, mx, state.add_write("out_long"), src_conn="rl", memlet=dace.Memlet("out_long[i]"))
+    state.add_memlet_path(t, mx, state.add_write("out_short"), src_conn="rs", memlet=dace.Memlet("out_short[i]"))
+    sdfg.validate()
+    src = sdfg_to_numpy(sdfg, "ccast")
+    assert "double(" not in src and "long(" not in src and "short(" not in src  # rewritten, not left bare
+    mod = load_emitted(src, "ccast")
+    a = np.array([1.9, -1.9, 300.7, -2.5])
+    out_double, out_long, out_short = np.zeros(4), np.zeros(4, dtype=np.int64), np.zeros(4, dtype=np.int16)
+    mod.ccast(a, out_double, out_long, out_short)
+    np.testing.assert_array_equal(out_double, a.astype(np.float64))
+    np.testing.assert_array_equal(out_long, a.astype(np.int64))
+    np.testing.assert_array_equal(out_short, a.astype(np.int16))
+
+
+def test_bare_math_prefix_call_is_emitted_and_runnable():
+    """A raw tasklet body may call ``math.<fn>`` for an intrinsic DaCe's frontend does not lower to a
+    numpy replacement (``math.hypot`` has none); :func:`rewrite_math_prefix` leaves it as ``math.<fn>``
+    rather than guess a numpy name, so the emitted kernel needs ``math`` bound. Before the fix nothing
+    bound ``math`` and the oracle died with ``NameError: name 'math' is not defined``."""
+    sdfg = dace.SDFG("mathcall")
+    sdfg.add_array("a", [3], dace.float64)
+    sdfg.add_array("out", [3], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map("m", dict(i="0:3"))
+    t = state.add_tasklet("t", {"inp": None}, {"res": None}, "res = math.hypot(inp, 1.0)")
+    state.add_memlet_path(state.add_read("a"), me, t, dst_conn="inp", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(t, mx, state.add_write("out"), src_conn="res", memlet=dace.Memlet("out[i]"))
+    sdfg.validate()
+    src = sdfg_to_numpy(sdfg, "mathcall")
+    assert "math.hypot(" in src
+    mod = load_emitted(src, "mathcall")
+    a = np.array([3.0, 4.0, 0.0])
+    out = np.zeros(3)
+    mod.mathcall(a, out)
+    np.testing.assert_allclose(out, np.hypot(a, 1.0))
+
+
+def test_loop_init_statement_without_assignment_is_refused_not_indexerror():
+    """``symbol_ranges`` reads a loop's init statement to find its lower bound; a statement with no
+    ``=`` (initialization happens elsewhere) used to raise a bare ``IndexError`` from
+    ``.split("=", 1)[1]`` instead of a named, actionable refusal."""
+    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i")
+    with pytest.raises(UnsupportedNest, match="init statement"):
+        loop_init_value(loop)

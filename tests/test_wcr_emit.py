@@ -157,7 +157,7 @@ def tasklet_wcr_at_exit(name, wcr):
 )
 def test_tasklet_wcr_combine_ops_at_map_exit(wcr, seed, reduce_fn, token):
     """Each supported reduction op (Sum/Product/Max/Min) emitted at a Tasklet's WCR out-edge crossing the
-    map exit must accumulate across the whole range, not overwrite -- exercises every _WCR_BINOP entry."""
+    map exit must accumulate across the whole range, not overwrite -- exercises every WCR_BINOP entry."""
     src = sdfg_to_numpy(tasklet_wcr_at_exit("combine", wcr), "combine")
     assert token in src  # augmented assignment for this op, not a plain overwrite
     mod = load_emitted(src, "combine")
@@ -193,13 +193,13 @@ def test_tasklet_wcr_symbolic_index_target_is_normalized():
     assert "(i) // (2)" in src
     assert "int_floor" not in src
     mod = load_emitted(src, "pairsum")
+    # The emitted signature is exactly DaCe's own call convention (data args, then every symbol
+    # its arglist reports) -- asserted structurally against the real signature, not re-derived.
+    assert list(inspect.signature(vars(mod)["pairsum"]).parameters) == list(sdfg.arglist())
     rng = np.random.default_rng(11)
     a = rng.random(16)
     out = np.zeros(8)
-    # M sizes `out` and nothing else, so DaCe's arglist leaves it out and the emitted signature is
-    # (A, out, N) -- the passed array already carries its own shape. Passing M= would be a TypeError.
-    assert "M" not in sdfg.arglist() and "M" in {str(s) for s in sdfg.free_symbols}
-    mod.pairsum(A=a.copy(), out=out, N=16)
+    mod.pairsum(A=a.copy(), out=out, M=8, N=16)
     np.testing.assert_allclose(out, a.reshape(8, 2).sum(axis=1))
 
 

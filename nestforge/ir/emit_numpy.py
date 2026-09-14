@@ -14,6 +14,7 @@ import functools
 import inspect
 import hashlib
 import importlib.util
+import math
 import re
 import shutil
 import tempfile
@@ -26,7 +27,8 @@ import sympy
 
 import dace
 from dace import symbolic
-from dace.frontend.operations import detect_reduction_type as _detect_reduction_type
+from dace.cpf_lowering import C_CTYPE_DTYPES
+from dace.frontend.operations import detect_reduction_type
 from dace.sdfg import nodes
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion, ReturnBlock
 from dace.sdfg.utils import dfs_topological_sort
@@ -76,7 +78,7 @@ def sub_connectors(code: str, conn_expr: Dict[str, str], pattern: Optional[re.Pa
 
 #: DaCe dtype cast -> numpy scalar constructor. Fixed-width dtypes only, so a non-dtype ``dace.<attr>``
 #: is never rewritten to a nonexistent ``np.<attr>``; ``bool`` maps to ``np.bool_`` (``np.bool`` is gone in NumPy 2).
-_DACE_DTYPES = {
+DACE_DTYPES = {
     "bool": "np.bool_",
     "int8": "np.int8",
     "int16": "np.int16",
@@ -92,13 +94,22 @@ _DACE_DTYPES = {
     "complex64": "np.complex64",
     "complex128": "np.complex128",
 }
-_DACE_CAST = re.compile(r"\bdace\.(" + "|".join(_DACE_DTYPES) + r")\b")
-#: a bare dtype cast (``int64(x)``, unprefixed) that ``symbolic.symstr`` can render; unmatched by
-#: ``_DACE_CAST`` it would raise ``NameError``. The lookbehind skips a qualified ``x.int64(`` attribute.
-_BARE_CAST = re.compile(r"(?<![\w.])(" + "|".join(_DACE_DTYPES) + r")\s*\(")
+DACE_CAST = re.compile(r"\bdace\.(" + "|".join(DACE_DTYPES) + r")\b")
+
+#: classic single-token C scalar spelling (``double``, ``long``, ``int8_t``, ...) -> numpy scalar
+#: constructor, from DaCe's own C-scalar table (``dace.cpf_lowering.C_CTYPE_DTYPES``) -- the same
+#: names DaCe's own codegen accepts as a bare cast in tasklet code. Multi-word spellings
+#: (``long long``, ``unsigned int``) are dropped: they cannot appear as a python call target.
+C_SCALAR_CAST_DTYPES = {name: DACE_DTYPES[dtype] for name, dtype in C_CTYPE_DTYPES.items() if name.isidentifier()}
+#: every bare cast name this emitter resolves -> the numpy scalar constructor it becomes.
+BARE_CAST_DTYPES = {**DACE_DTYPES, **C_SCALAR_CAST_DTYPES}
+#: a bare dtype cast (``int64(x)`` or the classic C spelling ``long(x)``, unprefixed) that
+#: ``symbolic.symstr``/DaCe codegen can produce; unmatched, it would raise ``NameError``. The
+#: lookbehind skips a qualified ``x.int64(`` attribute.
+BARE_CAST = re.compile(r"(?<![\w.])(" + "|".join(sorted(BARE_CAST_DTYPES, key=len, reverse=True)) + r")\s*\(")
 
 #: bare math intrinsic (as DaCe exposes it in tasklet code) -> the numpy function that computes it.
-_MATH_INTRINSICS = {
+MATH_INTRINSICS = {
     "sqrt": "np.sqrt",
     "cbrt": "np.cbrt",
     "exp": "np.exp",
@@ -123,13 +134,13 @@ _MATH_INTRINSICS = {
     "fabs": "np.abs",
     "sign": "np.sign",
 }
-_INTRINSIC_CALL = re.compile(r"(?<![\w.])(" + "|".join(_MATH_INTRINSICS) + r")(?=\s*\()")
+INTRINSIC_CALL = re.compile(r"(?<![\w.])(" + "|".join(MATH_INTRINSICS) + r")(?=\s*\()")
 
 #: DaCe sympy user-function -> the numpy/python expression computing the same integer value.
 #: ``int_floor`` becomes ``//`` because sympy's own floor-division simplify is unsound, not because
 #: python lacks an operator; ``int_ceil`` has none and stays a call, bound via :data:`EMITTED_BUILTINS`.
 #: ``Max``/``Min`` map to python builtins, not numpy, to keep exact integer range/subscript semantics.
-_USERFUNC_REWRITES = {
+USERFUNC_REWRITES = {
     "int_floor": lambda a, b: f"(({a}) // ({b}))",
     "ipow": lambda a, b: f"(({a}) ** ({b}))",
     "Mod": lambda a, b: f"(({a}) % ({b}))",
@@ -150,12 +161,16 @@ def int_ceil(a: int, b: int) -> int:
 
 
 #: Names an emitted kernel calls but does not define; :func:`load_emitted` binds them (never hand-roll this dict).
-EMITTED_BUILTINS = {"np": numpy, "int_floor": int_floor, "int_ceil": int_ceil}
+#: ``math`` is bound because a tasklet may spell an intrinsic ``math.<fn>`` (DaCe's frontend accepts it
+#: alongside ``dace.*``) that :func:`rewrite_math_prefix` leaves unrewritten -- see :data:`NP_VERBATIM_MATH`.
+EMITTED_BUILTINS = {"np": numpy, "math": math, "int_floor": int_floor, "int_ceil": int_ceil}
 
 #: Same names as SOURCE, so a standalone kernel needs no injected namespace; generated from the
 #: functions above so an edit to ``int_ceil`` cannot drift from the emitted text.
 STANDALONE_PREAMBLE = (
-    "import numpy as np\n\n\n" + "\n\n\n".join(inspect.getsource(fn).strip() for fn in (int_floor, int_ceil)) + "\n"
+    "import numpy as np\nimport math\n\n\n"
+    + "\n\n\n".join(inspect.getsource(fn).strip() for fn in (int_floor, int_ceil))
+    + "\n"
 )
 
 
@@ -187,9 +202,9 @@ def load_emitted(source: str, name: str) -> ModuleType:
 
 
 #: qualified ``(dace.)?math.<fn>`` -> its numpy form; anything not listed here or in
-#: :data:`_MATH_INTRINSICS` is left as ``math.<fn>`` rather than guess a bad name.
-_NP_VERBATIM_MATH = frozenset({"power", "arcsin", "arccos", "arctan", "arctan2", "maximum", "minimum", "abs"})
-_MATH_PREFIX_CALL = re.compile(r"\b(?:dace\.)?math\.(\w+)(?=\s*\()")
+#: :data:`MATH_INTRINSICS` is left as ``math.<fn>`` rather than guess a bad name.
+NP_VERBATIM_MATH = frozenset({"power", "arcsin", "arccos", "arctan", "arctan2", "maximum", "minimum", "abs"})
+MATH_PREFIX_CALL = re.compile(r"\b(?:dace\.)?math\.(\w+)(?=\s*\()")
 
 
 def apply_call(code: str, name: str, fn: Callable[..., str]) -> str:
@@ -230,10 +245,10 @@ def apply_call(code: str, name: str, fn: Callable[..., str]) -> str:
 
 
 def rewrite_userfuncs(code: str) -> str:
-    """Rewrite DaCe sympy user-functions (:data:`_USERFUNC_REWRITES`) to numpy/python, to a fixpoint."""
+    """Rewrite DaCe sympy user-functions (:data:`USERFUNC_REWRITES`) to numpy/python, to a fixpoint."""
     for _ in range(16):  # bounded: every rewrite strictly removes one user-function call
         new = code
-        for name, fn in _USERFUNC_REWRITES.items():
+        for name, fn in USERFUNC_REWRITES.items():
             new = apply_call(new, name, fn)
         if new == code:
             return code
@@ -246,38 +261,39 @@ def rewrite_math_prefix(code: str) -> str:
 
     def repl(m: re.Match[str]) -> str:
         fn = m.group(1)
-        if fn in _MATH_INTRINSICS:
-            return _MATH_INTRINSICS[fn]
-        if fn in _NP_VERBATIM_MATH:
+        if fn in MATH_INTRINSICS:
+            return MATH_INTRINSICS[fn]
+        if fn in NP_VERBATIM_MATH:
             return f"np.{fn}"
         return f"math.{fn}"
 
-    return _MATH_PREFIX_CALL.sub(repl, code)
+    return MATH_PREFIX_CALL.sub(repl, code)
 
 
 #: strips a C++ ``decltype(<connector>)`` cast prefix DaCe emits to force a connector's type;
 #: numpy promotes types itself, so the cast is a no-op on the parenthesized value it leaves behind.
-_DECLTYPE_CAST = re.compile(r"\bdecltype\s*\([^()]*\)")
+DECLTYPE_CAST = re.compile(r"\bdecltype\s*\([^()]*\)")
 
 
-@functools.lru_cache(maxsize=None, typed=True)
+@functools.lru_cache(maxsize=4096, typed=True)
 def normalize_casts(code: str) -> str:
     """Rewrite DaCe dtype casts, math intrinsics, and sympy user-functions to numpy, value-preserving."""
-    code = _DECLTYPE_CAST.sub("", code)
-    code = _DACE_CAST.sub(lambda m: _DACE_DTYPES[m.group(1)], code)
-    code = _BARE_CAST.sub(lambda m: f"{_DACE_DTYPES[m.group(1)]}(", code)
+    code = DECLTYPE_CAST.sub("", code)
+    code = DACE_CAST.sub(lambda m: DACE_DTYPES[m.group(1)], code)
+    code = BARE_CAST.sub(lambda m: f"{BARE_CAST_DTYPES[m.group(1)]}(", code)
     # qualified math.* must rewrite before the bare-name pass, whose lookbehind must skip the produced np.sin
     code = rewrite_math_prefix(code)
-    code = _INTRINSIC_CALL.sub(lambda m: _MATH_INTRINSICS[m.group(1)], code)
+    code = INTRINSIC_CALL.sub(lambda m: MATH_INTRINSICS[m.group(1)], code)
     return rewrite_userfuncs(code)
 
 
-#: Every DaCe precondition trap is a connectorless CPP tasklet holding this. Two passes emit it
-#: (canonicalize's symbol assumptions, the scatter-conflict guard), so match the shape, not a label.
-_TRAP_GUARD = re.compile(r"^\s*if\s*\((?P<cond>.+)\)\s*\{\s*__builtin_trap\s*\(\s*\)\s*;?\s*\}\s*;?\s*$", re.DOTALL)
+#: Every DaCe precondition trap is a connectorless CPP tasklet holding this. Several canonicalization
+#: passes emit it (symbol-assumption guards, the scatter-conflict guard, break_anti_dependence,
+#: wavefront skew), so match the shape DaCe emits today (``std::abort()``), not a label.
+TRAP_GUARD = re.compile(r"^\s*if\s*\((?P<cond>.+)\)\s*\{\s*std::abort\s*\(\s*\)\s*;?\s*\}\s*;?\s*$", re.DOTALL)
 
 #: C spellings with a Python equivalent. ``!`` needs the lookahead so ``!=`` survives intact.
-_C_TO_PYTHON = (
+C_TO_PYTHON = (
     (re.compile(r"&&"), " and "),
     (re.compile(r"\|\|"), " or "),
     (re.compile(r"!(?!=)"), " not "),
@@ -288,11 +304,11 @@ _C_TO_PYTHON = (
 
 def trap_guard_lines(tasklet: nodes.Tasklet) -> List[str] | None:
     """Python equivalent of a C trap guard (an aborted precondition), or ``None`` if not one."""
-    matched = _TRAP_GUARD.match(tasklet.code.as_string)
+    matched = TRAP_GUARD.match(tasklet.code.as_string)
     if matched is None:
         return None
     cond = matched.group("cond")
-    for pattern, replacement in _C_TO_PYTHON:
+    for pattern, replacement in C_TO_PYTHON:
         cond = pattern.sub(replacement, cond)
     cond = re.sub(r"\s+", " ", normalize_casts(cond)).strip()  # eval-mode parse rejects a leading space
     try:
@@ -304,14 +320,14 @@ def trap_guard_lines(tasklet: nodes.Tasklet) -> List[str] | None:
     return [f"if {cond}:", f"    raise AssertionError({f'violated assumption in {tasklet.label}'!r})"]
 
 
-@functools.lru_cache(maxsize=None, typed=True)
+@functools.lru_cache(maxsize=4096, typed=True)
 def reduction_type(wcr_str: str) -> dace.dtypes.ReductionType:
     """Cached :func:`detect_reduction_type`; the same WCR string repeats across a reduction's edges."""
-    return _detect_reduction_type(wcr_str)
+    return detect_reduction_type(wcr_str)
 
 
 #: reduction type -> ``(accumulator, term) -> combined expression`` for a WCR (augmented) write.
-_WCR_BINOP = {
+WCR_BINOP = {
     dace.dtypes.ReductionType.Sum: lambda acc, t: f"{acc} + {t}",
     dace.dtypes.ReductionType.Product: lambda acc, t: f"{acc} * {t}",
     dace.dtypes.ReductionType.Max: lambda acc, t: f"np.maximum({acc}, {t})",
@@ -342,7 +358,7 @@ def tasklet_lines(state: dace.SDFGState, sdfg: dace.SDFG, tasklet: nodes.Tasklet
         if e.data.wcr is None:
             conn_expr[e.src_conn] = target
             continue
-        combine = _WCR_BINOP.get(reduction_type(e.data.wcr))
+        combine = WCR_BINOP.get(reduction_type(e.data.wcr))
         if combine is None:
             raise UnsupportedNest(f"tasklet {tasklet.label} has an unsupported WCR {e.data.wcr!r}")
         temp = f"__wcr_{e.src_conn}"
@@ -397,7 +413,7 @@ def copy_lines(state: dace.SDFGState, sdfg: dace.SDFG, dst: nodes.AccessNode) ->
             continue
         lhs, rhs, dst_read = copy_sides(sdfg, dst.data, dst_sub, src_name, src_sub)
         if m.wcr is not None:  # a reduction copy (e.g. a privatized accumulator copied back): accumulate
-            combine = _WCR_BINOP.get(reduction_type(m.wcr))
+            combine = WCR_BINOP.get(reduction_type(m.wcr))
             if combine is None:
                 raise UnsupportedNest(f"reduction (WCR) copy into {dst.data} has an unsupported WCR {m.wcr!r}")
             rhs = combine(dst_read, rhs)
@@ -563,7 +579,7 @@ def map_exit_writes(state: dace.SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntr
             continue  # a plain self-edge moves nothing; a WCR self-edge is an in-place reduction, not a no-op
         lhs, rhs, dst_read = copy_sides(sdfg, dst_name, dst_sub, src_name, src_sub)
         if m.wcr is not None:
-            combine = _WCR_BINOP.get(reduction_type(m.wcr))
+            combine = WCR_BINOP.get(reduction_type(m.wcr))
             if combine is None:
                 raise UnsupportedNest(f"reduction (WCR) write-out into {dst_name} has an unsupported WCR {m.wcr!r}")
             rhs = combine(dst_read, rhs)
@@ -795,7 +811,7 @@ def scratch_arrays(sdfg: dace.SDFG) -> List[str]:
 
 
 #: sympy function heads meaning "this expression reads array data" (DaCe renders ``A[i]`` as ``Subscript(A, i)``).
-_DATA_READ_HEADS = frozenset({"Subscript", "Indexed"})
+DATA_READ_HEADS = frozenset({"Subscript", "Indexed"})
 
 
 def reads_array_data(expr: sympy.Expr, arrays: Mapping[str, dace.data.Data]) -> bool:
@@ -805,7 +821,7 @@ def reads_array_data(expr: sympy.Expr, arrays: Mapping[str, dace.data.Data]) -> 
     the Function head, e.g. ``A_indptr[i]`` has free symbols ``{i}``, not ``A_indptr``).
     """
     for fn in expr.atoms(sympy.Function):
-        if fn.func.__name__ in _DATA_READ_HEADS or fn.func.__name__ in arrays:
+        if fn.func.__name__ in DATA_READ_HEADS or fn.func.__name__ in arrays:
             return True
     return any(str(s) in arrays for s in expr.free_symbols)
 
@@ -819,6 +835,16 @@ def sizable(expr: sympy.Expr, known: set, arrays: Mapping[str, dace.data.Data]) 
     if reads_array_data(expr, arrays):
         return False
     return not {str(s) for s in expr.free_symbols} - known
+
+
+def loop_init_value(loop: LoopRegion) -> sympy.Basic:
+    """The loop variable's initial value from ``init_statement``, or ``0`` when the loop has none."""
+    if loop.init_statement is None:
+        return sympy.Integer(0)
+    text = loop.init_statement.as_string
+    if "=" not in text:
+        raise UnsupportedNest(f"loop {loop.label!r} has an init statement {text!r} with no assignment")
+    return symbolic.pystr_to_symbolic(text.split("=", 1)[1])
 
 
 def symbol_ranges(sdfg: dace.SDFG) -> tuple:
@@ -835,11 +861,7 @@ def symbol_ranges(sdfg: dace.SDFG) -> tuple:
             var = cfg.loop_variable
             if isinstance(rel, (sympy.StrictLessThan, sympy.LessThan)) and str(rel.lhs) == var:
                 his.setdefault(var, []).append(rel.rhs + (1 if isinstance(rel, sympy.LessThan) else 0))
-                los.setdefault(var, []).append(
-                    symbolic.pystr_to_symbolic(cfg.init_statement.as_string.split("=", 1)[1])
-                    if cfg.init_statement is not None
-                    else sympy.Integer(0)
-                )
+                los.setdefault(var, []).append(loop_init_value(cfg))
         for e in cfg.edges():
             for var, rhs in e.data.assignments.items():
                 try:
