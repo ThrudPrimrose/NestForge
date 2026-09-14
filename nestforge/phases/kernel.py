@@ -16,7 +16,6 @@ import dace
 from dace import dtypes
 from dace.codegen import cpf
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
-from dace.transformation.passes.scalar_promotion import invalidate_array_connectors, promote_scalar_to_array
 
 from nestforge.build.arena import call_native, diff_stats, dtype_floor, make_inputs, rung_atol, run_oracle
 from nestforge.build.isolation import run_isolated
@@ -68,16 +67,11 @@ def at_rung(verdict: KernelVerdict, fp_mode: str) -> KernelVerdict:
 
 
 def abi_ready_copy(boundary: Boundary) -> dace.SDFG:
-    """A copy of the kernel whose entry takes what ``ExternalCall`` passes: integer symbols as ``int64_t``
-    and every data argument, a scalar input included, by pointer."""
+    """A copy of the kernel whose entry takes the integer symbols as the ``int64_t`` ``ExternalCall`` passes."""
     sdfg = copy.deepcopy(boundary.standalone_sdfg)
     for name in boundary.symbols:
         if sdfg.symbols[name] in dtypes.INTEGER_TYPES:
             sdfg.symbols[name] = dace.int64
-    for name in boundary.inputs:
-        if isinstance(sdfg.arrays[name], dace.data.Scalar):
-            promote_scalar_to_array(sdfg, name)
-    invalidate_array_connectors(sdfg)
     return sdfg
 
 

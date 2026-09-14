@@ -123,6 +123,25 @@ def rewind(snapshot: List[Tuple[np.ndarray, np.ndarray]]) -> None:
         buf[...] = pristine
 
 
+#: ctypes' metaclass of every ``POINTER(T)``: tells a by-pointer parameter from a by-value one.
+POINTER_TYPE = type(ctypes.POINTER(ctypes.c_double))
+
+
+def bind_argument(arg: str, ctype: type, buffers: Dict[str, np.ndarray], sizes: Dict[str, int]) -> object:
+    """One ctypes argument: a buffer by pointer, a Scalar's one-element buffer by value, else a size by value."""
+    if arg not in buffers:
+        return ctype(sizes[arg])
+    if isinstance(ctype, POINTER_TYPE):
+        return buffers[arg].ctypes.data_as(ctype)
+    return ctype(buffers[arg].item())
+
+
+def bind_arguments(
+    order: List[str], argtypes: List[type], buffers: Dict[str, np.ndarray], sizes: Dict[str, int]
+) -> List[object]:
+    return [bind_argument(arg, ctype, buffers, sizes) for arg, ctype in zip(order, argtypes)]
+
+
 def call_native(
     so: Path,
     symbol: str,
@@ -147,17 +166,8 @@ def call_native(
     fn.restype = None
     work = {k: v.copy() for k, v in inputs.items()} if copy_inputs else inputs
 
-    def build_args() -> list:
-        out = []
-        for arg, at in zip(order, argtypes):
-            if arg in work:
-                out.append(work[arg].ctypes.data_as(at))
-            else:
-                out.append(at(sizes[arg]))  # at is the by-value ctype (c_int64 size / c_double value scalar)
-        return out
-
     # bind ONCE (every rep reuses these buffers): per-rep data_as would time Python marshaling
-    args = build_args()
+    args = bind_arguments(order, argtypes, work, sizes)
     snapshot = rewind_snapshot(boundary, work)
     fn(*args)  # correctness run
     outputs = {o: work[o].copy() for o in boundary.outputs} if copy_outputs else None

@@ -9,8 +9,8 @@ kernel's NumPy reference is the correctness oracle for every implementation.
 - **Default (CPF).** DaCe's `cpf.render` writes the kernel as one standalone canonical parallel form
   unit. The unit needs no DaCe header or runtime and defines the kernel's C entry itself: C++ with
   OpenMP pragmas on CPU, CUDA on GPU once CPF emits that form. Before rendering, the kernel copy is
-  finalized for its device, its integer symbols become `int64_t` and a scalar input becomes a
-  length-1 array, so the entry takes exactly what the `ExternalCall` prototype passes. The DaCe
+  finalized for its device and its integer symbols become `int64_t`, so the entry takes exactly what
+  the `ExternalCall` prototype passes: arrays by pointer, a read-only scalar input by value. The DaCe
   vectorizer is not applied; the compiler vectorizes, and phase 5 sweeps its cost models.
 - **Kernel agent.** The agent receives the kernel as NumPy, C++ or Fortran plus its boundary, and
   returns source or a library that exposes the same entry. HPCAgent-Bench runs the agent.

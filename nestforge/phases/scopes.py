@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from typing import List, Tuple, Union
 
 import dace
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 
 from nestforge.ir.emit_numpy import nest_to_numpy
 from nestforge.ir.emit_yaml import manifest_dict
-from nestforge.ir.extract import Boundary, NestNode, extract_nest_to_sdfg
+from nestforge.ir.extract import Boundary, NestNode, extract_nest_to_sdfg, find_state_of_node
+from nestforge.ir.introspect import nest_reads_writes
 from nestforge.ir.libnode import ExternalCall, in_conn, out_conn
 
 
@@ -103,10 +105,39 @@ def replace_nsdfg_with_external(boundary: Boundary, name: str) -> ExternalCall:
     return ext
 
 
+def is_host_length1_array(desc: dace.data.Data) -> bool:
+    return (
+        isinstance(desc, dace.data.Array)
+        and not isinstance(desc, dace.data.View)
+        and desc.total_size == 1
+        and desc.storage not in GPU_RESIDENT_STORAGES
+    )
+
+
+def host_length1_inputs(sdfg: dace.SDFG, entry: nodes.MapEntry) -> List[str]:
+    """Read-only inputs of the nest at ``entry`` that are length-1 arrays in host memory."""
+    state = find_state_of_node(sdfg, entry)
+    reads, writes = nest_reads_writes(state, entry)
+    return [name for name in reads if name not in writes and is_host_length1_array(state.sdfg.arrays[name])]
+
+
+def refuse_host_length1_inputs(refs: List[Tuple[dace.SDFG, nodes.MapEntry]]) -> None:
+    """A host kernel takes a scalar input by value, so a length-1 array standing in for one is refused
+    rather than converted; only a device pointer (a GPU-resident length-1 array) may carry one."""
+    offenders = [(entry.map.label, name) for parent, entry in refs for name in host_length1_inputs(parent, entry)]
+    if offenders:
+        raise ValueError(
+            f"nest inputs {offenders} are length-1 arrays in host memory; declare each as a Scalar, which "
+            "crosses the kernel boundary by value"
+        )
+
+
 def lower_nests_to_external_call(sdfg: dace.SDFG) -> List[Tuple[ExternalCall, Boundary]]:
     """Lowers every parallel top-level map into an ``ExternalCall`` node, returning
-    ``[(call, boundary), ...]`` in extraction order."""
+    ``[(call, boundary), ...]`` in extraction order. Refuses before extracting anything if a nest
+    reads a host length-1 array (:func:`refuse_host_length1_inputs`)."""
     refs = parallel_top_level_maps(sdfg)
+    refuse_host_length1_inputs(refs)
     out: List[Tuple[ExternalCall, Boundary]] = []
     for idx, (parent, node) in enumerate(refs):
         name = f"extcall_{idx}"

@@ -12,6 +12,10 @@ not nested inside another map becomes its own kernel, wherever it sits in the co
 (including inside a time loop). A nest with no parallel top-level map, such as a purely sequential
 loop, yields no scope.
 
+A scalar input crosses the kernel boundary by value. Lowering refuses a nest that reads a length-1
+array in host memory in place of a scalar, before extracting anything; only a GPU-resident length-1
+array, a device pointer, may stand in for one.
+
 | | |
 |---|---|
 | default | `lower_nests_to_external_call(sdfg)` |

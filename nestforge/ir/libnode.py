@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import copy
 import os
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Collection, List, Optional, Tuple
 
 import numpy as np
 
@@ -15,6 +16,7 @@ import dace
 import dace.library
 import dace.properties
 from dace import dtypes
+from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -55,20 +57,63 @@ def value_connectors(node: "ExternalCall", state: dace.SDFGState) -> set:
     return single
 
 
+def scalar_inputs(node: "ExternalCall", state: dace.SDFGState) -> OrderedSet:
+    """Input connectors fed from a ``Scalar`` in the parent: the kernel takes those by value."""
+    return OrderedSet(
+        edge.dst_conn
+        for edge in state.in_edges(node)
+        if edge.dst_conn is not None
+        and edge.data.data is not None
+        and isinstance(state.sdfg.arrays[edge.data.data], dace.data.Scalar)
+    )
+
+
+@dataclass(slots=True)
+class CallSite:
+    """What the parent state says about the connectors of one ``ExternalCall``."""
+
+    outputs: Collection[str]
+    connectors: Collection[str]
+    by_value: Collection[str]
+    scalars: Collection[str]
+
+
+def data_param(node: "ExternalCall", arg: str, dtype: str, site: CallSite) -> Tuple[str, str]:
+    """``(parameter, call argument)`` of one data argument: a read-only Scalar input by value, the rest by pointer."""
+    if dtype not in _CPP_SCALAR:
+        # No C spelling for this dtype (complex, float16, unsigned, ...): refuse instead of a codegen KeyError.
+        raise ValueError(
+            f"ExternalCall {node.name!r}: array {arg!r} has dtype {dtype!r}, which has no "
+            f"extern-C spelling (known: {sorted(_CPP_SCALAR)}); keep the DaceReference "
+            "implementation for this nest"
+        )
+    conn = connector_for(arg, site.outputs)
+    if conn not in site.connectors:
+        # A caller-allocated scratch transient: exposed as a parameter but never crosses this boundary.
+        raise ValueError(
+            f"ExternalCall {node.name!r}: abi_order names {arg!r}, but the node has no "
+            f"{conn!r} connector (a caller-allocated scratch buffer is not passed across "
+            "the ExternalCall boundary); keep the DaceReference implementation"
+        )
+    ctype = _CPP_SCALAR[dtype]
+    if conn in site.scalars:
+        return f"{ctype} {arg}", conn
+    const = "" if arg in site.outputs else "const "
+    return f"{const}{ctype}* {arg}", f"&{conn}" if conn in site.by_value else conn
+
+
 def proto_and_call(node: "ExternalCall", state: dace.SDFGState) -> Tuple[str, str]:
     """Build the ``extern "C"`` prototype and call expression for the linked kernel, in
     ``node.abi_order`` (the order the .so was actually compiled with, not the manifest's role order --
     C linkage matches on name alone, so the wrong order links cleanly and silently swaps buffers)."""
     manifest = node.config
     arrays = set(manifest["array_args"])
-    outputs = set(manifest["output_args"])
     dtypes_map = {a: v["dtype"] for a, v in manifest["init"]["arrays"].items()}
     # A scalar's dtype comes from its dict descriptor; a bare default value falls back to its own type.
     scalar_dtypes = {
         n: (v["dtype"] if isinstance(v, dict) else np.dtype(type(v)).name)
         for n, v in (manifest["init"].get("scalars") or {}).items()
     }
-    by_value = value_connectors(node, state)
     order = list(node.abi_order or [])
     if not order:
         raise ValueError(
@@ -76,35 +121,23 @@ def proto_and_call(node: "ExternalCall", state: dace.SDFGState) -> Tuple[str, st
             f"linked symbol in the order it was compiled with (the arena records it on the winning "
             f"Cell). Falling back to the manifest's role order would silently mis-declare the ABI."
         )
+    # the connector sets are dace Properties, re-resolved on every access, so read them once
+    site = CallSite(
+        outputs=set(manifest["output_args"]),
+        connectors={*node.in_connectors, *node.out_connectors},
+        by_value=value_connectors(node, state),
+        scalars=scalar_inputs(node, state),
+    )
     params: List[str] = []
     call_args: List[str] = []
-    in_conns = node.in_connectors  # cache the leaf: a dace Property, re-resolved every access otherwise
-    out_conns = node.out_connectors
     for arg in order:
-        if arg in arrays:
-            dt = dtypes_map[arg]
-            if dt not in _CPP_SCALAR:
-                # No C spelling for this dtype (complex, float16, unsigned, ...): refuse instead of a codegen KeyError.
-                raise ValueError(
-                    f"ExternalCall {node.name!r}: array {arg!r} has dtype {dt!r}, which has no "
-                    f"extern-C spelling (known: {sorted(_CPP_SCALAR)}); keep the DaceReference "
-                    "implementation for this nest"
-                )
-            c = _CPP_SCALAR[dt]
-            const = "" if arg in outputs else "const "
-            conn = connector_for(arg, outputs)
-            if conn not in in_conns and conn not in out_conns:
-                # A caller-allocated scratch transient: exposed as a parameter but never crosses this boundary.
-                raise ValueError(
-                    f"ExternalCall {node.name!r}: abi_order names {arg!r}, but the node has no "
-                    f"{conn!r} connector (a caller-allocated scratch buffer is not passed across "
-                    "the ExternalCall boundary); keep the DaceReference implementation"
-                )
-            params.append(f"{const}{c}* {arg}")
-            call_args.append(f"&{conn}" if conn in by_value else conn)
-        else:
+        if arg not in arrays:
             params.append(f"{_CPP_SCALAR.get(scalar_dtypes.get(arg, 'int64'), 'int64_t')} {arg}")
             call_args.append(arg)
+            continue
+        param, call_arg = data_param(node, arg, dtypes_map[arg], site)
+        params.append(param)
+        call_args.append(call_arg)
     proto = f'extern "C" void {node.symbol}({", ".join(params)});'
     call = f"{node.symbol}({', '.join(call_args)});"
     return proto, call
