@@ -9,24 +9,21 @@ and the vectorizer knobs a kernel's emitted code can vary on.
 
 ## The FP ladder
 
-`nestforge/build/flags.py` defines four FP-precision rungs (`FP_LEVELS`), strictest first, with a
+`nestforge/build/flags.py` defines three FP-precision rungs (`FP_LEVELS`), strictest first, with a
 validation tolerance against the NumPy float64 oracle (`FP_ATOL`). The oracle itself is not
 bit-reproducible (pairwise `np.sum`, BLAS dot, non-correctly-rounded libm), so even the strictest
 rung tolerates a small relative error.
 
-| Rung | atol | gnu / llvm | nvidia | intel |
-|---|---|---|---|---|
-| `strict-ieee` | 1e-15 | `-ffp-contract=off` | `-Kieee -Mnofma` | `-fp-model=strict` |
-| `contract-fma` | 1e-13 | `-ffp-contract=fast` | `-Kieee -Mfma` | `-fp-model=precise` |
-| `assume-finite` | 1e-13 | adds `-ffinite-math-only -fno-signed-zeros -fno-trapping-math` | same as `contract-fma` (no per-assumption flag) | adds `-ffinite-math-only -fno-math-errno` |
-| `fast-math` | 1e-5 | `-ffast-math -mrecip` | `-fast -Mfma -Mfprelaxed=...` | `-fp-model=fast=2 -ftz` |
+| Rung | atol | gnu / llvm | intel |
+|---|---|---|---|
+| `strict-ieee` | 1e-15 | `-ffp-contract=off` | `-fp-model=strict` |
+| `contract-fma` | 1e-13 | `-ffp-contract=fast` | `-fp-model=precise` |
+| `fast-math` | 1e-5 | `-ffast-math -mrecip` | `-fp-model=fast=2 -ftz` |
 
 Each rung's flags are a superset of the one before it. `intel` defaults to `-fp-model=fast`, so
-every rung sets an explicit model rather than relying on a bare `-ffp-contract=off`. `nvidia` has
-no per-assumption flags, so `assume-finite` and `contract-fma` compile to the same flags and
-`flag_matrix` dedups the pair into one cell. `fortran_fp_flags` applies the Fortran-frontend deltas
-(`-fno-frontend-optimize` for gfortran below `fast-math`, since its front end reassociates at `-O`
-even under `-ffp-contract=off`).
+every rung sets an explicit model rather than relying on a bare `-ffp-contract=off`. `fortran_fp_flags`
+applies the Fortran-frontend deltas (`-fno-frontend-optimize` for gfortran below `fast-math`, since
+its front end reassociates at `-O` even under `-ffp-contract=off`).
 
 `DTYPE_ATOL` adds a floor per output dtype (about one ULP of that storage format), composed as
 `max(rung, dtype)`, so a rung's tolerance never asks more of fp16 output than fp16 can represent.

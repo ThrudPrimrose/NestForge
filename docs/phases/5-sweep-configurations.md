@@ -5,8 +5,8 @@ prev: [4 Optimize Kernels](4-optimize-kernels.md) · feedback: [Analyze](feedbac
 Phase 5 compiles each kernel's phase-4 source into variants and keeps the fastest one that matches
 the NumPy oracle. This is the variant search from the Vectra paper, applied per kernel.
 
-- **CPU axes.** Compiler (gcc, clang, icx, nvc) x FP mode x vectorizer cost model x vector math
-  library, over the DaCe-generated C++.
+- **CPU axes.** Compiler (gcc, clang, icx) x FP mode x vectorizer cost model, over the
+  DaCe-generated C++.
 - **GPU axes.** CUDA toolchains (nvcc, clang) x a few flag sets.
 - Variants that compile to the same object are timed once.
 - Every variant runs in a forked child, so a crash is a recorded result.

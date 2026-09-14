@@ -47,13 +47,6 @@ would lose members.
 `nestforge.build.toolchain.OpenMPRuntime` names the single OpenMP runtime a build links against
 (default `libomp`, since it is LLVM-selectable and also implements the GOMP ABI, so a GCC-built and
 a Clang-built object can share one thread pool). `OpenMPRuntime.check` raises before compiling a
-translation unit against a runtime a given compiler cannot actually link (NVIDIA and classic Intel
-hard-link their own runtime; LLVM selects by name; GNU accepts any GOMP-ABI runtime), which is how
-a mixed-compiler build is kept off a mixed-runtime link.
-
-## LTO for the archive path
-
-Passing `lto=True` (`BuildOptions.lto` in `sdfg.py`) compiles a fat-LTO object (bitcode plus real
-machine code) and archives it with the LTO-plugin-aware archiver (`gcc-ar`/`llvm-ar`), so a later
-`-flto` link can still inline into it; a plain `ar` would drop the bitcode section. Fat-LTO is
-available on GCC and Clang; other families fall back to a plain object with a warning.
+translation unit against a runtime a given compiler cannot actually link (classic Intel hard-links
+its own runtime; LLVM selects by name; GNU accepts any GOMP-ABI runtime), which is how a
+mixed-compiler build is kept off a mixed-runtime link.
