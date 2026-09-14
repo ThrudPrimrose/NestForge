@@ -1,6 +1,6 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""gramschmidt is the worked example for the FP-mode axis of the arena (see docs/FP_RISK.md).
+"""gramschmidt is the worked example for the FP-mode axis of the arena (see docs/fp-and-vectorization.md).
 
 Its two ``np.dot`` reductions (``nrm = A[:,k].A[:,k]`` and ``R[k,j] = Q[:,k].A[:,j]``) each lower to a
 sequential accumulate ``s += a[i]*b[i]``. Under ``-ffast-math`` the reduction is *reassociated*
@@ -120,7 +120,7 @@ def sweep(conditioning, tmp_path):
 def test_fma_contraction_alone_is_bit_exact(tmp_path):
     """FMA contraction (``-ffp-contract=fast``, no reassociation) matches ieee-strict bit-for-bit here
     -- so the divergence below is due to reassociation, not FMA. Refines "FMA is the danger" to
-    "reassociation is the danger" (docs/FP_RISK.md rule R15 vs R2)."""
+    "reassociation is the danger"."""
     err = sweep("well", tmp_path)
     assert err["contract-fast"] == 0.0
 

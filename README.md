@@ -14,12 +14,9 @@ deterministic default, and exposes the same API to a scripted optimizer, a human
 | [4 Optimize Kernels](docs/phases/4-optimize-kernels.md) | each kernel's code, one `lib<kernel>.a` | standalone CPF kernel: C++ on CPU, CUDA on GPU | kernel |
 | [5 Sweep Configurations](docs/phases/5-sweep-configurations.md) | compiler, FP mode, vectorizer cost model | keep the fastest correct variant | none |
 
-Phase 5 sweeps GNU, LLVM and oneAPI against three FP modes (strict, contract, fast-math) and the
-vectorizer cost models, and checks every variant against the kernel's NumPy oracle.
-
-Two analysis agents [request changes](docs/phases/feedback.md): one reads measured runtimes and
-sends phase 1 back to reshape kernels, the other reads offload placements and sends phase 2 back to
-redefine scopes. Agents follow [AGENTS.md](AGENTS.md).
+Two analysis agents [request changes](docs/phases/feedback.md): one reads runtimes and sends phase 1
+back to reshape kernels, the other reads placements and sends phase 2 back to redefine scopes. Agents
+follow [AGENTS.md](AGENTS.md).
 
 ## Quick start
 
@@ -29,8 +26,8 @@ python examples/quickstart.py --device gpu --out quickstart_out
 ```
 
 The script runs the default optimizer on HPCAgent-Bench's `fuse_diamond` at preset S (`LEN_1D=512`):
-four loops where `t = a*a` feeds `u = t + 1` and `v = t - 1`, then `out = u*v`. The script prints the
-program's structure tree before phase 0:
+four loops where `t = a*a` feeds `u = t + 1` and `v = t - 1`, then `out = u*v`. It prints the structure
+tree before phase 0:
 
 ```
 SDFG 'hpcagent_bench_benchmarks_loop_level_reasoning_fuse_diamond_fuse_diamond_dace_fuse_diamond'
@@ -52,26 +49,23 @@ SDFG 'hpcagent_bench_benchmarks_loop_level_reasoning_fuse_diamond_fuse_diamond_d
    `- single_state_body_0_map  [_loop_it_0=0:LEN_1D]  reads=['a'] writes=['out']
 ```
 
-Normalization turns the four sequential loops, each in its own state, into one parallel map over
-`LEN_1D` that reads only `a` and writes only `out`. On `fuse_diamond`:
-
-0. Normalize: canonicalization already fuses the 4 loop nests into 1 parallel map.
-1. Shape Kernels: nothing is left to fuse, so the program stays at 1 map.
-2. Define Scopes: the map becomes one kernel, `extcall_0`, which reads `a` and writes `out`.
-3. Offload: on CPU the kernel stays on the host; on GPU it runs on the device, `a` is copied in and `out` back.
-4. Optimize Kernels: CPF renders `extcall_0` as one C++ file, or one CUDA file on GPU, built into `libextcall_0.a`.
-5. Sweep Configurations: 15 CPU variants, where `g++`, `strict-ieee`, `no-vec` won at 31.2 us per call; 4 GPU
-   variants (two nvcc toolkits, two FP modes), where `nvcc-13.3`, `strict-ieee` won at 6.9 us.
+0. Normalize fuses the four sequential loops into one parallel map that reads `a` and writes `out`.
+1. Shape Kernels finds nothing left to fuse.
+2. Define Scopes turns the map into one kernel, `extcall_0`.
+3. Offload keeps the kernel on the host for CPU; for GPU it runs on the device, with `a` copied in and
+   `out` copied back.
+4. Optimize Kernels renders `extcall_0` as one CPF C++ or CUDA file and builds `libextcall_0.a`.
+5. Sweep Configurations times 15 CPU variants (winner `g++`, `strict-ieee`, `no-vec`, 31.2 us per call)
+   or 4 GPU variants (winner `nvcc-13.3`, `strict-ieee`, 6.9 us).
 
 ```
 quickstart_out/
-  0-normalize.sdfg ... 3-offload.sdfg   one program SDFG per phase (3 only with --device gpu)
-  4-optimize-kernels.sdfg               the program, extcall_0 bound to libextcall_0.a
-  5-sweep-configurations.json           per nest: compiler, FP mode, cost model, flags, time
-  trees/                                0-input.txt, 1-cpf.txt, 2-shaped.txt: structure before and after phases 0 and 1
-  kernels/extcall_0/                    extcall_0.cpp or extcall_0.cu (CPF unit) and libextcall_0.a
-  program/                              the program's generated C++, plus CUDA with --device gpu
-  work/                                 build tree
+  0-normalize.sdfg ... 4-optimize-kernels.sdfg   program SDFG per phase (3 only with --device gpu)
+  5-sweep-configurations.json                    per nest: compiler, FP mode, cost model, flags, time
+  trees/                                         structure before phase 0, after phase 0, after phase 1
+  kernels/extcall_0/                             CPF unit (.cpp or .cu) and libextcall_0.a
+  program/                                       the program's generated code
+  work/                                          build tree
 ```
 
 ## Install and test
@@ -92,17 +86,14 @@ Benchmark kernels and the NumPy to C, C++ and Fortran translator come from
 ```
 nestforge/
   session.py   the one API over all phases
-  phases/      normalize, schedule, scopes, kernel, variants, feedback
+  phases/      normalize, schedule, scopes, offload, kernel, variants, feedback
   ir/          extraction, NumPy emission, the ExternalCall library node, structure views
-  build/       DaCe codegen and compile, compilers on PATH, FP flags, the validate-and-time arena
+  build/       compile and link, compilers on PATH, FP flags, the validate-and-time arena
   corpus/      HPCAgent-Bench kernels and the translator bridge
 ```
 
-## More docs
-
-- [Emitter contract](docs/emitter.md): how kernels become NumPy oracles and translator input.
-- [Build and linking](docs/build.md): DaCe codegen, static archives, one OpenMP runtime.
-- [FP modes and vectorization](docs/fp-and-vectorization.md): the three FP modes and the cost models.
+More: [emitter contract](docs/emitter.md), [build and runtime linking](docs/build.md),
+[FP modes and cost models](docs/fp-and-vectorization.md).
 
 ## References
 

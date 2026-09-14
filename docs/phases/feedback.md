@@ -1,24 +1,24 @@
 # Feedback
 
-[Overview](../../README.md) · re-enters: [1 Shape Kernels](1-shape-kernels.md)
+[Overview](../../README.md) · re-enters: [1 Shape Kernels](1-shape-kernels.md),
+[2 Define Scopes](2-define-scopes.md)
 
-Runtime data and analysis can show that an earlier choice was suboptimal. The analysis agent reads
-two inputs and, when it finds a problem, requests changes from phase 1. The deterministic default
-stops after one pass.
+Measurements can show that an earlier choice was a poor one. Two analysis agents read them and
+request changes; the deterministic default runs one pass and stops.
 
-- **Placement** from [3 Offload](3-offload.md): which kernels run where and how much data crosses
-  between devices. Frequent copies between neighboring kernels suggest fusing them or changing their
-  scopes.
-- **Runtimes** from [5 Sweep Configurations](5-sweep-configurations.md): per-kernel and whole-program
-  times. A fused kernel that runs no faster than its parts is a candidate to split again.
-- **Request Changes** to [1 Shape Kernels](1-shape-kernels.md): fusion or fission moves, after which
-  the later phases run again for the kernels that changed.
+- **Runtime analysis** reads per-kernel and whole-program times from
+  [5 Sweep Configurations](5-sweep-configurations.md). A fused kernel that runs no faster than its
+  parts is a candidate to split, so this agent requests phase 1 moves.
+- **Placement analysis** reads where kernels run and how much data crosses devices from
+  [3 Offload](3-offload.md). Frequent copies between neighboring kernels suggest different scopes, so
+  this agent sends the program back to phase 2.
 
-Every round re-validates against the NumPy oracle, so feedback changes speed, not results.
+The later phases rerun for the kernels that changed, and every round revalidates against the NumPy
+oracle.
 
 | | |
 |---|---|
 | default | none (single pass) |
 | helper | `run_feedback_loop(sdfg, measure, apply_move)` |
 | code | `nestforge/phases/feedback.py` |
-| open | which placement and runtime signals trigger a request, and when a round stops |
+| open | which signals trigger a request, and when a round stops |

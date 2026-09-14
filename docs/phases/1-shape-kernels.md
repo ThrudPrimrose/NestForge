@@ -2,24 +2,23 @@
 
 prev: [0 Normalize](0-normalize.md) · next: [2 Define Scopes](2-define-scopes.md)
 
-Phase 1 decides how coarse the computation is: which maps and loops fuse and which split. The
-scheduling agent does not edit graph nodes. It reads two views and requests moves.
+Phase 1 decides which maps and loops fuse and which split. The scheduling agent never edits graph
+nodes; it reads two views and requests moves.
 
-- **Structure.** An indented text tree of control-flow regions, states and kernels, with each
-  kernel's iteration domain and read/write sets. A kernel body can be rendered as NumPy, C++ or
+- **Structure.** `Session.describe()` prints control-flow regions, states and nests with their
+  iteration domains and read/write sets. `Session.kernel_source` renders a nest as NumPy, C++ or
   Fortran.
-- **Cost.** Symbolic work and depth per scope, and a symbolic operational intensity (OI). OI divides
-  work by the bytes a scope moves, under a simple cache model: a map (parallel region) caches
+- **Cost.** `describe(metrics=True)` adds symbolic work, depth and operational intensity (OI) per
+  scope. OI divides work by the bytes a scope moves under a simple cache model: a map caches
   perfectly, a loop caches nothing.
 
-Moves are single-pair DaCe transformations, each legality-checked before it applies: vertical and
-horizontal map fusion, loop fusion, state fusion (to merge the region two nests sit in), and
-single-pair map fission (`Session.list_fissions` / `Session.fission`, splitting one map's independent
-output groups). `Session.fission_all` explodes the whole program to statement granularity in one call.
+Moves are single-pair DaCe transformations, each checked for legality before it applies: vertical
+and horizontal map fusion, loop fusion, state fusion, and fission of one map's independent output
+groups (`list_fissions` / `fission`). `fission_all` splits the whole program to statement
+granularity.
 
 | | |
 |---|---|
 | default | `full_fusion(sdfg, targets)`: canonicalization's `fuse` stage and the stages after it |
-| hand-chosen granularity | apply moves, then `finish_schedule(sdfg, targets)` |
+| hand-chosen | apply moves, then `finish_schedule(sdfg, targets)` |
 | code | `nestforge/phases/schedule.py`, `nestforge/ir/introspect.py` |
-| status | moves and default built; work/depth and OI views planned |

@@ -1,52 +1,37 @@
 # Emitter
 
-[../README.md](../README.md) · related: [1 Shape Kernels](phases/1-shape-kernels.md) ·
+[Overview](../README.md) · related: [1 Shape Kernels](phases/1-shape-kernels.md),
 [4 Optimize Kernels](phases/4-optimize-kernels.md)
 
-The emitter turns an extracted SDFG into NumPy source: `nestforge/ir/emit_numpy.py` (control flow,
-copies, nested SDFGs), `nestforge/ir/emit_libnode.py` (BLAS/reduce/FFT library nodes), and
-`nestforge/ir/emit_yaml.py` (the argument manifest). Phase 4 renders each kernel this way before it
-optimizes or hands the kernel to an agent.
+The emitter turns an extracted SDFG into NumPy source, which serves as the kernel's correctness oracle
+and as the translator's input. In `nestforge/ir/`, `emit_numpy.py` handles control flow, copies and
+nested SDFGs, `emit_libnode.py` handles library nodes (BLAS, reduce, FFT), and `emit_yaml.py` writes
+the argument manifest.
 
 ## Contract
 
-- **C-style allocation.** The kernel allocates nothing. Inputs, outputs, `__return` and scratch
-  transients are caller-pre-allocated buffer parameters written in place. Only true scalars are
-  Python locals.
-- **Sizable buffers only.** Every buffer shape must be a static function of the kernel's
-  size-symbols. A shape that reads array data (a CSR span) is refused rather than emitted:
-  `sizable` (`emit_numpy.py`) walks the expression tree for a `Subscript`/`Indexed` head or any
-  atom named in `sdfg.arrays`, and `reject_unsizable_scratch` raises on the first dimension that
-  fails it.
-- **Read-only emission.** Emission never mutates the caller's SDFG. Widening, inlining and
-  `replace` run on a deep copy.
-- **Semantics-preserving.** Bit-exact vs NumPy wherever floating-point associativity allows.
-- **Signature/manifest parity.** `emit_yaml.array_names` and the NumPy signature are the same
-  positional list, or a native call passes mismatched pointers.
+- **Caller allocates.** Inputs, outputs, `__return` and scratch transients are buffer parameters
+  written in place; only true scalars are locals.
+- **Sizable buffers.** Every buffer shape is a static function of size symbols. A shape that reads
+  array data, such as a CSR span, is refused (`reject_unsizable_scratch`).
+- **Read-only.** Emission works on a deep copy and never mutates the caller's SDFG.
+- **Exact.** Bit-exact against NumPy wherever floating-point associativity allows.
+- **Signature parity.** `emit_yaml.array_names` and the NumPy signature list the same arguments in the
+  same order.
 
 ## Invariants
 
-- **Access rendering.** A `(name, subset)` becomes a Python string by one rule:
-  `scalar_local -> bare name`, otherwise `name[index_str(subset)]` (`access`). `copy_side` and
-  `reshape_side` render the two sides of a data copy with their own squeeze policy: same-rank
-  copies squeeze length-1 axes so a `(N,1)` buffer and a `(1,N)` view meet at the same shape,
-  rank-changing copies keep the reshaping side's subset explicit instead.
-- **Copy direction.** A memlet's `subset` indexes its `data` field, a DaCe invariant; on an
-  in-place copy (`A[i] = A[j]`) both endpoints share a name, so `copy_direction` resolves the
-  source by testing `data` against the edge's source first, matching how DaCe itself breaks the
-  tie.
-- **Nested SDFG inlining.** `emit_nested_sdfg` aliases each connector to the outer buffer it binds
-  and reconciles the two descriptors (`reconcile_connector_descriptor`) rather than overwriting the
-  inner shape outright, so an offset multi-dim connector cannot silently collapse to a shorter
-  index.
-- **Range direction.** `range_stop` picks `end + 1` for an ascending map/loop and `end - 1` for a
-  descending one, since DaCe's range end is inclusive in both directions.
-- **Symbol substitution.** `symbol_mapping_lines` binds a nested SDFG's symbol mapping through
-  temporaries whenever a target also appears on some right-hand side, so a swap like `{i: j, j: i}`
-  does not clobber.
-- **Conditional order.** `emit_conditional` emits branches in stored order and refuses a
-  non-final unconditional branch, matching DaCe codegen's own rule that the first matching branch
-  wins.
+- `access` renders a scalar local bare and anything else as `name[index]`. `copy_side` and
+  `reshape_side` squeeze length-1 axes for same-rank copies and keep the reshaping subset explicit
+  otherwise.
+- `copy_direction` resolves the source of an in-place copy (`A[i] = A[j]`) the way DaCe does, by
+  testing `data` against the edge's source.
+- `emit_nested_sdfg` aliases connectors to outer buffers and reconciles their descriptors
+  (`reconcile_connector_descriptor`), so an offset multi-dimensional connector keeps its rank.
+- `range_stop` treats DaCe range ends as inclusive in both directions.
+- `symbol_mapping_lines` binds through temporaries, so a swap such as `{i: j, j: i}` is safe.
+- `emit_conditional` keeps branch order and refuses a non-final unconditional branch, as DaCe codegen
+  does.
 
-`emit_region`, `state_body`, `map_lines`, `emit_loop`, the `LIBNODE_EMITTERS` registry and
-`normalize_casts` are the stable core; changes there ripple through every emitted kernel.
+Changes to `emit_region`, `state_body`, `map_lines`, `emit_loop`, `LIBNODE_EMITTERS` or
+`normalize_casts` reach every emitted kernel.

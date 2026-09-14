@@ -1,59 +1,40 @@
 # Build
 
-[../README.md](../README.md) · related: [4 Optimize Kernels](phases/4-optimize-kernels.md) ·
+[Overview](../README.md) · related: [4 Optimize Kernels](phases/4-optimize-kernels.md),
 [5 Sweep Configurations](phases/5-sweep-configurations.md)
 
-NestForge does not call `dace.compile()` for kernels: `nestforge/build/sdfg.py` and
-`toolchain.py` generate the SDFG's source, compile and link it with one chosen compiler and flag
-set, and `arena.py` calls the result directly. This keeps the DaCe-backend competitor and
-the offloaded kernels on the same compiler and flags, so phase 5's timings compare codegen against
-codegen rather than against `CompiledSDFG`'s own marshaling overhead.
+`nestforge/build/` compiles with one chosen compiler and flag set and calls the result through
+ctypes, so timings compare generated code, free of `CompiledSDFG` marshaling.
 
-## Owning the compile
+## Program builds
 
-`generate_program_folder` runs `codegen.generate_code(sdfg)` and writes the `CodeObject`s to disk
-instead of letting DaCe build them. `compile` in `sdfg.py` then invokes the chosen compiler
-directly, with DaCe's runtime headers (`dace_runtime_include`) on the include path.
+`generate_program_folder` writes DaCe's generated code to disk, and `sdfg.py` compiles it with DaCe's
+runtime headers on the include path. `BuiltSDFG` binds the three C entries of an SDFG `N`
+(`__dace_init_N`, `__program_N`, `__dace_exit_N`), calls them in order and times only `__program_N`;
+`unload` closes the `.so`. `compile_linked_program` builds a program that links kernel libraries.
 
-## Manual init / run / exit
+## Kernel libraries
 
-A DaCe-generated shared object exposes three C-linkage entry points for an SDFG named `N`:
-`__dace_init_N`, `__program_N`, `__dace_exit_N`. `BuiltSDFG` (`sdfg.py`) binds all three through
-`ctypes.CDLL` and calls them in that order: init allocates the SDFG's state and returns an opaque
-handle, `__program_N` runs the kernel and is the only call phase 5 times, and exit frees the state.
-`BuiltSDFG.unload` releases the `.so` mapping with `dlclose` when a build is discarded.
+`build_archive` compiles a kernel's CPF unit into `lib<kernel>.a` and links a shared twin with
+`--whole-archive` for ctypes validation and timing. The program links the archive through
+`ExternalCall`. Every kernel gets its own archive, because DaCe sorts the program's link flags and a
+shared archive would lose members.
 
 ## Fork isolation
 
-`nestforge/build/isolation.py` runs a freshly compiled kernel in a forked child
-(`run_isolated`), so a segfault or a runaway loop in generated code cannot take down the process
-driving the sweep. `os.fork()` duplicates only the calling thread, so a live OpenMP thread pool
-across the fork deadlocks the child; `pause_openmp_pools` tears down every already-loaded
-runtime's pool first. The parent enforces a wall-clock timeout and kills a child that does not
-finish in time.
+`run_isolated` (`isolation.py`) runs fresh code in a forked child under a wall-clock timeout, so a
+crash or hang in generated code becomes a recorded result. `os.fork()` copies only the calling
+thread, so `pause_openmp_pools` shuts down loaded OpenMP thread pools first.
 
-## Static archives and shared objects
+## Runtime libraries
 
-`build_archive` in `sdfg.py` is the one archive path: it compiles translation units to objects,
-archives them, and links a shared twin from the archive with `--whole-archive`. Kernel optimization
-(`nestforge/phases/kernel.py`) builds `lib<kernel>.a` from the kernel's CPF unit, which defines the
-single `extern "C"` entry itself and needs no include path. The twin `lib<kernel>.so`
-exists only for ctypes validation and timing; the parent links the archive through `ExternalCall`.
-Each kernel gets its own archive, since DaCe sorts the parent's link flags and a shared archive
-would lose members.
+Every library and program links the runtimes it needs by name and never relies on the host process
+having them loaded.
 
-## One OpenMP runtime
+- **OpenMP.** LLVM libomp is the process's one runtime. It serves g++ code through its `GOMP_*` entry
+  points and clang++ or icpx code through `__kmpc_*`, so every compiler shares one thread pool.
+  `OpenMPRuntime.check` refuses a compiler that cannot link the runtime. The program link swaps
+  DaCe's default runtime for libomp, for that compile only.
+- **CUDA.** A GPU kernel links cudart from the nvcc that built it.
 
-`nestforge.build.toolchain.OpenMPRuntime` names the single OpenMP runtime a build links against
-(default `libomp`, since it is LLVM-selectable and also implements the GOMP ABI, so a GCC-built and
-a Clang-built object can share one thread pool). `OpenMPRuntime.check` raises before compiling a
-translation unit against a runtime a given compiler cannot actually link (LLVM selects by name;
-GNU accepts any GOMP-ABI runtime), which is how a mixed-compiler build is kept off a
-mixed-runtime link.
-
-libomp is the process's one runtime, and every artifact names it explicitly rather than relying on a
-host program having it loaded. A CPU kernel library links libomp whichever compiler built it; g++ code
-reaches it through libomp's GOMP entry points. `compile_linked_program` (`sdfg.py`) builds a program that
-links kernel libraries with libomp in place of DaCe's default runtime, for that compile only. An
-`ExternalCall` carries its kernel's runtime link items (libomp, plus the cudart of its own nvcc for a GPU
-kernel), and the program links them after its objects.
+`ExternalCall` carries these link items, and the program links them after its objects.

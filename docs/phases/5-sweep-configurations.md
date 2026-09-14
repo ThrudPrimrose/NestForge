@@ -2,22 +2,21 @@
 
 prev: [4 Optimize Kernels](4-optimize-kernels.md) · feedback: [Analyze](feedback.md)
 
-Phase 5 compiles each kernel's phase-4 source into variants and keeps the fastest one that matches
-the NumPy oracle. This is the variant search from the Vectra paper, applied per kernel.
+Phase 5 compiles each kernel's phase 4 unit into variants, checks every variant against the NumPy
+oracle, and keeps the fastest correct one.
 
-- **CPU axes.** Compiler (gcc, clang, icx) x FP mode x the compiler's vectorizer cost model, over
-  the kernel's CPF C++.
-- **GPU axes.** nvcc toolchains found on the machine x FP mode (strict-ieee, contract-fma), over the
-  kernel's CPF CUDA, every cell with `-arch=native`. No cost model.
-- Variants that compile to the same object are timed once.
-- Every variant runs in a forked child, so a crash is a recorded result.
+- **CPU.** Compiler (GNU, LLVM, oneAPI) × FP mode (strict-ieee, contract-fma, fast-math) × vectorizer
+  cost model.
+- **GPU.** Every nvcc on PATH × FP mode (strict-ieee, contract-fma), all with `-arch=native`; no cost
+  model.
 
-The winners link into the parent program as static archives, giving one binary with one OpenMP
-runtime.
+Variants that compile to the same object are timed once. Each variant runs in a forked child, so a
+crash is a recorded result. The winner's compiler, FP mode, cost model, flags and time form the nest's
+JSON configuration, and the session links the winner into the program. [FP modes](../fp-and-vectorization.md)
+lists the flags.
 
 | | |
 |---|---|
-| default | brute force over all axes the toolchain supports |
-| session | `sweep_configurations(kernel_id, sizes, reps, compilers)` links the winner |
+| default | brute force over every axis the toolchains support |
+| session | `sweep_configurations(kernel_id, sizes, reps, compilers)` |
 | code | `nestforge/phases/variants.py`, `nestforge/build/arena.py`, `nestforge/build/flags.py` |
-| status | CPU sweep over CPF C++ and GPU sweep over CPF CUDA implemented (`device_variants`, `select_variant`) |
