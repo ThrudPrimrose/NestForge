@@ -1,6 +1,6 @@
-# Phase 1: Inter-kernel schedule
+# Phase 1: Shape Kernels
 
-prev: [0 Normalize](0-normalize.md) · next: [2 Scope definition](2-scope-def.md)
+prev: [0 Normalize](0-normalize.md) · next: [2 Define Scopes](2-define-scopes.md)
 
 Phase 1 decides how coarse the computation is: which maps and loops fuse and which split. The
 scheduling agent does not edit graph nodes. It reads two views and requests moves.

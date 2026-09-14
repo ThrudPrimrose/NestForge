@@ -1,11 +1,11 @@
 # Emitter
 
-[../README.md](../README.md) · related: [1 Inter-kernel schedule](phases/1-inter-kernel.md) ·
-[3 Kernel optimization](phases/3-kernel-opt.md)
+[../README.md](../README.md) · related: [1 Shape Kernels](phases/1-shape-kernels.md) ·
+[4 Optimize Kernels](phases/4-optimize-kernels.md)
 
 The emitter turns an extracted SDFG into NumPy source: `nestforge/ir/emit_numpy.py` (control flow,
 copies, nested SDFGs), `nestforge/ir/emit_libnode.py` (BLAS/reduce/FFT library nodes), and
-`nestforge/ir/emit_yaml.py` (the argument manifest). Phase 3 renders each kernel this way before it
+`nestforge/ir/emit_yaml.py` (the argument manifest). Phase 4 renders each kernel this way before it
 optimizes or hands the kernel to an agent.
 
 ## Contract

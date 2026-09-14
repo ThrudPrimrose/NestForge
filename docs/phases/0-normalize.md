@@ -1,6 +1,6 @@
 # Phase 0: Normalize
 
-[Overview](../../README.md) · next: [1 Inter-kernel schedule](1-inter-kernel.md)
+[Overview](../../README.md) · next: [1 Shape Kernels](1-shape-kernels.md)
 
 Normalization runs on every program and is not searched. It picks the targets first: the CPU is always on, the
 GPU is opt-in. It then runs DaCe canonicalization with that target's preset, up to but excluding the

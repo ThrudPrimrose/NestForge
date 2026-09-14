@@ -1,12 +1,12 @@
 # Build
 
-[../README.md](../README.md) · related: [3 Kernel optimization](phases/3-kernel-opt.md) ·
-[4 Codegen variants](phases/4-codegen-variants.md)
+[../README.md](../README.md) · related: [4 Optimize Kernels](phases/4-optimize-kernels.md) ·
+[5 Sweep Configurations](phases/5-sweep-configurations.md)
 
 NestForge does not call `dace.compile()` for the arena: `nestforge/build/sdfg.py`,
 `toolchain.py` and `arena.py` generate the SDFG's source, compile and link it with one chosen
 compiler and flag set, and call the result directly. This keeps the DaCe-backend competitor and
-the offloaded kernels on the same compiler and flags, so phase 4's timings compare codegen against
+the offloaded kernels on the same compiler and flags, so phase 5's timings compare codegen against
 codegen rather than against `CompiledSDFG`'s own marshaling overhead.
 
 ## Owning the compile
@@ -20,7 +20,7 @@ directly, with DaCe's runtime headers (`dace_runtime_include`) on the include pa
 A DaCe-generated shared object exposes three C-linkage entry points for an SDFG named `N`:
 `__dace_init_N`, `__program_N`, `__dace_exit_N`. `BuiltSDFG` (`sdfg.py`) binds all three through
 `ctypes.CDLL` and calls them in that order: init allocates the SDFG's state and returns an opaque
-handle, `__program_N` runs the kernel and is the only call phase 4 times, and exit frees the state.
+handle, `__program_N` runs the kernel and is the only call phase 5 times, and exit frees the state.
 `BuiltSDFG.unload` releases the `.so` mapping with `dlclose` when a build is discarded.
 
 ## Fork isolation

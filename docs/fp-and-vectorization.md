@@ -1,7 +1,7 @@
 # FP precision and vectorization
 
-[../README.md](../README.md) · related: [3 Kernel optimization](phases/3-kernel-opt.md) ·
-[4 Codegen variants](phases/4-codegen-variants.md)
+[../README.md](../README.md) · related: [4 Optimize Kernels](phases/4-optimize-kernels.md) ·
+[5 Sweep Configurations](phases/5-sweep-configurations.md)
 
 Phase 3 vectorizes each kernel with one fixed DaCe configuration; phase 4 then sweeps compiler,
 FP mode and vectorizer cost model over the result. This page covers the two axes phase 4 sweeps

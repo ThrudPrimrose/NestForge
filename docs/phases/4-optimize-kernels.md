@@ -1,8 +1,8 @@
-# Phase 3: Kernel optimization
+# Phase 4: Optimize Kernels
 
-prev: [2.5 Offloading](2.5-offload.md) · next: [4 Codegen variants](4-codegen-variants.md)
+prev: [3 Offload](3-offload.md) · next: [5 Sweep Configurations](5-sweep-configurations.md)
 
-Phase 3 produces each kernel's implementation, one kernel at a time. Every kernel ends up as a static
+Phase 4 produces each kernel's implementation, one kernel at a time. Every kernel ends up as a static
 library `lib<kernel>.a` with a single `extern "C"` entry, which the parent program links. The
 kernel's NumPy reference is the correctness oracle for every implementation.
 
@@ -15,6 +15,6 @@ kernel's NumPy reference is the correctness oracle for every implementation.
 | | |
 |---|---|
 | default | DaCe vectorizer + `finalize_for_target(device)` |
-| output | kernel source for phase 4, or a finished `lib<kernel>.a` |
+| output | kernel source for phase 5, or a finished `lib<kernel>.a` |
 | code | `nestforge/phases/kernel.py`, `nestforge/build/sdfg.py` |
 | status | planned |

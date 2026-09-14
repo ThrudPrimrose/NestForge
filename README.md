@@ -8,14 +8,14 @@ deterministic default, and exposes the same API to a scripted optimizer, a human
 | Phase | Decides | Deterministic default | Agent |
 |---|---|---|---|
 | [0 Normalize](docs/phases/0-normalize.md) | canonical parallel form for the enabled targets | canonicalize up to fusion | none |
-| [1 Inter-kernel schedule](docs/phases/1-inter-kernel.md) | fusion and fission granularity | full fusion | scheduling |
-| [2 Scope definition](docs/phases/2-scope-def.md) | which scopes become external kernels | top-level compute nests | scheduling |
-| [2.5 Offloading](docs/phases/2.5-offload.md) | device per kernel, host/device copies | DaCe GPU offloading | scheduling |
-| [3 Kernel optimization](docs/phases/3-kernel-opt.md) | each kernel's implementation, one `lib<kernel>.a` | DaCe vectorizer | kernel |
-| [4 Codegen variants](docs/phases/4-codegen-variants.md) | compiler, flags, FP mode, ISA per kernel | brute-force sweep | none |
+| [1 Shape Kernels](docs/phases/1-shape-kernels.md) | fusion and fission granularity | full fusion | scheduling |
+| [2 Define Scopes](docs/phases/2-define-scopes.md) | which scopes become external kernels | top-level compute nests | scheduling |
+| [3 Offload](docs/phases/3-offload.md) | device per kernel, host/device copies | DaCe GPU offloading | scheduling |
+| [4 Optimize Kernels](docs/phases/4-optimize-kernels.md) | each kernel's implementation, one `lib<kernel>.a` | DaCe vectorizer | kernel |
+| [5 Sweep Configurations](docs/phases/5-sweep-configurations.md) | compiler, flags, FP mode, ISA per kernel | brute-force sweep | none |
 
-Measurements flow back to phase 1 through the [feedback edges](docs/phases/feedback.md) (e) and (g),
-read by an analysis agent. Agents follow [AGENTS.md](AGENTS.md).
+An analysis agent reads offload placements and measured runtimes and [requests changes](docs/phases/feedback.md)
+from phase 1. Agents follow [AGENTS.md](AGENTS.md).
 
 ## Install and test
 
@@ -48,7 +48,7 @@ nestforge/
 ## References
 
 - Phase 0 builds on *The Canonical Parallel Form as a Substrate for Parallelizing Compilers and
-  Agentic Optimizers* (the MPR paper), which defines CPF.
-- Phase 3 agents and the kernel corpus come from *HPCAgent-Bench*.
-- Phase 4 is the variant search of *The Data Must Flow (To Vector Processors): Searching Program
+  Agentic Optimizers*, which defines the canonical parallel form (CPF).
+- Phase 4 agents and the kernel corpus come from *HPCAgent-Bench*.
+- Phase 5 is the variant search of *The Data Must Flow (To Vector Processors): Searching Program
   Variants to Improve Compiler Auto-Vectorization Capabilities* (ICS'26).

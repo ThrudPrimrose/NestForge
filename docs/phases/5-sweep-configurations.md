@@ -1,8 +1,8 @@
-# Phase 4: Codegen variants
+# Phase 5: Sweep Configurations
 
-prev: [3 Kernel optimization](3-kernel-opt.md) · feedback: [(e), (g)](feedback.md)
+prev: [4 Optimize Kernels](4-optimize-kernels.md) · feedback: [Analyze](feedback.md)
 
-Phase 4 compiles each kernel's phase-3 source into variants and keeps the fastest one that matches
+Phase 5 compiles each kernel's phase-4 source into variants and keeps the fastest one that matches
 the NumPy oracle. This is the variant search from the Vectra paper, applied per kernel.
 
 - **CPU axes.** Compiler (gcc, clang, icx, nvc) x FP mode x vectorizer cost model x vector math
