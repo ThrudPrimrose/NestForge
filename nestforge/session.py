@@ -21,7 +21,13 @@ from nestforge.corpus.translate import Prepared, emit_sources, prepare
 from nestforge.ir.extract import Boundary, detach, extract_map_nest, find_state_of_node
 from nestforge.ir.introspect import describe_graph, kernel_body, kernel_source, nest_reads_writes
 from nestforge.phases.feedback import run_feedback_loop
-from nestforge.phases.kernel import KernelSource, schedule_kernel, use_kernel_library
+from nestforge.phases.kernel import (
+    KernelSource,
+    kernel_runtime_libraries,
+    process_runtime_libraries,
+    schedule_kernel,
+    use_kernel_library,
+)
 from nestforge.phases.normalize import Targets, normalize
 from nestforge.phases.offload import offload
 from nestforge.phases.schedule import (
@@ -313,10 +319,20 @@ class Session:
         self.kernel_sources[kernel_id] = src
         return {"kernel": ext.name, "symbol": src.symbol, "abi_order": list(src.abi_order)}
 
-    def set_kernel(self, kernel_id: str, lib_path: str, symbol: str, abi_order: List[str], fp_mode: str = "") -> dict:
-        """Point a kernel at a compiled library exposing ``symbol``; ``abi_order`` must match its signature."""
+    def set_kernel(
+        self,
+        kernel_id: str,
+        lib_path: str,
+        symbol: str,
+        abi_order: List[str],
+        fp_mode: str = "",
+        runtime_libraries: Optional[List[str]] = None,
+    ) -> dict:
+        """Point a kernel at a compiled library exposing ``symbol``; ``abi_order`` must match its signature.
+        ``runtime_libraries`` are the link items its runtimes need; libomp alone when ``None``."""
         ext, boundary = self.resolve(kernel_id, "kernel")
-        use_kernel_library(ext, Path(lib_path), symbol, abi_order)
+        runtime = runtime_libraries if runtime_libraries is not None else process_runtime_libraries()
+        use_kernel_library(ext, Path(lib_path), symbol, abi_order, runtime)
         if fp_mode:
             ext.fp_mode = fp_mode
         return {
@@ -350,7 +366,8 @@ class Session:
         )
         winner = result.winner
         if winner is not None and result.library is not None:
-            use_kernel_library(ext, result.library, result.symbol, result.abi_order)
+            runtime = kernel_runtime_libraries(src, winner.variant.compiler)
+            use_kernel_library(ext, result.library, result.symbol, result.abi_order, runtime)
             ext.fp_mode = winner.variant.fp_mode
         return {
             "kernel": ext.name,

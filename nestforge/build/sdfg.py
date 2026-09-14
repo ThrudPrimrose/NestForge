@@ -26,11 +26,13 @@ from nestforge.build.toolchain import (
     CXX_STD,
     DEFAULT_COMPILER,
     DEFAULT_FLAGS,
+    LIBOMP,
     OpenMPRuntime,
     Param,
     ar_for,
     cudart_dir,
     cudart_link_flags,
+    driver_lib_path,
     parse_params,
     run,
     signature,
@@ -243,6 +245,28 @@ def compile(frame: Path, folder: Path, name: str, opts: BuildOptions) -> Tuple[P
     run([cmds.compiler, *cmds.cflags, "-c", *cmds.compile_extra, str(frame), "-o", str(obj)])
     run([cmds.compiler, "-shared", *cmds.cflags, str(obj), *cmds.link_libs, "-o", str(so)])
     return so, time.perf_counter() - t0
+
+
+def program_compiler() -> str:
+    """The C++ compiler DaCe's program build runs: ``compiler.cpu.executable``, else CMake's ``c++``."""
+    return dace.config.Config.get("compiler", "cpu", "executable") or "c++"
+
+
+def libomp_cmake_args(compiler: str) -> List[str]:
+    """CMake cache values under which DaCe's ``find_package(OpenMP)`` resolves LLVM libomp for ``compiler``."""
+    library = driver_lib_path(LIBOMP.soname, compiler)
+    if library is None:
+        raise LookupError(f"{compiler} resolves no lib{LIBOMP.soname}.so; the process's one OpenMP runtime is libomp")
+    return [f"-DOpenMP_CXX_LIB_NAMES={LIBOMP.soname}", f"-DOpenMP_{LIBOMP.soname}_LIBRARY={library}"]
+
+
+def compile_linked_program(sdfg: dace.SDFG, build_folder: Path) -> Any:
+    """Compile a program that links kernel libraries, with libomp as its one OpenMP runtime; the CMake
+    setting holds for this compile only."""
+    extra = [dace.config.Config.get("compiler", "extra_cmake_args"), *libomp_cmake_args(program_compiler())]
+    sdfg.build_folder = str(build_folder)
+    with dace.config.set_temporary("compiler", "extra_cmake_args", value=" ".join(arg for arg in extra if arg)):
+        return sdfg.compile()
 
 
 def apply_vectorizer(sdfg: dace.SDFG, config: object) -> None:

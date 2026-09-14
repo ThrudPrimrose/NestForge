@@ -8,7 +8,7 @@ import copy
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -28,8 +28,8 @@ from nestforge.build.arena import (
 )
 from nestforge.build.flags import cuda_base_flags
 from nestforge.build.isolation import run_isolated
-from nestforge.build.sdfg import BuildOptions, build_archive, build_cuda_archive
-from nestforge.build.toolchain import parse_params, raw_signature
+from nestforge.build.sdfg import BuildOptions, build_archive, build_cuda_archive, program_compiler
+from nestforge.build.toolchain import LIBOMP, cudart_dir, cudart_link_flags, parse_params, raw_signature
 from nestforge.corpus.translate import Prepared
 from nestforge.ir.extract import Boundary
 from nestforge.ir.libnode import ExternalCall
@@ -99,13 +99,27 @@ def gpu_schedule(boundary: Boundary) -> dace.SDFG:
 
 
 def build_cpu_library(unit: Path, compiler: str, flags: Optional[List[str]], archive: Path) -> None:
-    opts = BuildOptions(compiler=compiler, flags=flags, link_external=True)
+    opts = BuildOptions(compiler=compiler, flags=flags, openmp=LIBOMP, link_external=True)
     build_archive([unit], None, archive, archive.with_suffix(".so"), opts)
 
 
 def build_gpu_library(unit: Path, compiler: str, flags: Optional[List[str]], archive: Path) -> None:
     chosen = flags if flags is not None else cuda_base_flags(cpf.CUDA_BUILD_FLAGS)
     build_cuda_archive(unit, archive, archive.with_suffix(".so"), compiler, chosen)
+
+
+def process_runtime_libraries() -> List[str]:
+    """libomp, the process's one OpenMP runtime, spelled for the program's linker."""
+    return LIBOMP.link_flags(program_compiler())
+
+
+def cpu_runtime_libraries(compiler: str) -> List[str]:
+    return process_runtime_libraries()
+
+
+def gpu_runtime_libraries(compiler: str) -> List[str]:
+    """libomp, and the ``libcudart`` the kernel's own nvcc links."""
+    return [*process_runtime_libraries(), *cudart_link_flags(cudart_dir(compiler))]
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,11 +131,12 @@ class KernelForm:
     schedule: Callable[[Boundary], dace.SDFG]
     build: Callable[[Path, str, Optional[List[str]], Path], None]
     call: Callable[..., Tuple[Optional[Dict[str, np.ndarray]], float]]
+    runtime: Callable[[str], List[str]]
 
 
 FORMS: Dict[str, KernelForm] = {
-    "cpu": KernelForm("c++", ".cpp", cpu_schedule, build_cpu_library, call_native),
-    "gpu": KernelForm("cuda", ".cu", gpu_schedule, build_gpu_library, call_on_device),
+    "cpu": KernelForm("c++", ".cpp", cpu_schedule, build_cpu_library, call_native, cpu_runtime_libraries),
+    "gpu": KernelForm("cuda", ".cu", gpu_schedule, build_gpu_library, call_on_device, gpu_runtime_libraries),
 }
 
 
@@ -146,9 +161,17 @@ def build_kernel_library(src: KernelSource, compiler: str, flags: Optional[List[
     return archive
 
 
-def use_kernel_library(ext: ExternalCall, lib_path: Path, symbol: str, abi_order: List[str]) -> None:
-    """Point ``ext`` at a built library and select the extern-call expansion."""
+def kernel_runtime_libraries(src: KernelSource, compiler: str) -> List[str]:
+    """What a program linking ``src``'s library, built by ``compiler``, must link after its objects."""
+    return FORMS[src.device].runtime(compiler)
+
+
+def use_kernel_library(
+    ext: ExternalCall, lib_path: Path, symbol: str, abi_order: List[str], runtime_libraries: Sequence[str]
+) -> None:
+    """Point ``ext`` at a built library and the runtimes it needs, and select the extern-call expansion."""
     ext.lib_path, ext.symbol, ext.abi_order = str(lib_path), symbol, list(abi_order)
+    ext.runtime_libraries = list(runtime_libraries)
     ext.implementation = "ExternCall"
 
 

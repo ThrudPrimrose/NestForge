@@ -25,7 +25,14 @@ import sys
 import numpy as np
 import pytest
 
-from nestforge.build.toolchain import LIBOMP, OPENMP_RUNTIMES, compiler_family, lib_linkable, usable_openmp
+from nestforge.build.toolchain import (
+    LIBOMP,
+    OPENMP_RUNTIMES,
+    compiler_family,
+    driver_lib_path,
+    lib_linkable,
+    usable_openmp,
+)
 
 #: A minimal nest with an OpenMP region: enough to make the compiler link a runtime.
 OMP_SRC = """#include <omp.h>
@@ -43,6 +50,31 @@ double kern2(const double *a, int n) {
   #pragma omp parallel for reduction(+:s)
   for (int i = 0; i < n; i++) s += a[i] * 2.0;
   return s;
+}
+"""
+
+#: A g++ kernel reaching the OpenMP entries GCC lowers to distinct GOMP_* calls: simd reduction, collapsed
+#: dynamic schedule, max reduction, single, task and taskwait.
+OMP_SRC_ENTRIES = """#include <omp.h>
+double kern3(double *a, const double *b, int n, int m) {
+  double s = 0.0, mx = 0.0;
+  #pragma omp parallel for simd reduction(+:s)
+  for (int i = 0; i < n; i++) s += a[i] * b[i];
+  #pragma omp parallel for collapse(2) schedule(dynamic)
+  for (int i = 0; i < n; i++)
+    for (int j = 0; j < m; j++) a[i] += b[j];
+  #pragma omp parallel for reduction(max:mx)
+  for (int i = 0; i < n; i++) mx = a[i] > mx ? a[i] : mx;
+  #pragma omp parallel
+  {
+    #pragma omp single
+    {
+      #pragma omp task
+      { a[0] += omp_get_thread_num(); }
+      #pragma omp taskwait
+    }
+  }
+  return s + mx;
 }
 """
 
@@ -140,7 +172,7 @@ def test_every_compiler_links_the_same_single_runtime(tmp_path):
         seen[cc] = rts
     assert seen, "no compiler could link a runtime -- the matrix would be vacuous"
     distinct = set().union(*seen.values())
-    assert len(distinct) == 1, f"the single-runtime contract is violated across compilers: {seen}"
+    assert distinct == {"libomp"}, f"the single runtime must be libomp for every compiler: {seen}"
 
 
 def test_two_different_nests_from_two_compilers_share_one_runtime(tmp_path):
@@ -267,4 +299,30 @@ def test_a_kmpc_compiler_on_libgomp_would_be_caught_not_silently_serialized(tmp_
     assert not emits_parallel_region(so), (
         "clang -fopenmp=libgomp emitted a fork call -- libgomp now has a kmpc "
         "layer, so the single-runtime prune for kmpc families can be revisited"
+    )
+
+
+def symbol_names(command):
+    """The symbol names ``nm`` prints, without a symbol version suffix."""
+    out = subprocess.run(command, capture_output=True, text=True, check=True).stdout
+    return {line.split()[-1].split("@")[0] for line in out.splitlines() if line.strip()}
+
+
+def test_every_openmp_entry_a_gxx_object_calls_is_exported_by_libomp(tmp_path):
+    """libomp serves g++ code through its GOMP compatibility layer. An entry a newer GCC emits that libomp lacks
+    would fail at load time, so every OpenMP symbol the object leaves undefined must be a libomp export."""
+    assert shutil.which("g++"), "no g++ on PATH (setup_apt.sh installs it)"
+    source = tmp_path / "entries.c"
+    source.write_text(OMP_SRC_ENTRIES)
+    obj = tmp_path / "entries.o"
+    subprocess.run(["g++", "-x", "c++", "-O2", "-fopenmp", "-c", str(source), "-o", str(obj)], check=True)
+    libomp = driver_lib_path(LIBOMP.soname, "g++")
+    assert libomp is not None, "g++ resolves no libomp.so"
+
+    called = {name for name in symbol_names(["nm", "-u", str(obj)]) if name.startswith(("GOMP_", "omp_"))}
+    exported = symbol_names(["nm", "-D", "--defined-only", str(libomp)])
+
+    assert len(called) >= 5, f"the object calls too few OpenMP entries to cover GCC's lowering: {sorted(called)}"
+    assert sorted(called - exported) == [], (
+        f"libomp does not export these entries g++ calls: {sorted(called - exported)}"
     )

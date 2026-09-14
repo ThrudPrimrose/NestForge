@@ -8,16 +8,20 @@ import re
 import subprocess
 from typing import Tuple
 
+import numpy as np
 import pytest
 
 import dace
 
-from nestforge.build.toolchain import raw_signature, split_params
+from nestforge.build.isolation import run_isolated
+from nestforge.build.sdfg import compile_linked_program
+from nestforge.build.toolchain import needed_libraries, raw_signature, split_params
 from nestforge.corpus.translate import prepare
 from nestforge.ir.libnode import proto_and_call
 from nestforge.phases.kernel import (
     build_kernel_library,
     gpu_schedule,
+    kernel_runtime_libraries,
     schedule_kernel,
     use_kernel_library,
     validate_kernel,
@@ -69,6 +73,8 @@ KERNELS = [vadd, stencil_row_sum, axpy_in_place, scaled]
 KERNEL_IDS = ["vadd", "stencil_row_sum", "axpy_in_place", "scaled"]
 #: Extents off any vector width, so a compiler's remainder loop runs too.
 KERNEL_SIZES = [{"N": 1037}, {"M": 13, "N": 67}, {"N": 1037}, {"N": 1037}]
+#: DT_NEEDED soname stems of the OpenMP runtimes a library can name.
+OPENMP_RUNTIME_STEMS = ("libgomp", "libomp", "libiomp5")
 ENTRY_DEFINITION = re.compile(r'^extern "C" void (\w+)\s*\([^)]*\)\s*\{', re.M)
 
 
@@ -100,6 +106,10 @@ def split_decl(decl: str) -> Tuple[str, str]:
     text = " ".join(re.sub(r"\b__restrict__\b", "", decl).split()).replace(" *", "*")
     name = re.split(r"[\s*]+", text)[-1]
     return text[: text.rfind(name)].strip(), name
+
+
+def openmp_runtime_stems(shared):
+    return [name.split(".so")[0] for name in needed_libraries(shared) if name.split(".so")[0] in OPENMP_RUNTIME_STEMS]
 
 
 def entry_params(src):
@@ -141,7 +151,7 @@ def test_a_gpu_kernel_is_one_cuda_unit_whose_entry_matches_the_external_call_pro
     """After phase 3 places the kernel on the GPU, phase 4 renders CUDA with the same entry the parent calls."""
     sdfg, ext, boundary = gpu_lowered_kernel(program)
     src = schedule_kernel(ext, boundary, tmp_path)
-    use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order)
+    use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order, [])
 
     proto, _ = proto_and_call(ext, next(s for s in sdfg.all_states() if ext in s.nodes()))
 
@@ -156,7 +166,7 @@ def test_a_gpu_kernel_is_one_cuda_unit_whose_entry_matches_the_external_call_pro
 def test_a_length_one_device_array_input_is_a_device_pointer_in_the_prototype(tmp_path):
     sdfg, ext, boundary = gpu_lowered_kernel(scaled_by_cell, on_device=("alpha",))
     src = schedule_kernel(ext, boundary, tmp_path)
-    use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order)
+    use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order, [])
 
     proto, _ = proto_and_call(ext, next(s for s in sdfg.all_states() if ext in s.nodes()))
 
@@ -185,7 +195,7 @@ def test_the_entry_declares_each_parameter_as_the_external_call_prototype_does(t
     pointer, and the read-only scalar ``alpha`` by value."""
     sdfg, ext, boundary = lowered_kernel(program)
     src = schedule_kernel(ext, boundary, tmp_path)
-    use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order)
+    use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order, [])
 
     proto, _ = proto_and_call(ext, next(s for s in sdfg.all_states() if ext in s.nodes()))
 
@@ -197,7 +207,7 @@ def test_a_read_only_scalar_input_crosses_the_boundary_by_value(tmp_path):
     """``alpha`` is a Scalar in the program, so the prototype takes its value and the call passes it."""
     sdfg, ext, boundary = lowered_kernel(scaled)
     src = schedule_kernel(ext, boundary, tmp_path)
-    use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order)
+    use_kernel_library(ext, tmp_path / "unused.a", src.symbol, src.abi_order, [])
 
     proto, call = proto_and_call(ext, next(s for s in sdfg.all_states() if ext in s.nodes()))
 
@@ -268,3 +278,56 @@ def test_a_built_gpu_kernel_matches_its_numpy_oracle_bit_for_bit(tmp_path, progr
     assert verdict.error == "", verdict.error
     assert verdict.ok and verdict.maxdiff == 0.0, verdict
     assert verdict.time_us > 0.0
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("compiler", ["g++", "clang++"])
+def test_a_cpu_kernel_library_links_libomp_as_its_only_openmp_runtime(tmp_path, compiler):
+    """Whichever compiler builds the kernel, its library names libomp, the process's one OpenMP runtime."""
+    _, ext, boundary = lowered_kernel(vadd)
+    src = schedule_kernel(ext, boundary, tmp_path / "gen")
+
+    archive = build_kernel_library(src, compiler, None, tmp_path / "lib")
+
+    assert openmp_runtime_stems(archive.with_suffix(".so")) == ["libomp"]
+
+
+@pytest.mark.gpu
+def test_a_gpu_kernel_library_links_cudart_and_no_foreign_openmp_runtime(tmp_path):
+    _, ext, boundary = gpu_lowered_kernel(vadd)
+    src = schedule_kernel(ext, boundary, tmp_path / "gen")
+    strict = next(v for v in device_variants("gpu") if v.fp_mode == "strict-ieee")
+
+    archive = build_kernel_library(src, strict.compiler, list(strict.flags), tmp_path / "lib")
+
+    shared = archive.with_suffix(".so")
+    assert any(name.startswith("libcudart.so") for name in needed_libraries(shared))
+    assert [stem for stem in openmp_runtime_stems(shared) if stem != "libomp"] == []
+
+
+@pytest.mark.gpu
+def test_the_program_hands_a_length_one_device_array_to_the_gpu_kernel_as_a_device_pointer(tmp_path):
+    """The program calls the linked CUDA kernel with ``alpha`` still in device memory. A host address in that
+    slot reads garbage or faults, so the program's output is compared with NumPy, in a forked child."""
+    import cupy  # the optional GPU array library, needed only where a GPU runs this test
+
+    sdfg, ext, boundary = gpu_lowered_kernel(scaled_by_cell, on_device=("alpha",))
+    src = schedule_kernel(ext, boundary, tmp_path / "gen")
+    strict = next(v for v in device_variants("gpu") if v.fp_mode == "strict-ieee")
+    archive = build_kernel_library(src, strict.compiler, list(strict.flags), tmp_path / "lib")
+    use_kernel_library(ext, archive, src.symbol, src.abi_order, kernel_runtime_libraries(src, strict.compiler))
+    sdfg.expand_library_nodes()
+    compiled = compile_linked_program(sdfg, tmp_path / "parent")
+    x = np.random.default_rng(0).random(1037)
+
+    def run() -> dict:
+        y = np.zeros_like(x)
+        compiled(alpha=cupy.asarray([0.75]), x=x, y=y, N=x.size)
+        return {"maxdiff": float(np.abs(y - 0.75 * x).max())}
+
+    result = run_isolated(run)
+
+    assert result == {"maxdiff": 0.0}
+    program = compiled._lib._library_filename
+    assert any(name.startswith("libcudart.so") for name in needed_libraries(program))
+    assert [stem for stem in openmp_runtime_stems(program) if stem != "libomp"] == []

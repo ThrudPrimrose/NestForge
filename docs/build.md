@@ -50,3 +50,10 @@ a Clang-built object can share one thread pool). `OpenMPRuntime.check` raises be
 translation unit against a runtime a given compiler cannot actually link (LLVM selects by name;
 GNU accepts any GOMP-ABI runtime), which is how a mixed-compiler build is kept off a
 mixed-runtime link.
+
+libomp is the process's one runtime, and every artifact names it explicitly rather than relying on a
+host program having it loaded. A CPU kernel library links libomp whichever compiler built it; g++ code
+reaches it through libomp's GOMP entry points. `compile_linked_program` (`sdfg.py`) builds a program that
+links kernel libraries with libomp in place of DaCe's default runtime, for that compile only. An
+`ExternalCall` carries its kernel's runtime link items (libomp, plus the cudart of its own nvcc for a GPU
+kernel), and the program links them after its objects.

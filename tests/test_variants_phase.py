@@ -3,7 +3,7 @@
 """The configuration sweep: what it enumerates, how a build shared by several cells is measured once and gated per
 cell, and that the winning ``lib<kernel>.a`` links into the parent program and computes the right answer."""
 
-import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -13,10 +13,17 @@ import dace
 from nestforge.build import flags
 from dace.codegen import cpf
 
-from nestforge.build.toolchain import CudaToolchain, Toolchain
+from nestforge.build.toolchain import CudaToolchain, Toolchain, needed_libraries
 from nestforge.corpus.translate import prepare
 from nestforge.ir.libnode import ExternLibEnv
-from nestforge.phases.kernel import KernelVerdict, at_rung, schedule_kernel, use_kernel_library
+from nestforge.build.sdfg import compile_linked_program
+from nestforge.phases.kernel import (
+    KernelVerdict,
+    at_rung,
+    kernel_runtime_libraries,
+    schedule_kernel,
+    use_kernel_library,
+)
 from nestforge.phases.normalize import Targets, normalize
 from nestforge.phases.schedule import full_fusion
 from nestforge.phases.scopes import lower_nests_to_external_call
@@ -136,16 +143,16 @@ def test_the_sweep_measures_identical_builds_once_and_the_fastest_correct_build_
     assert (result.symbol, result.abi_order) == (src.symbol, src.abi_order)
 
 
-def openmp_runtimes(so_path):
-    """OpenMP runtimes the built parent library pulls in, per ``ldd``, deduped by soname."""
-    out = subprocess.check_output(["ldd", so_path], text=True)
-    return {line.split()[0] for line in out.splitlines() if any(t in line for t in ("libgomp", "libomp", "libiomp"))}
+def openmp_runtime_stems(so_path):
+    """The OpenMP runtimes in a built library's DT_NEEDED, as soname stems."""
+    names = [name.split(".so")[0] for name in needed_libraries(Path(so_path))]
+    return [stem for stem in names if stem in ("libgomp", "libomp", "libiomp5")]
 
 
 @pytest.mark.e2e
 def test_the_winning_archive_links_statically_into_the_parent_and_matches_numpy(tmp_path):
     """The whole flow: the phase-4 winner linked into the parent through ``ExternalCall``'s extern-call
-    expansion. An archive carries no runtime, so the parent ends with at most one OpenMP runtime."""
+    expansion, with the runtimes it needs linked after the objects. The program's one OpenMP runtime is libomp."""
     sdfg, ext, boundary = lowered_vadd()
     src = schedule_kernel(ext, boundary, tmp_path / "gen")
     prep = prepare(boundary, ext.name, tmp_path / "ref")
@@ -154,11 +161,11 @@ def test_the_winning_archive_links_statically_into_the_parent_and_matches_numpy(
     )
     assert result.library is not None, [c.verdict.error for c in result.cells]
 
-    use_kernel_library(ext, result.library, result.symbol, result.abi_order)
+    runtime = kernel_runtime_libraries(src, result.winner.variant.compiler)
+    use_kernel_library(ext, result.library, result.symbol, result.abi_order, runtime)
     sdfg.expand_library_nodes()
     sdfg.validate()
-    sdfg.build_folder = str(tmp_path / "parent")
-    compiled = sdfg.compile()
+    compiled = compile_linked_program(sdfg, tmp_path / "parent")
     n = 4099
     b, c = np.random.default_rng(0).random(n), np.random.default_rng(1).random(n)
     a = np.zeros(n)
@@ -166,8 +173,9 @@ def test_the_winning_archive_links_statically_into_the_parent_and_matches_numpy(
 
     np.testing.assert_array_equal(a, b + c)
     assert str(result.library) in ExternLibEnv.cmake_libraries
+    assert runtime and set(runtime) <= set(ExternLibEnv.cmake_libraries)
     assert not any("-rpath" in f for f in ExternLibEnv.cmake_link_flags), "statically in, not loaded"
-    assert len(openmp_runtimes(str(compiled._lib._library_filename))) <= 1
+    assert openmp_runtime_stems(compiled._lib._library_filename) == ["libomp"]
 
 
 @pytest.mark.gpu

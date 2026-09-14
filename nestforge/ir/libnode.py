@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import os
 from dataclasses import dataclass
-from typing import Collection, List, Optional, Tuple
+from typing import Collection, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -143,6 +143,11 @@ def proto_and_call(node: "ExternalCall", state: dace.SDFGState) -> Tuple[str, st
     return proto, call
 
 
+def with_new_items(existing: List[str], items: Sequence[str]) -> List[str]:
+    """``existing`` followed by each item of ``items`` it does not hold yet, in order."""
+    return [*existing, *(item for item in dict.fromkeys(items) if item not in existing)]
+
+
 @dace.library.environment
 class ExternLibEnv:
     """Links the chosen compiled ``.so`` into the SDFG program; ``configure`` stamps the path onto
@@ -171,12 +176,11 @@ class ExternLibEnv:
         cls.cmake_link_flags = []
 
     @classmethod
-    def configure(cls, lib_path: str) -> None:
-        """Accumulate one nest's library (every ``ExternalCall`` shares this class, so assigning
-        instead of appending would drop earlier nests' libraries on a multi-nest build)."""
+    def configure(cls, lib_path: str, runtime_libraries: Sequence[str] = ()) -> None:
+        """Accumulate one nest's library and the runtimes it needs, after the program's objects (every
+        ``ExternalCall`` shares this class, so assigning instead of appending would drop earlier nests')."""
         lib = os.path.abspath(lib_path)
-        if lib not in cls.cmake_libraries:
-            cls.cmake_libraries = [*cls.cmake_libraries, lib]
+        cls.cmake_libraries = with_new_items(cls.cmake_libraries, [lib, *runtime_libraries])
         if not lib.endswith(".a"):
             # .a links directly (a multi-member archive is not reliably pulled); .so needs an rpath.
             rpath = f"-Wl,-rpath,{os.path.dirname(lib)}"
@@ -210,7 +214,7 @@ class ExpandExternCall(ExpandTransformation):
         if not node.lib_path or not node.symbol:
             raise ValueError(f"ExternalCall {node.name} needs lib_path + symbol for ExpandExternCall")
         proto, call = proto_and_call(node, parent_state)
-        ExternLibEnv.configure(node.lib_path)
+        ExternLibEnv.configure(node.lib_path, node.runtime_libraries)
         ExpandExternCall.environments = [ExternLibEnv]
         tasklet = nodes.Tasklet(
             node.name,
@@ -245,6 +249,11 @@ class ExternalCall(nodes.LibraryNode):
         "(the emitted signature order -- NOT the manifest role order)",
     )
     lib_path = dace.properties.Property(dtype=str, default="", desc="compiled static/shared lib")
+    runtime_libraries = dace.properties.ListProperty(
+        element_type=str,
+        default=[],
+        desc="link items for the runtimes the linked library needs (libomp, cudart), placed after the objects",
+    )
     fp_mode = dace.properties.Property(dtype=str, default="", desc="winning FP mode")
 
     def __init__(
