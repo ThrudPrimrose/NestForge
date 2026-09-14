@@ -39,6 +39,12 @@ nestforge/
   corpus/      HPCAgent-Bench kernels and the numpy translator
 ```
 
+## More docs
+
+- [Emitter contract](docs/emitter.md): how kernels become NumPy oracles and translator input.
+- [Build and linking](docs/build.md): owned DaCe build, static archives, one OpenMP runtime.
+- [FP modes and vectorization](docs/fp-and-vectorization.md): the FP ladder and vectorizer knobs.
+
 ## References
 
 - Phase 0 builds on *The Canonical Parallel Form as a Substrate for Parallelizing Compilers and
