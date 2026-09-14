@@ -58,7 +58,9 @@ def dtype_str(desc: dace.data.Data) -> str:
     return np.dtype(desc.dtype.type).name
 
 
-def manifest_dict(boundary: Boundary, name: str, sizes: Optional[Dict[str, int]] = None, preset: str = "S") -> Dict:
+def manifest_dict(
+    boundary: Boundary, name: str, sizes: Optional[Dict[str, int]] = None, preset: str = "S"
+) -> Dict[str, Any]:
     """Build the OptArena manifest dict for boundary's standalone SDFG."""
     sdfg = sized_sdfg(boundary)
     arrays = array_names(boundary, sdfg)
@@ -66,7 +68,7 @@ def manifest_dict(boundary: Boundary, name: str, sizes: Optional[Dict[str, int]]
     for a in arrays:
         desc = sdfg.arrays[a]
         init_arrays[a] = {"shape": shape_str(desc.shape), "dtype": dtype_str(desc)}
-    sizes = sizes or {s: DEFAULT_SIZE for s in boundary.symbols}
+    sizes = sizes or dict.fromkeys(boundary.symbols, DEFAULT_SIZE)
     int_params: Dict[str, int] = {}
     float_scalars: Dict[str, float] = {}
     for s in boundary.symbols:
@@ -76,7 +78,7 @@ def manifest_dict(boundary: Boundary, name: str, sizes: Optional[Dict[str, int]]
             float_scalars[s] = 0.0
         else:
             int_params[s] = int(sizes.get(s, DEFAULT_SIZE))
-    init: Dict = {"arrays": init_arrays}
+    init: Dict[str, Any] = {"arrays": init_arrays}
     if float_scalars:
         init["scalars"] = float_scalars
     return {

@@ -13,8 +13,7 @@ gated by the input's condition number, exactly as the summation/solver theory pr
     while ieee-strict stays controlled.
 
 "Numerically stable" (the arena's acceptance metric) = relative error vs the ieee-strict *sequential*
-baseline does not explode. This test encodes both the mechanism and that stability definition, and
-guards the size-1-buffer write fix that lets the reduction nest compile (``nrm[0] =`` not ``nrm[:] =``).
+baseline does not explode. This test encodes both the mechanism and that stability definition.
 """
 
 import ctypes
@@ -28,14 +27,16 @@ gcc = shutil.which("gcc")
 assert gcc is not None, "gcc not on PATH (setup_apt.sh installs it)"
 
 from dace import symbolic
+from dace.libraries.blas.nodes import Dot
+from dace.sdfg.state import LoopRegion
 
 from nestforge.corpus.bench import iter_dace_kernels
-from nestforge.phases.scopes import lower_nests_to_external_call
+from nestforge.ir.extract import extract_nest_to_sdfg
 from nestforge.corpus.translate import prepare, emit_sources
 
-_CT = {"float64": ctypes.c_double, "int64": ctypes.c_int64}
-_BASE = ["-O3", "-march=native", "-fPIC", "-shared"]
-_MODES = {
+CTYPE_FOR_DTYPE = {"float64": ctypes.c_double, "int64": ctypes.c_int64}
+GCC_BASE_FLAGS = ["-O3", "-march=native", "-fPIC", "-shared"]
+FP_MODES = {
     "ieee-strict-seq": ["-ffp-contract=off", "-fno-tree-vectorize"],  # the stability baseline
     "contract-fast": ["-ffp-contract=fast"],  # FMA only, no reassociation
     "fast-math": ["-ffast-math"],  # adds reduction reassociation
@@ -52,15 +53,22 @@ def make_A(M, N, conditioning, seed=0):
     return U @ np.diag(np.logspace(0, -14, N)) @ V
 
 
+def computes_nrm_reduction(loop: LoopRegion) -> bool:
+    """True if ``loop``'s body holds the BLAS ``Dot`` node computing ``nrm = A[:,k].A[:,k]``."""
+    return any(isinstance(n, Dot) for state in loop.all_states() for n in state.nodes())
+
+
 def prepare_compute_nest():
     kernels = {k.short_name: k for k in iter_dace_kernels()}
     sdfg = kernels["scientific_computing/dense_linear_algebra/gramschmidt/gramschmidt"].to_sdfg(simplify=True)
-    # simplify folds the two zero-inits (Q, R) into the compute nest, so ``outer`` returns a single nest
-    # -- the one holding the two np.dot reductions (asserted via ``nrm[0] = np.dot`` in ``emit``).
-    nests = lower_nests_to_external_call(sdfg)
-    assert len(nests) == 1, f"expected one compute nest, got {len(nests)}"
-    _, boundary = nests[0]
-    return boundary
+    # Select by content, not by phase-2 scope policy: the loop region whose body computes the nrm
+    # dot-product reduction. `parallel_top_level_maps` (nestforge/phases/scopes.py, since commit
+    # 9b186ad replaced the old ``outer()``) offers one candidate per parallel top-level MAP and never
+    # this loop -- both np.dot reductions here lower to ``Dot``/``MatMul`` library nodes, not Maps, so
+    # they are never candidates there.
+    loops = [n for n in sdfg.nodes() if isinstance(n, LoopRegion) and computes_nrm_reduction(n)]
+    assert len(loops) == 1, f"expected one nrm-reduction loop, got {len(loops)}"
+    return extract_nest_to_sdfg(sdfg, loops[0], name="gs_compute")
 
 
 def emit(boundary, tmp_path):
@@ -75,7 +83,9 @@ def emit(boundary, tmp_path):
 
 def run(csrc, order, boundary, flags, A, sizes, tmp_path, tag):
     bsdfg = boundary.standalone_sdfg
-    env = {symbolic.symbol("M"): sizes["M"], symbolic.symbol("N"): sizes["N"]}
+    # `k` is a boundary symbol too (the whole k-loop is one nest): a scratch buffer sized "N - k - 1"
+    # is allocated at the caller-supplied k (0, its value on entry), its largest extent over the loop.
+    env = {symbolic.symbol("M"): sizes["M"], symbolic.symbol("N"): sizes["N"], symbolic.symbol("k"): sizes["k"]}
     buffers = {}
     for a in order:
         if a in bsdfg.arrays:
@@ -83,11 +93,13 @@ def run(csrc, order, boundary, flags, A, sizes, tmp_path, tag):
             shape = tuple(int(symbolic.evaluate(x, env)) for x in d.shape)
             buffers[a] = A.copy() if a == "A" else np.zeros(shape, np.dtype(d.dtype.type))
     argt = [
-        ctypes.POINTER(_CT[np.dtype(bsdfg.arrays[a].dtype.type).name]) if a in bsdfg.arrays else ctypes.c_int64
+        ctypes.POINTER(CTYPE_FOR_DTYPE[np.dtype(bsdfg.arrays[a].dtype.type).name])
+        if a in bsdfg.arrays
+        else ctypes.c_int64
         for a in order
     ]
     so = tmp_path / f"lib_{tag}.so"
-    subprocess.run([gcc, *_BASE, *flags, str(csrc), "-o", str(so)], check=True, capture_output=True)
+    subprocess.run([gcc, *GCC_BASE_FLAGS, *flags, str(csrc), "-o", str(so)], check=True, capture_output=True)
     fn = ctypes.CDLL(str(so)).gs_compute_fp64
     fn.argtypes = argt
     fn.restype = None
@@ -106,15 +118,17 @@ def relerr(got, ref):
 def sweep(conditioning, tmp_path):
     boundary = prepare_compute_nest()
     prep, csrc, order = emit(boundary, tmp_path)
-    assert "nrm[0] = np.dot" in prep.numpy_source  # size-1 buffer written by element, not nrm[:] =
+    # nrm is a local scalar inside the extracted loop (never crosses the boundary), so the reduction
+    # lowers to a plain assignment; guards that it is still present and still a np.dot reduction.
+    assert "nrm = np.dot" in prep.numpy_source
     M, N = 128, 40
     sizes = {"M": M, "N": N, "j": 0, "k": 0}
     A = make_A(M, N, conditioning)
     outs = {
-        m: run(csrc, order, boundary, flags, A, sizes, tmp_path, f"{conditioning}_{m}") for m, flags in _MODES.items()
+        m: run(csrc, order, boundary, flags, A, sizes, tmp_path, f"{conditioning}_{m}") for m, flags in FP_MODES.items()
     }
     ref = outs["ieee-strict-seq"]
-    return {m: relerr(outs[m], ref) for m in _MODES}
+    return {m: relerr(outs[m], ref) for m in FP_MODES}
 
 
 def test_fma_contraction_alone_is_bit_exact(tmp_path):

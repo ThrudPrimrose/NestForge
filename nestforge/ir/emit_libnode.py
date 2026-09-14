@@ -206,7 +206,7 @@ def out_lhs(
     return memlet_lhs(edge.data, sdfg)
 
 
-_REDUCTION_FUNC = {
+REDUCTION_FUNC = {
     dace.dtypes.ReductionType.Sum: "np.add",
     dace.dtypes.ReductionType.Product: "np.multiply",
     dace.dtypes.ReductionType.Max: "np.maximum",
@@ -353,12 +353,12 @@ def emit_ifft(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -
     return f"{out_lhs(state, node, '_out', sdfg)} = {scaled(call, node.factor)}"
 
 
-_ARGREDUCE_FUNC = {"max": ("np.argmax", "np.max"), "min": ("np.argmin", "np.min")}
+ARGREDUCE_FUNC = {"max": ("np.argmax", "np.max"), "min": ("np.argmin", "np.min")}
 
 
 def emit_argreduce(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> List[str]:
     """``np.argmax``/``np.argmin`` plus the extreme value, as two statements."""
-    argfn, valfn = _ARGREDUCE_FUNC[node.op]
+    argfn, valfn = ARGREDUCE_FUNC[node.op]
     inp = in_expr(state, node, "_in", sdfg)
     out_edges = list(state.out_edges(node))
     return [
@@ -367,7 +367,7 @@ def emit_argreduce(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SD
     ]
 
 
-_SCAN_FUNC = {
+SCAN_FUNC = {
     dace.dtypes.ReductionType.Sum: "np.cumsum",
     dace.dtypes.ReductionType.Product: "np.cumprod",
     dace.dtypes.ReductionType.Max: "np.maximum.accumulate",
@@ -383,7 +383,7 @@ def emit_scan(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -
         ScanOp.MIN: dace.dtypes.ReductionType.Min,
         ScanOp.MAX: dace.dtypes.ReductionType.Max,
     }.get(node.op)
-    func = _SCAN_FUNC.get(red)
+    func = SCAN_FUNC.get(red)
     if func is None:
         raise UnsupportedLibraryNode(f"Scan with unsupported op {node.op}")
     if node.exclusive or str(node.stride) != "1" or "_scan_init" in node.in_connectors:
@@ -530,7 +530,7 @@ def emit_tensortranspose(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: d
 
 def emit_reduce(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> str:
     red = detect_reduction_type(node.wcr)
-    func = _REDUCTION_FUNC.get(red)
+    func = REDUCTION_FUNC.get(red)
     if func is None:
         raise UnsupportedLibraryNode(f"Reduce with unsupported wcr {node.wcr!r} ({red})")
     in_edges, out_edges = list(state.in_edges(node)), list(state.out_edges(node))
@@ -588,12 +588,12 @@ REFUSED_LIBRARY_NODES: Dict[str, str] = {
 }
 
 # distributed-communication subpackages; matched by module, not class name, so no name collides.
-_COMM_MODULE_PREFIXES = ("dace.libraries.mpi", "dace.libraries.pblas")
+COMM_MODULE_PREFIXES = ("dace.libraries.mpi", "dace.libraries.pblas")
 
 
 def is_comm_node(node: nodes.LibraryNode) -> bool:
     """True if ``node`` is a distributed-communication library node (dace.libraries.mpi / pblas)."""
-    return type(node).__module__.startswith(_COMM_MODULE_PREFIXES)
+    return type(node).__module__.startswith(COMM_MODULE_PREFIXES)
 
 
 def emit_library_node(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> List[str]:

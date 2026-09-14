@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import yaml
 
@@ -28,12 +28,16 @@ class Prepared:
     numpy_path: Path
     yaml_path: Path
     numpy_source: str
-    manifest: Dict
+    manifest: Dict[str, Any]
     spec: BenchSpec
 
 
 def prepare(
-    boundary: Boundary, name: str, out_dir: os.PathLike, sizes: Dict[str, int] = None, preset: str = "S"
+    boundary: Boundary,
+    name: str,
+    out_dir: os.PathLike,
+    sizes: Optional[Dict[str, int]] = None,
+    preset: str = "S",
 ) -> Prepared:
     """Write ``<name>_numpy.py`` + ``<name>.yaml`` for one extracted kernel and build its ``BenchSpec``."""
     from hpcagent_bench.spec import BenchSpec  # deferred: hpcagent_bench imports nestforge at top level

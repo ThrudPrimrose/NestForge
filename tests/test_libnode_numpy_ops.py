@@ -59,7 +59,7 @@ def run(sdfg, fn, buffers, sizes):
 
 rng = np.random.default_rng(0)
 
-# --- BLAS: the nodes a MatMul expands into ------------------------------------------------------- #
+# BLAS: the nodes a MatMul expands into
 
 
 def test_gemm_alpha_beta():
@@ -192,7 +192,7 @@ def test_batched_matmul_beta_refused():
         sdfg_to_numpy(sdfg, "bmb")
 
 
-# --- Einsum: operand order is by (sorted) connector name ----------------------------------------- #
+# Einsum: operand order is by (sorted) connector name
 
 
 def test_einsum_three_operand():
@@ -252,7 +252,7 @@ def test_einsum_runtime_alpha_connector():
     np.testing.assert_array_equal(buffers["o"], 4.0 * np.einsum("ik,kj->ij", a, b))
 
 
-# --- TensorDot / Inv ----------------------------------------------------------------------------- #
+# TensorDot / Inv
 
 
 def test_tensordot_contract():
@@ -298,7 +298,7 @@ def test_inv():
     np.testing.assert_allclose(buffers["aout"], np.linalg.inv(A), rtol=1e-12)
 
 
-# --- FFT / IFFT (DaCe's forward DFT is unnormalized; its inverse omits the 1/N) ------------------ #
+# FFT / IFFT (DaCe's forward DFT is unnormalized; its inverse omits the 1/N)
 
 C128 = dc.complex128
 
@@ -336,7 +336,7 @@ def test_fft_factor_normalization():
     np.testing.assert_allclose(buffers["y"], np.fft.ifft(x), rtol=1e-12)
 
 
-# --- standard: ArgReduce / Scan ------------------------------------------------------------------ #
+# standard: ArgReduce / Scan
 
 
 @pytest.mark.parametrize("op, argfn, valfn", [("max", np.argmax, np.max), ("min", np.argmin, np.min)])
@@ -401,7 +401,7 @@ def test_integer_sort():
     np.testing.assert_array_equal(buffers["ko"], np.sort(ki))
 
 
-# --- ScatterConflictCheck: TAGCOUNT duplicate count (0 iff a permutation) ------------------------ #
+# ScatterConflictCheck: TAGCOUNT duplicate count (0 iff a permutation)
 
 
 def build_scatter_conflict_check(name):
