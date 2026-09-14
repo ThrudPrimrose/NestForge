@@ -13,11 +13,11 @@ from typing import Dict, List
 import dace
 
 from nestforge.build.sdfg import generate_program
-from nestforge.build.toolchain import DEFAULT_COMPILER
 from nestforge.corpus.bench import CorpusKernel, iter_dace_kernels, preset_sizes
 from nestforge.ir.introspect import describe_graph
-from nestforge.phases.kernel import build_kernel_library
+from nestforge.phases.kernel import build_kernel_library, kernel_runtime_libraries
 from nestforge.phases.normalize import Targets
+from nestforge.phases.variants import device_variants
 from nestforge.session import Session
 
 KERNEL = "loop_level_reasoning/fuse_diamond/fuse_diamond"
@@ -85,7 +85,8 @@ def run_phases_0_to_3(session: Session, out: Path) -> List[dict]:
 
 
 def optimize_kernels(session: Session, kernels: List[dict], out: Path) -> None:
-    """Phase 4: each kernel's CPF unit, built with the default compiler and bound to its ``ExternalCall``."""
+    """Phase 4: each kernel's CPF unit, built with the first configuration phase 5 sweeps for its device and
+    bound to its ``ExternalCall`` with the runtimes it needs."""
     for kernel in kernels:
         info = session.optimize_kernel(kernel["id"])
         name = info["kernel"]
@@ -93,13 +94,15 @@ def optimize_kernels(session: Session, kernels: List[dict], out: Path) -> None:
         kernel_dir = out / "kernels" / name
         kernel_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src.unit, kernel_dir / src.unit.name)
-        built = build_kernel_library(src, DEFAULT_COMPILER, None, session.work_dir / name / "phase4")
+        variant = device_variants(src.device)[0]
+        built = build_kernel_library(src, variant.compiler, list(variant.flags), session.work_dir / name / "phase4")
         library = kernel_dir / built.name
         shutil.copy2(built, library)
-        session.set_kernel(kernel["id"], str(library), info["symbol"], info["abi_order"])
+        runtime = kernel_runtime_libraries(src, variant.compiler)
+        session.set_kernel(kernel["id"], str(library), info["symbol"], info["abi_order"], runtime_libraries=runtime)
         entry = f"{info['symbol']}({', '.join(info['abi_order'])})"
         print(
-            f'4 optimize kernels  {name}: standalone CPF C++, extern "C" {entry}, {library.name} by {DEFAULT_COMPILER}'
+            f'4 optimize kernels  {name}: CPF unit {src.unit.name}, extern "C" {entry}, {library.name} by {variant.label}'
         )
 
 
@@ -133,8 +136,6 @@ def main() -> None:
     print(f"{kernel.short_name}, preset {PRESET} {sizes}, device {args.device}")
     session = Session(kernel.to_sdfg(), targets=Targets(gpu=args.device == "gpu"), work_dir=str(work))
     kernels = run_phases_0_to_3(session, out)
-    if session.targets.gpu:
-        raise SystemExit("phases 4 and 5 do not build GPU kernels yet")
     optimize_kernels(session, kernels, out)
     save(session, out, "4-optimize-kernels")
     copy_sources(generate_program(session.sdfg, work / "program").folder, out / "program")

@@ -29,8 +29,7 @@ python examples/quickstart.py --device gpu --out quickstart_out
 ```
 
 The script runs the default optimizer on HPCAgent-Bench's `fuse_diamond` at preset S (`LEN_1D=512`):
-four loops where `t = a*a` feeds `u = t + 1` and `v = t - 1`, then `out = u*v`. `--device gpu`
-stops after phase 3 for now, since GPU kernels wait for CPF's CUDA form. The script prints the
+four loops where `t = a*a` feeds `u = t + 1` and `v = t - 1`, then `out = u*v`. The script prints the
 program's structure tree before phase 0:
 
 ```
@@ -60,8 +59,9 @@ Normalization turns the four sequential loops, each in its own state, into one p
 1. Shape Kernels: nothing is left to fuse, so the program stays at 1 map.
 2. Define Scopes: the map becomes one kernel, `extcall_0`, which reads `a` and writes `out`.
 3. Offload: on CPU the kernel stays on the host; on GPU it runs on the device, `a` is copied in and `out` back.
-4. Optimize Kernels: CPF renders `extcall_0` as one C++ file; g++ builds `libextcall_0.a` for the program.
-5. Sweep Configurations: 15 variants; here `g++`, `contract-fma`, `no-vec` won at 2.9 us per call.
+4. Optimize Kernels: CPF renders `extcall_0` as one C++ file, or one CUDA file on GPU, built into `libextcall_0.a`.
+5. Sweep Configurations: 15 CPU variants, where `g++`, `strict-ieee`, `no-vec` won at 31.2 us per call; 4 GPU
+   variants (two nvcc toolkits, two FP modes), where `nvcc-13.3`, `strict-ieee` won at 6.9 us.
 
 ```
 quickstart_out/
@@ -69,8 +69,8 @@ quickstart_out/
   4-optimize-kernels.sdfg               the program, extcall_0 bound to libextcall_0.a
   5-sweep-configurations.json           per nest: compiler, FP mode, cost model, flags, time
   trees/                                0-input.txt, 1-cpf.txt, 2-shaped.txt: structure before and after phases 0 and 1
-  kernels/extcall_0/                    extcall_0.cpp (CPF unit) and libextcall_0.a
-  program/                              the program's generated C++
+  kernels/extcall_0/                    extcall_0.cpp or extcall_0.cu (CPF unit) and libextcall_0.a
+  program/                              the program's generated C++, plus CUDA with --device gpu
   work/                                 build tree
 ```
 
