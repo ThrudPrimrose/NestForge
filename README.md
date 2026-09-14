@@ -3,7 +3,7 @@
 NestForge optimizes a whole DaCe program in phases. Each phase makes one decision, ships a
 deterministic default, and exposes the same API to a scripted optimizer, a human, and an LLM agent.
 
-![NestForge phases](docs/figures/pipeline.svg)
+[![NestForge phases](docs/figures/pipeline.png)](docs/figures/pipeline.svg)
 
 | Phase | Decides | Deterministic default | Agent |
 |---|---|---|---|
