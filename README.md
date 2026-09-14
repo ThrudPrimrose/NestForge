@@ -1,7 +1,13 @@
 # NestForge
 
-NestForge optimizes a whole DaCe program in phases. Each phase makes one decision, ships a
-deterministic default, and exposes the same API to a scripted optimizer, a human, and an LLM agent.
+NestForge optimizes whole DaCe programs for CPU and GPU. It takes an SDFG from the Python or Fortran
+frontend, turns its loop nests into standalone kernels, gives each kernel a device, a canonical parallel
+form (CPF) implementation and a compiler configuration, and links the kernels back into one program.
+Every kernel is checked against its NumPy oracle.
+
+The work runs in six phases. Each phase makes one decision and ships a deterministic default. A scripted
+optimizer, a human and an LLM agent drive the same `Session` API, so an agent can take over any phase
+while the defaults run the rest.
 
 [![NestForge phases](docs/figures/pipeline.png)](docs/figures/pipeline.svg)
 
@@ -31,38 +37,40 @@ tree before phase 0:
 
 ```
 SDFG 'hpcagent_bench_benchmarks_loop_level_reasoning_fuse_diamond_fuse_diamond_dace_fuse_diamond'
-|- for_19  i=0:LEN_1D
-|  `- slice_a_20
-|- for_21  i=0:LEN_1D
-|  `- slice_t_22
-|- for_23  i=0:LEN_1D
-|  `- slice_t_24
-`- for_25  i=0:LEN_1D
-   `- slice_u_26
+|- for0_0  i=0:LEN_1D
+|  `- state1_0
+|- for0_1  i=0:LEN_1D
+|  `- state1_1
+|- for0_2  i=0:LEN_1D
+|  `- state1_2
+`- for0_3  i=0:LEN_1D
+   `- state1_3
 ```
 
 and after phase 0, in canonical parallel form:
 
 ```
 SDFG 'hpcagent_bench_benchmarks_loop_level_reasoning_fuse_diamond_fuse_diamond_dace_fuse_diamond'
-`- single_state_body
-   `- single_state_body_0_map  [_loop_it_0=0:LEN_1D]  reads=['a'] writes=['out']
+`- state0_0
+   `- kernel1_0  [_loop_it_0=0:LEN_1D]  reads=['a'] writes=['out']
 ```
 
 0. Normalize fuses the four sequential loops into one parallel map that reads `a` and writes `out`.
 1. Shape Kernels finds nothing left to fuse.
-2. Define Scopes turns the map into one kernel, `extcall_0`.
+2. Define Scopes turns the map into one kernel, `extcall_0`, and lists where its inputs come from:
+   `extcall_0: a <- program, LEN_1D <- program`.
 3. Offload keeps the kernel on the host for CPU; for GPU it runs on the device, with `a` copied in and
    `out` copied back.
 4. Optimize Kernels renders `extcall_0` as one CPF C++ or CUDA file and builds `libextcall_0.a`.
-5. Sweep Configurations times 15 CPU variants (winner `g++`, `strict-ieee`, `no-vec`, 31.2 us per call)
-   or 4 GPU variants (winner `nvcc-13.3`, `strict-ieee`, 6.9 us).
+5. Sweep Configurations times 15 CPU variants or 4 GPU variants (two nvcc toolkits, two FP modes) and
+   keeps the fastest one that matches NumPy.
 
 ```
 quickstart_out/
   0-normalize.sdfg ... 4-optimize-kernels.sdfg   program SDFG per phase (3 only with --device gpu)
   5-sweep-configurations.json                    per nest: compiler, FP mode, cost model, flags, time
   trees/                                         structure before phase 0, after phase 0, after phase 1
+  kernel_deps.txt                                where each kernel's inputs come from
   kernels/extcall_0/                             CPF unit (.cpp or .cu) and libextcall_0.a
   program/                                       the program's generated code
   work/                                          build tree
