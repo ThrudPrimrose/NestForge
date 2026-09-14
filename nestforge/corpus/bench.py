@@ -1,15 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Load hpcagent_bench's own benchmark tracks as SDFGs -- the entire nest-forge kernel corpus.
-
-optarena ships each kernel as ``<name>_numpy.py`` (oracle) + ``<name>.yaml`` (BenchSpec) and, for every
-track, a ``<name>_dace.py`` holding a ``@dace.program`` -- import it, ``to_sdfg`` it, feed it to the
-lowering pass. ``loop_level_reasoning`` is a superset of TSVC-2 (every ``s###``/``vXX`` kernel lives there
-under a ``tsvc_2_<key>`` stem, alongside kernels with descriptive names).
-
-Kernels bind hpcagent_bench's ``dc_float`` precision global at import time, so it must be stamped to fp64
-before any kernel module imports.
-"""
+"""Loads hpcagent_bench's benchmark tracks as SDFGs -- the nest-forge kernel corpus. Each kernel's
+``_dace.py`` binds hpcagent_bench's precision global, so it must be stamped to fp64 before import."""
 from __future__ import annotations
 
 import importlib.util
@@ -33,8 +25,7 @@ from nestforge.ir.extract import Boundary
 if TYPE_CHECKING:
     from types import ModuleType
 
-#: Tracks whose ``_dace.py`` this module materializes on demand (gitignored, never committed --
-#: ``autogen.ensure`` regenerates it on demand, at most once per kernel per process).
+#: Tracks whose ``_dace.py`` this module generates on demand (gitignored, never committed).
 DACE_TRACKS = ("loop_level_reasoning", "scientific_computing", "machine_learning")
 
 
@@ -54,11 +45,8 @@ class CorpusKernel:
     spec: BenchSpec
 
     def module(self) -> ModuleType:
-        """Import the kernel's ``_dace.py`` by file path.
-
-        Loading by path (not ``import_module``) sidesteps ``hpcagent_bench.benchmarks`` namespace-package
-        resolution, which can non-deterministically bind to a stray duplicate ``benchmarks/`` root.
-        """
+        """Imports the kernel's ``_dace.py`` by file path, sidestepping ``hpcagent_bench.benchmarks``
+        namespace-package resolution (which can bind a stray duplicate ``benchmarks/`` root)."""
         if self.module_path in sys.modules:
             return sys.modules[self.module_path]
         spec = importlib.util.spec_from_file_location(self.module_path, self.dace_file)
@@ -68,11 +56,8 @@ class CorpusKernel:
         return module
 
     def program(self) -> dace.frontend.python.parser.DaceProgram:
-        """The kernel's *entry* ``@dace.program``, selected by the manifest's ``func_name``.
-
-        A module often defines helper programs before it and a ``*_gpu`` variant after, so neither
-        "first" nor "last" is reliable; mirrors hpcagent_bench's own ``_import_kernel``.
-        """
+        """The kernel's entry ``@dace.program``, selected by the manifest's ``func_name`` (falls back
+        to the last-defined program, since a module may define helpers before it and a GPU variant after)."""
         set_precision_fp64()
         module = self.module()
         entry = vars(module).get(self.spec.func_name)
@@ -94,10 +79,7 @@ def module_path(short_name: str) -> str:
 
 
 def iter_dace_kernels(track: Optional[str] = None) -> Iterator[CorpusKernel]:
-    """Yield every corpus kernel that ships a ``_dace.py`` impl, optionally filtered by track.
-
-    :param track: one of :data:`DACE_TRACKS`, or ``None`` for all.
-    """
+    """Yields every corpus kernel that ships a ``_dace.py`` impl, optionally filtered by track."""
     for short_name in KERNELS:
         if track is not None and not short_name.startswith(f"{track}/"):
             continue
@@ -114,10 +96,8 @@ def iter_dace_kernels(track: Optional[str] = None) -> Iterator[CorpusKernel]:
 
 
 def materialize_dace_corpus(track: Optional[str] = None) -> None:
-    """Generate every missing ``_dace.py`` for the dace-bearing tracks up front (gitignored, so a fresh
-    checkout has none). Safe to call repeatedly. Call ONCE, serially, before a parallel test run:
-    :func:`autogen.ensure` writes non-atomically, so concurrent xdist workers must not race the same
-    kernel."""
+    """Generates every missing ``_dace.py`` up front; call once, serially, before a parallel test run
+    -- concurrent xdist workers would otherwise race the same non-atomic write."""
     for short_name in KERNELS:
         if short_name.split("/", 1)[0] not in DACE_TRACKS:
             continue
@@ -131,9 +111,8 @@ def dace_kernel_names(track: Optional[str] = None) -> List[str]:
 
 
 def preset_sizes(kernel: CorpusKernel, preset: str) -> Dict[str, int]:
-    """Concrete shape-symbol sizes for one preset rung (``"S"``, ``"M"``, ``"L"``, ...), read from the
-    kernel's own manifest ``parameters`` block. A rung entry that is not a plain int (a fuzz spec) is
-    skipped -- only ``preset`` rungs carry those, never a named preset."""
+    """Concrete shape-symbol sizes for one preset rung, read from the kernel's manifest (skips
+    non-int fuzz-spec entries)."""
     rung = kernel.spec.parameters.get(preset, {})
     return {sym: int(size) for sym, size in rung.items() if is_plain_int(size)}
 
@@ -142,18 +121,9 @@ def index_fills(manifest_name: Optional[str],
                 boundary: Boundary,
                 sizes: Dict[str, int],
                 seed: Optional[int] = 0) -> Dict[str, np.ndarray]:
-    """Valid-subscript values for the nest's integer INDEX arrays, as the kernel's manifest declares them.
-    Feed the result to :func:`nestforge.build.arena.make_inputs` as ``given``.
-
-    The manifest declares e.g. ``ip: int32`` as a PERMUTATION of ``[0, N)``, whereas the default
-    uniform-float fill cast to int collapses to ALL-ZEROS -- degrading a gather to a cached read of
-    ``b[0]`` and turning a conflict-free scatter into a race on ``a[0]`` once lowered to a ``dace.map``.
-
-    Only MANIFEST-declared integer arrays the nest actually READS are filled, at the SDFG descriptor's
-    dtype -- the width the compiled code reads across the ABI. ``manifest_name`` is a :data:`KERNELS`
-    key's stem (``"S"`` for ``kernel.short_name``); ``None`` -> ``{}``. ``seed=None`` draws fresh entropy
-    (fuzz); an int pins the fill.
-    """
+    """Valid-subscript fill values for the nest's manifest-declared integer INDEX arrays, at the SDFG
+    descriptor's dtype -- a permutation fill, not the default all-zero uniform-float-cast fill that
+    would degrade a gather/scatter to a same-index race once lowered to a ``dace.map``."""
     if manifest_name is None:
         return {}
     spec = BenchSpec.load(manifest_name)

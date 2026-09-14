@@ -17,24 +17,23 @@ from dataclasses import dataclass
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from nestforge.ir.extract import NestNode, extract_nest_to_sdfg, whole_program_boundary
 
-
 Strategy = Callable[[dace.SDFG], List[Tuple[dace.SDFG, NestNode]]]
 
-_REGISTRY: Dict[str, Strategy] = {}
+REGISTRY: Dict[str, Strategy] = {}
 
 
 def register_strategy(name: str, fn: Strategy) -> None:
-    _REGISTRY[name] = fn
+    REGISTRY[name] = fn
 
 
 def get_strategy(name: str) -> Strategy:
-    if name not in _REGISTRY:
-        raise KeyError(f"unknown strategy {name!r}; known: {sorted(_REGISTRY)}")
-    return _REGISTRY[name]
+    if name not in REGISTRY:
+        raise KeyError(f"unknown strategy {name!r}; known: {sorted(REGISTRY)}")
+    return REGISTRY[name]
 
 
 def strategy_names() -> List[str]:
-    return sorted(_REGISTRY)
+    return sorted(REGISTRY)
 
 
 def top_level_map_entries(state: dace.SDFGState) -> List[nodes.MapEntry]:
@@ -43,16 +42,7 @@ def top_level_map_entries(state: dace.SDFGState) -> List[nodes.MapEntry]:
 
 
 def branch_states(region: ConditionalBlock) -> List[dace.SDFGState]:
-    """Direct states of every branch of a conditional, plus those of any conditional nested inside it.
-
-    A kernel guarded by ``if k > 0:`` is a whole state graph the top-level walk cannot see: it is not an
-    ``SDFGState`` and not a ``LoopRegion``, so a walk that tests only those two skipped the entire
-    conditional and reported "no compute nest" for the kernel (foundation ``s162`` is exactly this).
-
-    Deliberately NOT states inside a nested ``LoopRegion``: extraction carves a ``SubgraphView`` out of
-    the parent SDFG's OWN nodes, so a loop that is not a direct node of the root cannot be pulled out --
-    and lifting a map from inside it would leave its loop behind.
-    """
+    """Direct states of a conditional's branches, including nested conditionals but not nested loops."""
     states: List[dace.SDFGState] = []
     for _, branch in region.branches:
         for block in branch.nodes():
@@ -64,11 +54,7 @@ def branch_states(region: ConditionalBlock) -> List[dace.SDFGState]:
 
 
 def outer(sdfg: dace.SDFG) -> List[Tuple[dace.SDFG, NestNode]]:
-    """Outermost nests of the root SDFG: top-level map-nests + top-level CFG loop regions, plus the
-    map-nests of a top-level conditional's branches (see :func:`branch_states`).
-
-    Does not descend into nested SDFGs (those are already 'inside'); other strategies may.
-    """
+    """Outermost nests of the root SDFG: top-level map-nests, loop regions, and conditional branches' maps."""
     refs: List[Tuple[dace.SDFG, NestNode]] = []
     for block in sdfg.nodes():
         if isinstance(block, LoopRegion):
@@ -99,15 +85,7 @@ def is_taskloop_map(state: dace.SDFGState, entry: nodes.MapEntry) -> bool:
 
 
 def is_parallel_nest(node: NestNode) -> bool:
-    """Whether an extracted nest is PARALLEL within the DaCe scope (its iterations are independent, so
-    the emitted kernel may carry an OpenMP parallel scope) or SEQUENTIAL.
-
-    A ``MapEntry`` is parallel unless its schedule is explicitly ``Sequential`` -- DaCe's ``LoopToMap``
-    (run in the ``baseline``/``canonicalize`` build) only turns a *provably parallel* loop into a Map, so
-    a Map is the parallel signal. A ``LoopRegion`` is a loop that stayed a loop (a loop-carried
-    recurrence LoopToMap refused), hence sequential. A WCR reduction inside a parallel map is still
-    parallel -- the OpenMP emitter carries it as a ``reduction(...)`` clause, not a serialization.
-    """
+    """Whether an extracted nest is PARALLEL (a non-Sequential Map) or SEQUENTIAL (a LoopRegion)."""
     if isinstance(node, nodes.MapEntry):
         return node.map.schedule != dace.ScheduleType.Sequential
     return False  # LoopRegion (or anything non-Map): sequential
@@ -145,12 +123,7 @@ def collect_skip_loop(sdfg: dace.SDFG, loop: LoopRegion, refs: list) -> None:
 
 
 def skip_taskloops(sdfg: dace.SDFG) -> List[Tuple[dace.SDFG, NestNode]]:
-    """Like :func:`outer`, but never externalise a pure *taskloop* wrapper.
-
-    A map whose body is only maps, or a loop whose body is only maps, is a scheduling construct with
-    no compute of its own -- offloading it buys nothing. Such wrappers are skipped and the search
-    descends to the first compute-bearing nest inside them (the actual kernel).
-    """
+    """Skips pure taskloop wrappers (map/loop bodies holding only maps) and descends to the first compute nest."""
     refs: List[Tuple[dace.SDFG, NestNode]] = []
     for block in sdfg.nodes():
         if isinstance(block, LoopRegion):
@@ -173,18 +146,7 @@ def region_has(region: Union[dace.SDFG, ControlFlowRegion], node_types: Tuple[Ty
 
 
 def innermost(sdfg: dace.SDFG) -> List[Tuple[dace.SDFG, NestNode]]:
-    """Every innermost nest -- a map or loop with no further nest inside it -- across all SDFGs.
-
-    The vectorization-style unit, for both parallel and sequential compute leaves:
-
-    * an **innermost map** has no map nested in its scope (a map cannot contain a loop region);
-    * an **innermost loop** (``LoopRegion``) has no nested loop *and* no map inside -- if it held
-      maps, those maps would be the innermost units, so the loop is a wrapper, not a leaf.
-
-    A map or loop that wraps a ``NestedSDFG`` is *not* a leaf: the nested SDFG holds the real compute
-    and is walked separately by ``all_sdfgs_recursive``, so selecting the wrapper too would offload
-    the same compute twice. The two never overlap, so each compute leaf is returned exactly once.
-    """
+    """Every innermost compute leaf (a map/loop with no map, loop, or NestedSDFG nested inside it), each once."""
     refs: List[Tuple[dace.SDFG, NestNode]] = []
     for sub in sdfg.all_sdfgs_recursive():
         for state in sub.states():
@@ -207,12 +169,7 @@ def innermost(sdfg: dace.SDFG) -> List[Tuple[dace.SDFG, NestNode]]:
 
 
 def empty_strategy_reason(sdfg: dace.SDFG) -> str:
-    """Why a strategy found no nest to externalise -- distinguishing an honestly EMPTY kernel from one
-    whose only compute is a **library node**. We deliberately do NOT offload library nodes: DaCe expands
-    each to its fastest available library (BLAS/LAPACK/argreduce/...), so externalising it to a naive
-    numpy->C loop would only lose performance. Such a kernel is legitimately skipped -- but with a reason
-    that says so, instead of the misleading 'no compute nest'.
-    """
+    """Why a strategy found nothing: an honest empty kernel, or one whose only compute is a library node."""
     has_libnode = any(
         isinstance(n, nodes.LibraryNode) for sub in sdfg.all_sdfgs_recursive() for st in sub.states()
         for n in st.nodes())
@@ -227,17 +184,8 @@ register_strategy("innermost", innermost)
 
 
 def reference_sdfg(boundary: Boundary) -> "dace.SDFG":
-    """A copy of the standalone SDFG whose boundary arrays are renamed to the node's connectors,
-    so the ``DaceReference`` nested-SDFG expansion lines up with the ``ExternalCall`` connectors.
-
-    An in-place array is in BOTH ``inputs`` and ``outputs`` and so carries two connectors, but it is
-    one array: the body is renamed to the ``_out_`` name only -- the same single pointer
-    :func:`~nestforge.libnode.connector_for` hands the extern-C call for an in-place arg, and the
-    parent wires both connectors to the one AccessNode, so ``_out_`` already holds the input values.
-    ``_in_`` then carries only the read dependency, but a NestedSDFG connector must still resolve to
-    a descriptor, so register one for it (renaming the body to ``_in_`` instead would leave the
-    ``_out_`` connector undefined and fail NestedSDFG validation).
-    """
+    """Copy of the standalone SDFG with boundary arrays renamed to the node's connectors; an in-place
+    array gets both an ``_in_`` and an ``_out_`` connector since one array carries two connectors."""
     ref = copy.deepcopy(boundary.standalone_sdfg)
     inplace = set(boundary.inputs) & set(boundary.outputs)
     for i in boundary.inputs:
@@ -275,13 +223,8 @@ def replace_nsdfg_with_external(boundary: Boundary, name: str) -> ExternalCall:
 def lower_nests_to_external_call(sdfg: dace.SDFG,
                                  strategy: Union[str,
                                                  Strategy] = "skip-taskloops") -> List[Tuple[ExternalCall, Boundary]]:
-    """Lower every nest the strategy selects into an ``ExternalCall`` node.
-
-    Defaults to ``skip-taskloops``: offload the compute-bearing nests, not the pure map/loop
-    scheduling wrappers around them.
-
-    :returns: ``[(external_call_node, boundary), ...]`` in extraction order.
-    """
+    """Lowers every nest ``strategy`` selects (default ``skip-taskloops``) into an ``ExternalCall`` node,
+    returning ``[(call, boundary), ...]`` in extraction order."""
     strat = get_strategy(strategy) if isinstance(strategy, str) else strategy
     refs = strat(sdfg)
     out: List[Tuple[ExternalCall, Boundary]] = []
@@ -293,10 +236,10 @@ def lower_nests_to_external_call(sdfg: dace.SDFG,
     return out
 
 
-#: A Phase-2 offload granularity is a detection strategy: SDFG -> the nests to externalize.
+#: A granularity maps an SDFG to the nests to externalize.
 OffloadGranularity = Strategy
 
-#: The default granularity: top-level compute nests (outermost, skipping scheduling wrappers).
+#: Default granularity: skip pure scheduling wrappers.
 DEFAULT_GRANULARITY = "skip-taskloops"
 
 
@@ -315,9 +258,7 @@ def label_nest(node: NestNode) -> str:
 
 @dataclass(slots=True)
 class OffloadCandidate:
-    """One nest a granularity would externalize -- the parent SDFG it lives in, the nest node, a
-    label, and whether its emitted kernel may carry an OpenMP parallel scope (see
-    :func:`nestforge.strategies.is_parallel_nest`)."""
+    """One nest a granularity would externalize, with its label and whether it may carry an OpenMP parallel scope."""
     parent_sdfg: dace.SDFG
     node: NestNode
     label: str
@@ -326,34 +267,18 @@ class OffloadCandidate:
 
 def offload_candidates(sdfg: dace.SDFG,
                        granularity: Union[str, OffloadGranularity] = DEFAULT_GRANULARITY) -> List[OffloadCandidate]:
-    """The nests ``granularity`` would externalize, WITHOUT mutating ``sdfg``.
-
-    Detection is read-only -- extraction happens later in :func:`lower_nests_to_external_call`. Lets
-    the agent see the offload set (and each nest's parallel/sequential nature) before committing.
-    """
+    """The nests ``granularity`` would externalize, without mutating ``sdfg`` (detection only, not extraction)."""
     strat = get_strategy(granularity) if isinstance(granularity, str) else granularity
     return [OffloadCandidate(parent, node, label_nest(node), is_parallel_nest(node)) for parent, node in strat(sdfg)]
 
 
-#: Offloading granularity UNITS (paper Axis 2), COARSE -> FINE. The structural unit each external call
-#: wraps, from the graph itself: a whole ``cfg`` (a ``LoopRegion`` or a ``ConditionalBlock``), a whole
-#: ``state`` (an ``SDFGState`` and all the maps it holds), or a single ``map`` (one ``MapEntry`` within a
-#: state). Coarser wraps more compute per call; finer isolates one map. A DISTINCT decision from fusion
-#: granularity (Axis 1, :mod:`nestforge.granularity`) and COMPOSES with it: a ``map`` offload over the
-#: atoms partition puts each statement-atom in its own external call. The coarsest endpoint (no
-#: decomposition, the whole program as one unit) is :func:`whole_program_boundary`.
+#: Offload unit granularity (paper Axis 2), coarse -> fine: a whole cfg block, a whole state, or a single map.
 OFFLOAD_UNITS = ("cfg", "state", "map")
 
 
 def state_has_compute(state: dace.SDFGState) -> bool:
-    """Whether a state holds real compute (a map, tasklet, library node, or nested SDFG) -- not a bare
-    copy/access-only state, which there is nothing to externalize.
-
-    A tasklet counts only if it has connectors. DaCe's precondition traps (canonicalize's
-    ``check_assumption_*``, the scatter-conflict guard) are connectorless CPP tasklets in their own
-    state: they read and write nothing, so the state crosses no data and externalizing it yields a
-    ``void f(void)`` nest -- an extern call that computes nothing but still links and times.
-    """
+    """Whether a state holds real compute (map, tasklet, library node, or nested SDFG); a connectorless
+    tasklet (a precondition-trap guard state) does not count."""
     for node in state.nodes():
         if isinstance(node, nodes.Tasklet):
             if node.in_connectors or node.out_connectors:
@@ -364,17 +289,13 @@ def state_has_compute(state: dace.SDFGState) -> bool:
 
 
 def unit_refs(sdfg: dace.SDFG, unit: str) -> List[Tuple[dace.SDFG, NestNode]]:
-    """The (parent-SDFG, node) pairs to externalize at one offloading UNIT level -- recursive over nested
-    SDFGs. ``map`` = every top-level map-nest; ``cfg`` = every ``LoopRegion``; ``state`` = every
-    compute-bearing state (externalized whole)."""
+    """The (parent-SDFG, node) pairs to externalize at one offloading UNIT level, recursive over nested SDFGs."""
     if unit == "map":
         return [(sub, me) for sub in sdfg.all_sdfgs_recursive() for st in sub.all_states()
                 for me in top_level_map_entries(st)]
     if unit == "cfg":
-        # top-level blocks only: extract_cfg_nest needs the block's parent to BE the SDFG
-        # (SubgraphView(parent_sdfg, [block])), so a region nested inside another one is not a cfg unit.
-        # A ConditionalBlock counts: it outlines whole, branches included, and skipping it left a branchy
-        # kernel reporting ZERO cfg candidates -- "nothing to offload" where the truth was "not expressible".
+        # top-level only (a nested region's parent isn't the SDFG); ConditionalBlock counts too, or a
+        # branchy kernel reports zero cfg candidates instead of "not expressible at this unit".
         return [(sub, r) for sub in sdfg.all_sdfgs_recursive() for r in sub.nodes()
                 if isinstance(r, (LoopRegion, ConditionalBlock))]
     if unit == "state":
@@ -383,19 +304,17 @@ def unit_refs(sdfg: dace.SDFG, unit: str) -> List[Tuple[dace.SDFG, NestNode]]:
 
 
 def offload_unit_axis() -> List[str]:
-    """The offloading-granularity axis, coarse -> fine (Axis 2). ``offload_candidates(sdfg, unit)`` previews
-    a unit; ``lower_nests_to_external_call(sdfg, unit)`` commits it (each unit is a registered strategy)."""
+    """The offloading-granularity axis, coarse -> fine."""
     return list(OFFLOAD_UNITS)
 
 
 def offload_coarseness(unit: str) -> int:
-    """Rank of an offloading unit, 0 = coarsest (``cfg``). Lets a sweep order the axis and a search step one
-    rung finer/coarser."""
+    """Rank of an offloading unit, 0 = coarsest."""
     return OFFLOAD_UNITS.index(unit)
 
 
-for _unit in OFFLOAD_UNITS:  # each unit level is also a detection strategy, so the existing lowering path works
-    register_strategy(_unit, (lambda u: lambda sdfg: unit_refs(sdfg, u))(_unit))
+for unit_name in OFFLOAD_UNITS:  # each unit level is also a registered detection strategy
+    register_strategy(unit_name, (lambda u: lambda sdfg: unit_refs(sdfg, u))(unit_name))
 
 __all__ = [
     "OffloadGranularity",
@@ -403,17 +322,14 @@ __all__ = [
     "OffloadCandidate",
     "offload_candidates",
     "label_nest",
-    # offloading granularity axis (Axis 2): cfg / state / map units
     "OFFLOAD_UNITS",
     "offload_unit_axis",
     "offload_coarseness",
     "unit_refs",
     "state_has_compute",
-    # registry (from nestforge.strategies)
     "register_strategy",
     "get_strategy",
     "strategy_names",
-    # commit + coarsest-granularity surface (re-exported)
     "lower_nests_to_external_call",
     "extract_nest_to_sdfg",
     "whole_program_boundary",
