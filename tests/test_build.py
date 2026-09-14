@@ -34,12 +34,12 @@ from nestforge.corpus.translate import prepare
 from nestforge.build.arena import make_inputs, run_oracle
 from dace.sdfg import nodes
 from nestforge.build.sdfg import (CODEGEN_IMPLS, BuildOptions, LinkTimings, build_sdfg, codegen_config,
-                             codegen_impls_available, compare_link_modes, config_has, dace_runtime_include,
-                             default_codegen_impl, set_fast_libnodes)
-from nestforge.build.toolchain import (LIBMVEC, LIBNVOMP, LIBOMP, SLEEF, SVML, VECTOR_LIBS, OpenMPRuntime, available_linkers,
-                                 compiler_family, driver_lib_path, driver_search_dirs, fastest_linker, hint_dirs,
-                                 ldconfig_dirs, linkable_lib_dir, linker_supported, llvm_version, parse_params,
-                                 runtime_installed, vectorlib_installed)
+                                  codegen_impls_available, compare_link_modes, config_has, dace_runtime_include,
+                                  default_codegen_impl, set_fast_libnodes)
+from nestforge.build.toolchain import (LIBMVEC, LIBNVOMP, LIBOMP, SLEEF, SVML, VECTOR_LIBS, OpenMPRuntime,
+                                       available_linkers, compiler_family, driver_lib_path, driver_search_dirs,
+                                       fastest_linker, hint_dirs, ldconfig_dirs, linkable_lib_dir, linker_supported,
+                                       llvm_version, parse_params, runtime_installed, vectorlib_installed)
 
 
 def kernels():
@@ -77,7 +77,7 @@ def test_dace_runtime_include_exists():
 
 def test_owned_build_gemm_matches_oracle():
     """gemm: int64_t size symbols + a Scalar (alpha/beta) passed by value through the owned build."""
-    owned_build_matches_oracle("hpc/dense_linear_algebra/gemm/gemm")
+    owned_build_matches_oracle("scientific_computing/dense_linear_algebra/gemm/gemm")
 
 
 def test_owned_build_jacobi_matches_oracle():
@@ -232,7 +232,7 @@ def test_openmp_abi_compatibility_is_enforced():
 def test_gcc_compiled_kernel_links_against_libomp():
     """A g++-compiled kernel (GOMP_* calls under -fopenmp) links + runs against libomp via its GOMP-compat
     ABI -- proof a GCC node library can share the same libomp a clang/flang node library uses."""
-    boundary = first_nest("hpc/dense_linear_algebra/gemm/gemm")
+    boundary = first_nest("scientific_computing/dense_linear_algebra/gemm/gemm")
     shape_syms = {
         s
         for s in boundary.symbols if any(s in str(d.shape) for d in boundary.standalone_sdfg.arrays.values())
@@ -366,7 +366,8 @@ def test_build_tracks_optimization_and_compile_time():
 def test_external_linking_build_is_correct():
     """A nest built as a separate static ``.a`` (link_external) and linked into the ``.so`` runs identically
     to the monolithic build -- external linking is correct, not merely timeable."""
-    built = owned_build_matches_oracle("hpc/dense_linear_algebra/gemm/gemm", opts=BuildOptions(link_external=True))
+    built = owned_build_matches_oracle("scientific_computing/dense_linear_algebra/gemm/gemm",
+                                       opts=BuildOptions(link_external=True))
     assert built.compile_seconds > 0.0
     assert (built.so_path.parent / f"lib{built.name}_nest.a").exists()  # the static node lib was produced
 
@@ -386,7 +387,8 @@ def test_external_linking_with_lto_is_correct():
     inlining external linking otherwise costs."""
     if shutil.which("gcc-ar") is None:
         pytest.skip("gcc-ar (LTO-aware archiver) not on PATH")
-    owned_build_matches_oracle("hpc/dense_linear_algebra/gemm/gemm", opts=BuildOptions(link_external=True, lto=True))
+    owned_build_matches_oracle("scientific_computing/dense_linear_algebra/gemm/gemm",
+                               opts=BuildOptions(link_external=True, lto=True))
 
 
 def test_available_linkers_and_fastest_pick():
@@ -493,7 +495,7 @@ def test_veclib_libmvec_build_is_correct():
 
 def test_owned_build_reusable_handle_program():
     """After one init, __program can be called repeatedly in place (the timing path) on one handle."""
-    boundary = first_nest("hpc/dense_linear_algebra/gemm/gemm")
+    boundary = first_nest("scientific_computing/dense_linear_algebra/gemm/gemm")
     shape_syms = {
         s
         for s in boundary.symbols if any(s in str(d.shape) for d in boundary.standalone_sdfg.arrays.values())

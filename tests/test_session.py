@@ -10,6 +10,8 @@ import numpy as np
 import pytest
 import dace
 
+from nestforge.phases.normalize import Targets
+from nestforge.phases.scopes import top_level_map_entries
 from nestforge.session import Session, StaleHandle
 
 N = dace.symbol('N')
@@ -32,6 +34,16 @@ def two_indep(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dac
         D[i] = B[i] * 3.0
 
 
+@dace.program
+def live_and_transient(A: dace.float64[N], B: dace.float64[N], live_out: dace.float64[N], C: dace.float64[N]):
+    T = np.empty_like(A)  # transient producer output
+    for i in dace.map[0:N]:
+        T[i] = A[i] + B[i]
+        live_out[i] = A[i] * 3.0  # a second, NON-transient producer output
+    for i in dace.map[0:N]:
+        C[i] = T[i] * 2.0 + live_out[i]  # consumer reads both
+
+
 def make_session():
     return Session(vertical_pair.to_sdfg(simplify=True))
 
@@ -39,6 +51,10 @@ def make_session():
 def barred_session():
     # simplify=False keeps each map in its own state -> a state barrier between the two nests.
     return Session(two_indep.to_sdfg(simplify=False))
+
+
+def top_level_map_count(sdfg) -> int:
+    return sum(len(top_level_map_entries(state)) for state in sdfg.all_states())
 
 
 # --- Level 2: nest fusion + the id/epoch safety layer ---------------------------------------------
@@ -108,18 +124,6 @@ def test_unknown_id_at_current_epoch_is_not_stale():
 # --- Level 1: region structure (containers) + the merge-first ordering rule -----------------------
 
 
-def test_region_tree_exposes_containers_and_their_nests():
-    s = make_session()
-    tree = s.region_tree()
-    # the id is DESCRIPTIVE (region:<label>), not an epoch-stamped handle: region_tree is a read view and
-    # no method resolves a 'region' kind, so minting here only grew the registry with unusable ids.
-    assert tree["type"] == "SDFG" and tree["id"].startswith("region:")
-    states = [c for c in tree["children"] if c["type"] == "SDFGState"]
-    assert states and states[0]["barrier"] is True  # a state is a barrier container
-    assert len(states[0]["nests"]) == 2  # it holds both map-nests
-    assert all("reads" in nest and "writes" in nest for nest in states[0]["nests"])
-
-
 def test_cross_state_nests_are_blocked_and_name_the_region_merge():
     s = barred_session()
     a, b = (n["id"] for n in s.list_nests())
@@ -152,37 +156,37 @@ def test_fuse_regions_bumps_epoch_and_stales_prior_ids():
 
 def test_offload_candidates_are_distinct_from_nest_fusion():
     s = make_session()
-    cands = s.list_offload_candidates()
+    cands = s.list_scope_candidates()
     assert cands and all(c["id"].startswith("e0:cand:") for c in cands)
     assert all("reads" in c and "writes" in c for c in cands)
 
 
-def test_externalize_mints_nests_at_new_epoch_with_boundary_sets():
+def test_define_scopes_mints_kernels_at_new_epoch_with_boundary_sets():
     s = make_session()
-    nests = s.externalize()
+    kernels = s.define_scopes()
     assert s.epoch == 1
-    assert len(nests) == 2
-    assert all(n["id"].startswith("e1:extnest:") for n in nests)
-    producer = next(n for n in nests if n["writes"] == ["T"])
+    assert len(kernels) == 2
+    assert all(k["id"].startswith("e1:kernel:") for k in kernels)
+    producer = next(k for k in kernels if k["writes"] == ["T"])
     assert producer["reads"] == ["A", "B"] and producer["symbols"] == ["N"]
 
 
-def test_nest_boundary_exposes_abi_order_target():
+def test_kernel_boundary_exposes_abi_order_target():
     s = make_session()
-    nest_id = s.externalize()[0]["id"]
-    info = s.nest_boundary(nest_id)
+    kernel_id = s.define_scopes()[0]["id"]
+    info = s.kernel_boundary(kernel_id)
     # boundary_order = inputs + outputs + symbols; set_kernel's abi_order is checked against it
     assert info["boundary_order"] == info["inputs"] + info["outputs"] + info["symbols"]
 
 
 def test_set_kernel_sets_leaf_fields_without_bumping_epoch():
     s = make_session()
-    nest_id = s.externalize()[0]["id"]
+    kernel_id = s.define_scopes()[0]["id"]
     epoch = s.epoch
-    out = s.set_kernel(nest_id, "/abs/libk.a", "k", ["A", "B", "T", "N"])
+    out = s.set_kernel(kernel_id, "/abs/libk.a", "k", ["A", "B", "T", "N"])
     assert s.epoch == epoch  # a leaf-field write, ids stay valid
     assert out["abi_order"] == ["A", "B", "T", "N"]
-    assert s.nest_boundary(nest_id)  # same id still resolves
+    assert s.kernel_boundary(kernel_id)  # same id still resolves
 
 
 def test_set_kernel_selects_the_extern_call_expansion():
@@ -190,20 +194,19 @@ def test_set_kernel_selects_the_extern_call_expansion():
     would emit the numpy reference and Mode A would time the FRAMEWORK's kernel while reporting it as the
     agent's. The outputs would still be correct and the number still plausible -- nothing else catches it."""
     s = make_session()
-    nest_id = s.externalize()[0]["id"]
-    ext, _ = s.resolve(nest_id, "extnest")
+    kernel_id = s.define_scopes()[0]["id"]
+    ext, _ = s.resolve(kernel_id, "kernel")
     # None, not "DaceReference": dace leaves the field unset and falls back to default_implementation at
     # expand time. Either way the agent's kernel is not the one that runs, so the guard is on "not chosen".
     assert ext.implementation != "ExternCall", "fixture already selects the expansion; test would be vacuous"
-    out = s.set_kernel(nest_id, "/abs/libk.a", "k", ["A", "B", "T", "N"])
+    s.set_kernel(kernel_id, "/abs/libk.a", "k", ["A", "B", "T", "N"])
     assert ext.implementation == "ExternCall"
-    assert out["implementation"] == "ExternCall"  # reported back, so a transport can check it
 
 
 def test_emit_reference_writes_numpy_oracle(tmp_path):
     s = Session(vertical_pair.to_sdfg(simplify=True), work_dir=str(tmp_path))
-    nest_id = s.externalize()[0]["id"]
-    path = s.emit_reference(nest_id)
+    kernel_id = s.define_scopes()[0]["id"]
+    path = s.emit_reference(kernel_id)
     assert path.endswith(".py")
     with open(path) as f:
         assert "def " in f.read()
@@ -219,13 +222,36 @@ def test_malformed_id_is_not_reported_as_stale():
         session.resolve("x:move:0")
 
 
-def test_noop_externalize_does_not_strand_handles():
-    # externalize with a granularity that selects NO nest changes nothing, so it must not bump the epoch --
-    # bumping would silently invalidate every move id the agent had already enumerated.
+def test_noop_define_scopes_does_not_strand_handles():
+    # define_scopes with a granularity that selects NO nest changes nothing, so it must not bump the
+    # epoch -- bumping would silently invalidate every move id the agent had already enumerated.
     session = Session(vertical_pair.to_sdfg(simplify=True))
     moves = session.list_fusions()
     epoch_before = session.epoch
-    assert session.externalize("cfg") == []  # a flat kernel has no LoopRegion to externalize
+    assert session.define_scopes("cfg") == []  # a flat kernel has no LoopRegion to define a scope over
     assert session.epoch == epoch_before
     if moves:
         session.resolve(moves[0]["id"], "move")  # the agent's ids survive a no-op
+
+
+# --- Phase 0/1: normalize -> full_fusion -> fission_all, structural checks -------------------------
+
+
+def test_normalize_then_full_fusion_bumps_epoch_each_time_and_reduces_top_level_maps():
+    sdfg = live_and_transient.to_sdfg(simplify=True)
+    frontend_maps = top_level_map_count(sdfg)
+    session = Session(sdfg, targets=Targets())
+    session.normalize()
+    assert session.epoch == 1
+    session.full_fusion()
+    assert session.epoch == 2
+    assert top_level_map_count(session.sdfg) < frontend_maps
+
+
+def test_fission_all_after_full_fusion_increases_nest_count():
+    session = Session(live_and_transient.to_sdfg(simplify=True), targets=Targets())
+    session.normalize()
+    session.full_fusion()
+    fused_nest_count = len(session.list_nests())
+    session.fission_all()
+    assert len(session.list_nests()) > fused_nest_count

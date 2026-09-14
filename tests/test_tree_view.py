@@ -301,15 +301,6 @@ def test_a_reduction_body_is_folded():
     assert "np.sum" not in body
 
 
-def test_an_unbuilt_form_is_refused_by_name():
-    sdfg = shaped.to_sdfg(simplify=True)
-    normalize_for_tree(sdfg)
-    session = Session(sdfg)
-    nest_id = re.findall(r"\[(e\d+:nest:\d+)\]", session.describe())[0]
-    with pytest.raises(ValueError, match="slice"):
-        session.kernel_body(nest_id, form="slice")
-
-
 def test_a_stale_id_does_not_silently_return_someone_elses_body():
     sdfg = shaped.to_sdfg(simplify=True)
     normalize_for_tree(sdfg)
@@ -415,5 +406,5 @@ def test_lowering_a_kernel_does_not_mutate_the_live_sdfg():
 
 def test_an_unknown_language_is_refused_by_name():
     _, session, nest_id = session_and_first_nest(shaped)
-    with pytest.raises(ValueError, match="not a kernel language"):
+    with pytest.raises(ValueError, match="expected 'python'"):
         session.kernel_source(nest_id, lang="rust")

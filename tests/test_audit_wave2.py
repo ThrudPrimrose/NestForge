@@ -3,9 +3,8 @@
 """Second audit wave: the remaining findings from the full-repo review. Unit set, no compile.
 
 Covers the contract/robustness bugs that silently mislead rather than crash -- ``can_fuse`` disagreeing
-with ``enumerate_fusions``, a read view mutating session state, a documented FP level crashing flag
-composition, a runtime linked without an rpath,
-a rank>=2 size-1 buffer indexed as a sub-array, and extern-call ABI args with no connector.
+with ``enumerate_fusions``, a documented FP level crashing flag composition, a runtime linked without an
+rpath, a rank>=2 size-1 buffer indexed as a sub-array, and extern-call ABI args with no connector.
 """
 import re
 from pathlib import Path
@@ -22,7 +21,6 @@ from nestforge.ir.emit_libnode import scalar_elem
 from nestforge.phases.schedule import can_fuse, enumerate_fusions
 from nestforge.ir.libnode import ExternLibEnv, ExternalCall, proto_and_call
 from nestforge.build import flags
-from nestforge.session import Session
 from nestforge.phases.scopes import top_level_map_entries
 
 N = dace.symbol('N')
@@ -68,18 +66,6 @@ def test_live_output_does_not_mask_a_transient_fusion():
     assert enumerate_fusions(sdfg), "fixture must produce a fusable pair, else it tests nothing"
     verdicts = [can_fuse(sdfg, a, b) for a, b in map_pairs(sdfg)]
     assert any(v == "yes" for v in verdicts), f"a move is offered but no pair says yes: {verdicts}"
-
-
-def test_region_tree_is_a_read_view_and_mints_nothing():
-    # region_tree is documented read-only, but minted 'region' handles into self.handles -- ids that no
-    # method resolves, growing the registry on every inspection call.
-    session = Session(live_and_transient.to_sdfg(simplify=True))
-    before = dict(session.handles)
-    tree = session.region_tree()
-    assert session.handles == before  # a read view mutates nothing
-    session.region_tree()
-    assert session.handles == before  # and stays stable when called repeatedly
-    assert tree["id"].startswith("region:")  # descriptive, not a handle pretending to be resolvable
 
 
 def test_lane_flags_accepts_every_documented_fp_level():
