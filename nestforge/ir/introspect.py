@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import ast
 import functools
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
+from collections.abc import Callable
 
 import dace
 from dace import dtypes
@@ -35,7 +36,7 @@ Handle = Callable[[str, object], str]
 Metrics = Callable[[nodes.MapEntry], str]
 
 #: The line to print under a library node's row, or ``None`` for none.
-Notes = Callable[[nodes.LibraryNode], Optional[str]]
+Notes = Callable[[nodes.LibraryNode], str | None]
 
 
 class Substitute(ast.NodeTransformer):
@@ -43,7 +44,7 @@ class Substitute(ast.NodeTransformer):
 
     __slots__ = ("definitions",)
 
-    def __init__(self, definitions: Dict[str, str]) -> None:
+    def __init__(self, definitions: dict[str, str]) -> None:
         self.definitions = definitions
 
     def visit_Name(self, node: ast.Name) -> ast.AST:
@@ -51,10 +52,10 @@ class Substitute(ast.NodeTransformer):
         return ast.parse(expression, mode="eval").body if expression is not None else node
 
 
-def interstate_definitions(sdfg: dace.SDFG) -> Dict[str, str]:
+def interstate_definitions(sdfg: dace.SDFG) -> dict[str, str]:
     """``name -> expression`` for every interstate assignment in the SDFG; a name assigned more than
     one distinct expression is dropped (which one reaches a block depends on the path taken)."""
-    assigned: Dict[str, set] = {}
+    assigned: dict[str, set] = {}
     for cfg in sdfg.all_control_flow_regions(recursive=True):
         for edge in cfg.edges():
             for name, expression in edge.data.assignments.items():
@@ -62,7 +63,7 @@ def interstate_definitions(sdfg: dace.SDFG) -> Dict[str, str]:
     return {name: exprs.pop() for name, exprs in assigned.items() if len(exprs) == 1}
 
 
-def resolve_scalars(expression: str, definitions: Dict[str, str]) -> str:
+def resolve_scalars(expression: str, definitions: dict[str, str]) -> str:
     """Fold scalar definitions into ``expression`` until only arrays, non-transients and free symbols
     are left -- ``A_index > 0.0`` becomes ``A[i + 1] > 0.0``. Each name is substituted at most once,
     so a cyclic definition (``i = i + 1`` on a back edge) terminates rather than expanding forever."""
@@ -102,7 +103,7 @@ def simplify_indices(tree: ast.AST) -> ast.AST:
     return ast.fix_missing_locations(tree)
 
 
-def kernel_body(state: SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry, children: Dict) -> List[str]:
+def kernel_body(state: SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry, children: dict) -> list[str]:
     """The numpy statements one kernel computes, without its ``for`` headers. Only a LEAF kernel gets
     a body -- a kernel containing another is rendered with that one as its own child row -- and an
     emitter refusal is reported on the line rather than raised, since the tree is read-only.
@@ -117,7 +118,7 @@ def kernel_body(state: SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry, childr
         return [f"<not emitted: {exc}>"]
 
 
-def kernel_args(state: SDFGState, entry: nodes.MapEntry) -> List[str]:
+def kernel_args(state: SDFGState, entry: nodes.MapEntry) -> list[str]:
     """One kernel's parameters, sorted: the arrays it touches, then the symbols its domain needs."""
     reads, writes = nest_reads_writes(state, entry)
     arrays = sorted(set(reads) | set(writes))
@@ -149,13 +150,13 @@ REDUCTION_SPELLING = {
 }
 
 
-def kernel_reductions(state: SDFGState, entry: nodes.MapEntry) -> List[str]:
+def kernel_reductions(state: SDFGState, entry: nodes.MapEntry) -> list[str]:
     """Every reduction leaving this map, as ``<op> over <axes> -> <target>``. The reduced axes are the
     map parameters the OUTPUT subset does not mention -- a map over ``(i0, i1)`` writing ``C[i0]`` has
     collapsed ``i1``."""
     exit_node = state.exit_node(entry)
     params = set(entry.map.params)
-    out: List[str] = []
+    out: list[str] = []
     # IN-edges of the exit: NormalizeWCRSource guarantees a WCR rides AccessNode -[wcr]-> MapExit.
     for edge in state.in_edges(exit_node):
         if edge.data is None or edge.data.wcr is None:
@@ -174,7 +175,7 @@ def kernel_reductions(state: SDFGState, entry: nodes.MapEntry) -> List[str]:
     return out
 
 
-def nest_reads_writes(container: SDFGState, node: nodes.Node) -> Tuple[List[str], List[str]]:
+def nest_reads_writes(container: SDFGState, node: nodes.Node) -> tuple[list[str], list[str]]:
     """Arrays a nest reads and writes (the interface arrays), without outlining it. ``container`` is the
     ``SDFGState`` holding a ``MapEntry``; ignored for a ``LoopRegion`` (which carries its own states)."""
     if isinstance(node, nodes.MapEntry):
@@ -193,7 +194,7 @@ def map_domain(entry: nodes.MapEntry) -> str:
     return ", ".join(f"{p}={render_range(r)}" for p, r in zip(entry.map.params, entry.map.range))
 
 
-def loop_domain(loop: LoopRegion, defs: Dict[str, str]) -> str:
+def loop_domain(loop: LoopRegion, defs: dict[str, str]) -> str:
     """A loop's iteration domain, map-shaped, or its resolved condition for an uncounted ``while``."""
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
@@ -210,7 +211,7 @@ def end_plus_one(end_text: str) -> str:
     return str(dace.symbolic.simplify(dace.symbolic.pystr_to_symbolic(end_text) + 1))
 
 
-def render_range(rng: Tuple[Any, Any, Any]) -> str:
+def render_range(rng: tuple[Any, Any, Any]) -> str:
     """``begin:end:step`` with the two redundant parts dropped -- an inclusive end is rendered as the
     exclusive bound a reader expects, and a unit step is left off."""
     begin, end, step = rng
@@ -218,10 +219,10 @@ def render_range(rng: Tuple[Any, Any, Any]) -> str:
     return text if step == 1 else f"{text}:{step}"
 
 
-def tree_rows(sdfg: dace.SDFG) -> Dict[str, Tuple[Any, Optional[SDFGState]]]:
+def tree_rows(sdfg: dace.SDFG) -> dict[str, tuple[Any, SDFGState | None]]:
     """Every label a tree row can print -> ``(block or node, its state)``, the state ``None`` for a block. Covers
     conditional branches, maps and library nodes, nested SDFGs included."""
-    rows: Dict[str, Tuple[Any, Optional[SDFGState]]] = {}
+    rows: dict[str, tuple[Any, SDFGState | None]] = {}
     # a ConditionalBlock's nodes() are its branches, so the recursive walk reaches them
     for cfg in sdfg.all_control_flow_regions(recursive=True):
         for block in cfg.nodes():
@@ -234,11 +235,11 @@ def tree_rows(sdfg: dace.SDFG) -> Dict[str, Tuple[Any, Optional[SDFGState]]]:
 
 def describe_graph(
     sdfg: dace.SDFG,
-    handle: Optional[Handle] = None,
+    handle: Handle | None = None,
     bodies: bool = False,
-    metrics: Optional[Metrics] = None,
-    notes: Optional[Notes] = None,
-    epoch: Optional[int] = None,
+    metrics: Metrics | None = None,
+    notes: Notes | None = None,
+    epoch: int | None = None,
 ) -> str:
     """The SDFG as an ASCII tree for the agent. Each line is one block or kernel; the guides show
     nesting. ``handle(kind, obj)``, when given, returns the session id to stamp on that line,
@@ -246,25 +247,25 @@ def describe_graph(
     ``metrics(entry)`` is appended to every top-level map's line, a line ``notes(node)`` returns
     is printed under that library node's line, and ``epoch`` is shown on the first line."""
     header = f"SDFG '{sdfg.label}'" if epoch is None else f"SDFG '{sdfg.label}'  epoch={epoch}"
-    lines: List[str] = [header]
+    lines: list[str] = [header]
     walk_regions(sdfg, "", lines, handle, interstate_definitions(sdfg), bodies, metrics, notes)
     return "\n".join(lines)
 
 
-def stamp(text: str, handle: Optional[Handle], kind: str, obj: object) -> str:
+def stamp(text: str, handle: Handle | None, kind: str, obj: object) -> str:
     """Prefix a line's body with its session id, when there is one to prefix."""
     return f"[{handle(kind, obj)}] {text}" if handle is not None else text
 
 
 def walk_regions(
-    cfg: Union[dace.SDFG, ControlFlowRegion],
+    cfg: dace.SDFG | ControlFlowRegion,
     prefix: str,
-    lines: List[str],
-    handle: Optional[Handle],
-    defs: Dict[str, str],
+    lines: list[str],
+    handle: Handle | None,
+    defs: dict[str, str],
     bodies: bool,
-    metrics: Optional[Metrics],
-    notes: Optional[Notes],
+    metrics: Metrics | None,
+    notes: Notes | None,
 ) -> None:
     """Render one CFG's blocks under ``prefix``, recursing."""
     blocks = in_order(cfg)
@@ -283,12 +284,12 @@ def walk_regions(
 def walk_branches(
     block: ConditionalBlock,
     prefix: str,
-    lines: List[str],
-    handle: Optional[Handle],
-    defs: Dict[str, str],
+    lines: list[str],
+    handle: Handle | None,
+    defs: dict[str, str],
     bodies: bool,
-    metrics: Optional[Metrics],
-    notes: Optional[Notes],
+    metrics: Metrics | None,
+    notes: Notes | None,
 ) -> None:
     """A conditional's branches, in stored order (the first matching one wins, so that is execution order)."""
     for index, (condition, branch) in enumerate(block.branches):
@@ -302,11 +303,11 @@ def walk_branches(
 def walk_state(
     state: SDFGState,
     prefix: str,
-    lines: List[str],
-    handle: Optional[Handle],
+    lines: list[str],
+    handle: Handle | None,
     bodies: bool,
-    metrics: Optional[Metrics],
-    notes: Optional[Notes],
+    metrics: Metrics | None,
+    notes: Notes | None,
 ) -> None:
     """A state's kernels: every map nest plus any library node, nested scopes recursed into."""
     children = state.scope_children()
@@ -314,7 +315,7 @@ def walk_state(
         return  # a state with no kernels: do not pay for the topological order nobody will read
     rank = {id(n): i for i, n in enumerate(in_order(state))}
 
-    def descend(scope: Optional[nodes.MapEntry], pad: str) -> None:
+    def descend(scope: nodes.MapEntry | None, pad: str) -> None:
         kernels = [
             n
             for n in sorted(children[scope], key=lambda n: rank.get(id(n), 0))
@@ -336,7 +337,7 @@ def walk_state(
     descend(None, prefix)
 
 
-def note_lines(node: nodes.Node, below: str, notes: Optional[Notes]) -> List[str]:
+def note_lines(node: nodes.Node, below: str, notes: Notes | None) -> list[str]:
     """The line ``notes`` gives a library node, under its row; nothing for any other node."""
     if notes is None or not isinstance(node, nodes.LibraryNode):
         return []
@@ -344,7 +345,7 @@ def note_lines(node: nodes.Node, below: str, notes: Optional[Notes]) -> List[str
     return [] if note is None else [below + note]
 
 
-def block_line(block: ControlFlowBlock, defs: Dict[str, str]) -> str:
+def block_line(block: ControlFlowBlock, defs: dict[str, str]) -> str:
     """One control-flow block's line: its canonical label, plus its domain or condition."""
     if isinstance(block, LoopRegion):
         domain = loop_domain(block, defs)

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 import dace
 from dace.transformation.passes.canonicalize import canonicalize, stage_labels
@@ -25,7 +24,7 @@ class Targets:
         return "gpu" if self.gpu else "cpu"
 
 
-def normalization_stages(targets: Targets) -> List[str]:
+def normalization_stages(targets: Targets) -> list[str]:
     labels = stage_labels(targets.canon_target)
     return labels[: labels.index(FUSE_STAGE)]
 

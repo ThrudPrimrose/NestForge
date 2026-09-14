@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import heapq
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
 
 import dace
 from dace.properties import CodeBlock
@@ -61,7 +60,7 @@ class Reach:
     """A producer reaching a use; ``carried_by`` names each loop whose back edge the value crossed."""
 
     producer: Producer
-    carried_by: Tuple[str, ...] = ()
+    carried_by: tuple[str, ...] = ()
 
     def text(self) -> str:
         """The producer label, with ``[carried: <loops>]`` when the value crossed a back edge."""
@@ -76,8 +75,8 @@ class ArgEdge:
     consumer: str
     arg: str
     role: str
-    producers: Tuple[Reach, ...]
-    via: Tuple[str, ...] = ()
+    producers: tuple[Reach, ...]
+    via: tuple[str, ...] = ()
 
     def text(self) -> str:
         """``arg <- p0 | p1`` plus the interstate assignments the value flowed through."""
@@ -85,11 +84,11 @@ class ArgEdge:
         via = " via " + "; ".join(f'"{text}"' for text in self.via) if self.via else ""
         return f"{self.arg} <- {producers}{via}"
 
-    def labels(self) -> List[str]:
+    def labels(self) -> list[str]:
         """The distinct producer labels, carried or not, in producer order."""
         return list(dict.fromkeys(reach.producer.label() for reach in self.producers))
 
-    def loops(self) -> List[str]:
+    def loops(self) -> list[str]:
         """The distinct loops whose back edge a reaching value crossed."""
         return list(dict.fromkeys(loop for reach in self.producers for loop in reach.carried_by))
 
@@ -117,11 +116,11 @@ class ArgEdge:
 class KernelGraph:
     """Kernels in program order, their argument edges, and the producers of each program output at exit."""
 
-    kernels: Tuple[str, ...]
-    edges: Tuple[ArgEdge, ...]
-    exits: Tuple[ArgEdge, ...]
+    kernels: tuple[str, ...]
+    edges: tuple[ArgEdge, ...]
+    exits: tuple[ArgEdge, ...]
 
-    def consumers_of(self, kernel: str) -> Tuple[ArgEdge, ...]:
+    def consumers_of(self, kernel: str) -> tuple[ArgEdge, ...]:
         """Every kernel argument edge that ``kernel`` can produce."""
         return tuple(
             edge
@@ -129,7 +128,7 @@ class KernelGraph:
             if any(reach.producer.kind == "kernel" and reach.producer.name == kernel for reach in edge.producers)
         )
 
-    def arguments(self, kernel: str) -> Tuple[ArgEdge, ...]:
+    def arguments(self, kernel: str) -> tuple[ArgEdge, ...]:
         """The argument edges of ``kernel``, inputs then symbols."""
         return tuple(edge for edge in self.edges if edge.consumer == kernel)
 
@@ -137,7 +136,7 @@ class KernelGraph:
         """``kernel: arg <- producers, ...``."""
         return f"{kernel}: " + ", ".join(edge.text() for edge in self.arguments(kernel))
 
-    def lines(self) -> List[str]:
+    def lines(self) -> list[str]:
         """One :meth:`line` per kernel, then one ``exit:`` line."""
         out = [self.line(kernel) for kernel in self.kernels]
         if self.exits:
@@ -155,12 +154,12 @@ class KernelGraph:
 
 @dataclass(frozen=True, slots=True)
 class Fact:
-    reaches: Tuple[Reach, ...] = ()
-    via: Tuple[str, ...] = ()
+    reaches: tuple[Reach, ...] = ()
+    via: tuple[str, ...] = ()
 
 
 #: What reaches each container or symbol name at one program point; an absent name has no producer.
-Env = Dict[str, Fact]
+Env = dict[str, Fact]
 
 EMPTY = Fact()
 PROGRAM = Fact((Reach(Producer("program")),))
@@ -168,21 +167,21 @@ PROGRAM = Fact((Reach(Producer("program")),))
 
 @dataclass(frozen=True, slots=True)
 class Outcome:
-    normal: Optional[Env] = None
-    breaks: Optional[Env] = None
-    continues: Optional[Env] = None
-    returns: Optional[Env] = None
+    normal: Env | None = None
+    breaks: Env | None = None
+    continues: Env | None = None
+    returns: Env | None = None
 
 
 @dataclass(slots=True)
 class Tracker:
-    kernels: Dict[str, None] = field(default_factory=dict)
+    kernels: dict[str, None] = field(default_factory=dict)
     # (consumer, role, arg) -> edge; the last visit is the fixpoint's
-    edges: Dict[Tuple[str, str, str], ArgEdge] = field(default_factory=dict)
-    written: Dict[str, None] = field(default_factory=dict)
+    edges: dict[tuple[str, str, str], ArgEdge] = field(default_factory=dict)
+    written: dict[str, None] = field(default_factory=dict)
 
 
-def reach_key(reach: Reach) -> Tuple[str, Tuple[str, ...]]:
+def reach_key(reach: Reach) -> tuple[str, tuple[str, ...]]:
     return reach.producer.label(), reach.carried_by
 
 
@@ -197,7 +196,7 @@ def union(first: Env, second: Env) -> Env:
     return {name: merge(first.get(name, EMPTY), second.get(name, EMPTY)) for name in names}
 
 
-def join(*envs: Optional[Env]) -> Optional[Env]:
+def join(*envs: Env | None) -> Env | None:
     present = [env for env in envs if env is not None]
     if not present:
         return None
@@ -207,7 +206,7 @@ def join(*envs: Optional[Env]) -> Optional[Env]:
     return joined
 
 
-def join_outcomes(outcomes: List[Outcome], normal: Optional[Env]) -> Outcome:
+def join_outcomes(outcomes: list[Outcome], normal: Env | None) -> Outcome:
     return Outcome(
         normal,
         join(*(outcome.breaks for outcome in outcomes)),
@@ -216,7 +215,7 @@ def join_outcomes(outcomes: List[Outcome], normal: Optional[Env]) -> Outcome:
     )
 
 
-def assign(env: Env, assignments: Dict[str, str]) -> Env:
+def assign(env: Env, assignments: dict[str, str]) -> Env:
     if not assignments:
         return env
     env = dict(env)
@@ -231,7 +230,7 @@ def kernel_fact(node: ExternalCall, connector: str) -> Fact:
     return Fact((Reach(Producer("kernel", node.label, connector.removeprefix(OUTPUT_PREFIX))),))
 
 
-def source_fact(state: SDFGState, edge: MultiConnectorEdge, facts: Dict[int, Fact]) -> Fact:
+def source_fact(state: SDFGState, edge: MultiConnectorEdge, facts: dict[int, Fact]) -> Fact:
     source = edge.src
     if isinstance(source, ExternalCall) and edge.src_conn is not None and edge.src_conn.startswith(OUTPUT_PREFIX):
         return kernel_fact(source, edge.src_conn)
@@ -244,13 +243,13 @@ def source_fact(state: SDFGState, edge: MultiConnectorEdge, facts: Dict[int, Fac
 @dataclass(frozen=True, slots=True)
 class Views:
     # ids of the edges binding a view to what it views, and each view node's root array
-    bindings: Dict[int, None]
-    roots: Dict[int, str]
+    bindings: dict[int, None]
+    roots: dict[int, str]
 
 
 def state_views(state: SDFGState) -> Views:
-    bindings: Dict[int, None] = {}
-    roots: Dict[int, str] = {}
+    bindings: dict[int, None] = {}
+    roots: dict[int, str] = {}
     for node in state.data_nodes():
         if not isinstance(node.desc(state.sdfg), dace.data.View):
             continue
@@ -264,7 +263,7 @@ def state_views(state: SDFGState) -> Views:
 
 
 def access_flow(
-    state: SDFGState, node: nodes.AccessNode, views: Views, env: Env, facts: Dict[int, Fact], tracker: Tracker
+    state: SDFGState, node: nodes.AccessNode, views: Views, env: Env, facts: dict[int, Fact], tracker: Tracker
 ) -> None:
     # a view reads and writes its root array; the binding edge itself moves no data
     container = views.roots.get(id(node), node.data)
@@ -278,7 +277,7 @@ def access_flow(
     tracker.written[container] = None
 
 
-def kernel_symbols(node: ExternalCall) -> List[str]:
+def kernel_symbols(node: ExternalCall) -> list[str]:
     # read once: a dace Property; dace.library.node erases the class type, hiding the property from pyright
     manifest = node.config  # pyright: ignore[reportAttributeAccessIssue]
     if manifest is None:
@@ -291,7 +290,7 @@ def record(tracker: Tracker, consumer: str, arg: str, role: str, fact: Fact) -> 
     tracker.edges[(consumer, role, arg)] = ArgEdge(consumer, arg, role, fact.reaches, fact.via)
 
 
-def kernel_flow(state: SDFGState, node: ExternalCall, env: Env, facts: Dict[int, Fact], tracker: Tracker) -> None:
+def kernel_flow(state: SDFGState, node: ExternalCall, env: Env, facts: dict[int, Fact], tracker: Tracker) -> None:
     tracker.kernels[node.label] = None
     for edge in state.in_edges(node):
         connector = edge.dst_conn
@@ -304,7 +303,7 @@ def kernel_flow(state: SDFGState, node: ExternalCall, env: Env, facts: Dict[int,
 
 def state_flow(state: SDFGState, env: Env, tracker: Tracker) -> Env:
     env = dict(env)
-    facts: Dict[int, Fact] = {}
+    facts: dict[int, Fact] = {}
     views = state_views(state)
     for node in in_order(state):
         if isinstance(node, nodes.AccessNode):
@@ -315,13 +314,13 @@ def state_flow(state: SDFGState, env: Env, tracker: Tracker) -> Env:
 
 
 def block_input(
-    region: ControlFlowRegion, block: ControlFlowBlock, entry: Env, edge_envs: Dict[int, Optional[Env]]
-) -> Optional[Env]:
+    region: ControlFlowRegion, block: ControlFlowBlock, entry: Env, edge_envs: dict[int, Env | None]
+) -> Env | None:
     arriving = [edge_envs.get(id(edge)) for edge in region.in_edges(block)]
     return join(entry if block is region.start_block else None, *arriving)
 
 
-def region_exit(region: ControlFlowRegion, blocks: List[ControlFlowBlock], outcomes: Dict[int, Outcome]) -> Outcome:
+def region_exit(region: ControlFlowRegion, blocks: list[ControlFlowBlock], outcomes: dict[int, Outcome]) -> Outcome:
     reached = [(block, outcomes[index]) for index, block in enumerate(blocks) if index in outcomes]
     sinks = [outcome.normal for block, outcome in reached if region.out_degree(block) == 0]
     return join_outcomes([outcome for _, outcome in reached], join(*sinks))
@@ -333,9 +332,9 @@ def region_flow(region: ControlFlowRegion, entry: Env, tracker: Tracker) -> Outc
         return Outcome(normal=entry)
     rank = {id(block): index for index, block in enumerate(blocks)}
     start = rank[id(region.start_block)]
-    inputs: Dict[int, Env] = {start: entry}
-    outcomes: Dict[int, Outcome] = {}
-    edge_envs: Dict[int, Optional[Env]] = {}
+    inputs: dict[int, Env] = {start: entry}
+    outcomes: dict[int, Outcome] = {}
+    edge_envs: dict[int, Env | None] = {}
     queue, queued = [start], {start: None}
     # worklist in block order: a block reruns whenever its input grows, so its last visit sees the fixpoint
     while queue:
@@ -371,14 +370,14 @@ def carry(back: Env, incoming: Env, label: str) -> Env:
     return carried
 
 
-def loop_assign(loop: LoopRegion, statement: Optional[CodeBlock], env: Env) -> Env:
+def loop_assign(loop: LoopRegion, statement: CodeBlock | None, env: Env) -> Env:
     text = loop_analysis.assignment_text(statement, loop.loop_variable)
     return env if text is None else assign(env, {loop.loop_variable: text})
 
 
 def loop_flow(loop: LoopRegion, env: Env, tracker: Tracker) -> Outcome:
     incoming = loop_assign(loop, loop.init_statement, env)
-    back: Optional[Env] = None
+    back: Env | None = None
     while True:
         head = incoming if back is None else union(incoming, carry(back, incoming, loop.label))
         body = region_flow(loop, head, tracker)

@@ -7,7 +7,8 @@ Field names mirror what hpcagent_bench's translator expects.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -34,14 +35,14 @@ def sized_sdfg(boundary: Boundary) -> dace.SDFG:
     return maxsize_loop_scratch(expand_nested_sdfg_inputs(boundary.standalone_sdfg), boundary.symbols)
 
 
-def arg_order(boundary: Boundary, sdfg: dace.SDFG, arrays: List[str]) -> List[str]:
+def arg_order(boundary: Boundary, sdfg: dace.SDFG, arrays: list[str]) -> list[str]:
     # arrays is the caller's already-computed array_names() result
     args = list(arrays)
     args += [s for s in boundary.symbols if s not in args]
     return args
 
 
-def array_names(boundary: Boundary, sdfg: dace.SDFG) -> List[str]:
+def array_names(boundary: Boundary, sdfg: dace.SDFG) -> list[str]:
     # scratch transients cross the ABI too: the C-style model allocates nothing inside the kernel
     names = list(boundary.inputs)
     names += [o for o in boundary.outputs if o not in boundary.inputs]
@@ -59,8 +60,8 @@ def dtype_str(desc: dace.data.Data) -> str:
 
 
 def manifest_dict(
-    boundary: Boundary, name: str, sizes: Optional[Dict[str, int]] = None, preset: str = "S"
-) -> Dict[str, Any]:
+    boundary: Boundary, name: str, sizes: dict[str, int] | None = None, preset: str = "S"
+) -> dict[str, Any]:
     """Build the OptArena manifest dict for boundary's standalone SDFG."""
     sdfg = sized_sdfg(boundary)
     arrays = array_names(boundary, sdfg)
@@ -69,8 +70,8 @@ def manifest_dict(
         desc = sdfg.arrays[a]
         init_arrays[a] = {"shape": shape_str(desc.shape), "dtype": dtype_str(desc)}
     sizes = sizes or dict.fromkeys(boundary.symbols, DEFAULT_SIZE)
-    int_params: Dict[str, int] = {}
-    float_scalars: Dict[str, float] = {}
+    int_params: dict[str, int] = {}
+    float_scalars: dict[str, float] = {}
     for s in boundary.symbols:
         # a float symbol is a staged scalar read, not a size -- route to init.scalars so the
         # translator declares it double instead of truncating it to int64
@@ -78,7 +79,7 @@ def manifest_dict(
             float_scalars[s] = 0.0
         else:
             int_params[s] = int(sizes.get(s, DEFAULT_SIZE))
-    init: Dict[str, Any] = {"arrays": init_arrays}
+    init: dict[str, Any] = {"arrays": init_arrays}
     if float_scalars:
         init["scalars"] = float_scalars
     return {

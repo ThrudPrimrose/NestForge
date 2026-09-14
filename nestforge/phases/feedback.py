@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from collections.abc import Callable
 
 import dace
 
@@ -20,7 +20,7 @@ class Outcome:
     name: str
     ok: bool
     median_us: float = float("inf")
-    error: Optional[str] = None
+    error: str | None = None
 
 
 #: Mutate the SDFG by one granularity move; ``False`` when no move is left.
@@ -38,13 +38,13 @@ def default_fuse_step(sdfg: dace.SDFG) -> bool:
     return True
 
 
-def best_outcome(outcomes: List[Outcome]) -> Optional[Outcome]:
+def best_outcome(outcomes: list[Outcome]) -> Outcome | None:
     """Fastest outcome that matched the oracle; a wrong result never wins on speed."""
     valid = [o for o in outcomes if o.ok]
     return min(valid, key=lambda o: o.median_us) if valid else None
 
 
-def improved(prior: List[Outcome], candidate: Outcome) -> bool:
+def improved(prior: list[Outcome], candidate: Outcome) -> bool:
     """Whether ``candidate`` beats every prior correct outcome."""
     if not candidate.ok:
         return False
@@ -56,8 +56,8 @@ def improved(prior: List[Outcome], candidate: Outcome) -> bool:
 class FeedbackResult:
     """Every round's outcome, the winner, and the SDFG snapshot the winner was measured on."""
 
-    outcomes: List[Outcome]
-    best: Optional[Outcome]
+    outcomes: list[Outcome]
+    best: Outcome | None
     rounds: int
     sdfg: dace.SDFG
 

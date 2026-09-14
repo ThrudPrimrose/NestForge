@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Union
 
 import dace
 from dace import symbolic
@@ -18,21 +17,21 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 
-CfgNest = Union[LoopRegion, ConditionalBlock]
-NestNode = Union[nodes.MapEntry, CfgNest]
+CfgNest = LoopRegion | ConditionalBlock
+NestNode = nodes.MapEntry | CfgNest
 
 
 @dataclass(slots=True)
 class Boundary:
     """The interface of an extracted nest, in the order the arena/libnode will use."""
 
-    inputs: List[str]
-    outputs: List[str]
-    symbols: List[str]
-    nsdfg_node: Optional[nodes.NestedSDFG]  # placed in the parent; None for a whole-program boundary
-    state: Optional[SDFGState]  # None for a whole-program boundary
+    inputs: list[str]
+    outputs: list[str]
+    symbols: list[str]
+    nsdfg_node: nodes.NestedSDFG | None  # placed in the parent; None for a whole-program boundary
+    state: SDFGState | None  # None for a whole-program boundary
     standalone_sdfg: dace.SDFG  # detached, independently compilable copy of the nest
-    parent_sdfg: Optional[dace.SDFG] = field(repr=False, default=None)
+    parent_sdfg: dace.SDFG | None = field(repr=False, default=None)
 
 
 def detach(sdfg: dace.SDFG) -> dace.SDFG:
@@ -68,7 +67,7 @@ def boundary_from_nsdfg(nsdfg_node: nodes.NestedSDFG, state: SDFGState, parent_s
     )
 
 
-def extract_map_nest(parent_sdfg: dace.SDFG, map_entry: nodes.MapEntry, name: Optional[str] = None) -> Boundary:
+def extract_map_nest(parent_sdfg: dace.SDFG, map_entry: nodes.MapEntry, name: str | None = None) -> Boundary:
     """Outline a whole map scope (entry..exit + body) into a standalone SDFG. ``full_data=True`` nests
     whole boundary arrays, not the accessed sub-range (else DaCe shrinks the connector and breaks the
     generated C signature)."""
@@ -90,7 +89,7 @@ def assignment_dtype(sdfg: dace.SDFG, rhs: str) -> dace.dtypes.typeclass:
     return inferred if isinstance(inferred, dace.dtypes.typeclass) else dace.int64
 
 
-def nest_defined_symbol_dtypes(sdfg: dace.SDFG, region: CfgNest) -> Dict[str, dace.dtypes.typeclass]:
+def nest_defined_symbol_dtypes(sdfg: dace.SDFG, region: CfgNest) -> dict[str, dace.dtypes.typeclass]:
     """Every genuine interstate-edge assignment target defined inside the nest, mapped to the dtype it
     should be pre-declared with. Loop iterators are scope symbols (never SDFG symbols): DaCe's own nest
     helper types and exports them itself from the ``LoopRegion``, so they are excluded here rather than
@@ -100,7 +99,7 @@ def nest_defined_symbol_dtypes(sdfg: dace.SDFG, region: CfgNest) -> Dict[str, da
         for b in [region, *region.all_control_flow_blocks()]
         if isinstance(b, LoopRegion) and b.loop_variable
     }
-    dtypes: Dict[str, dace.dtypes.typeclass] = {}
+    dtypes: dict[str, dace.dtypes.typeclass] = {}
     for e in region.all_interstate_edges():
         for target, rhs in e.data.assignments.items():
             if target in loop_variables or target in dtypes:
@@ -109,7 +108,7 @@ def nest_defined_symbol_dtypes(sdfg: dace.SDFG, region: CfgNest) -> Dict[str, da
     return dtypes
 
 
-def trip_count_symbols(sdfg: dace.SDFG) -> Set[str]:
+def trip_count_symbols(sdfg: dace.SDFG) -> set[str]:
     """Symbols that can change how much work ``sdfg`` does: loop init/condition/update statements, map
     ranges, and interstate conditions (not assignments, which carry a value but never gate whether it
     runs). Recurses into NestedSDFGs, translating each inner name back through ``symbol_mapping``."""
@@ -135,7 +134,7 @@ def trip_count_symbols(sdfg: dace.SDFG) -> Set[str]:
     return syms
 
 
-def extract_cfg_nest(parent_sdfg: dace.SDFG, region: CfgNest, name: Optional[str] = None) -> Boundary:
+def extract_cfg_nest(parent_sdfg: dace.SDFG, region: CfgNest, name: str | None = None) -> Boundary:
     """Outline one control-flow block -- a ``LoopRegion`` or a ``ConditionalBlock`` with all its branches
     -- into a standalone SDFG; the coarsest of the three offload units."""
     # pre-declare with the INFERRED dtype: int64 by fiat would truncate a float staged across an edge.
@@ -152,7 +151,7 @@ def extract_cfg_nest(parent_sdfg: dace.SDFG, region: CfgNest, name: Optional[str
     return boundary_from_nsdfg(nsdfg_node, inner_state, parent_sdfg)
 
 
-def extract_nest_to_sdfg(parent_sdfg: dace.SDFG, node: NestNode, name: Optional[str] = None) -> Boundary:
+def extract_nest_to_sdfg(parent_sdfg: dace.SDFG, node: NestNode, name: str | None = None) -> Boundary:
     """Extract any map-nest or loop-nest into a standalone SDFG.
 
     :returns: a :class:`Boundary`; the standalone SDFG is ``boundary.nsdfg_node.sdfg``."""

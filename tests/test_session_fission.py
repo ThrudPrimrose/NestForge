@@ -5,8 +5,6 @@ id/epoch safety layer :mod:`test_session` proves for fusion, applied to the sing
 :func:`nestforge.phases.schedule.map_fission_moves` arm.
 """
 
-from typing import Dict, List, Optional, Tuple
-
 import numpy as np
 import pytest
 
@@ -21,7 +19,7 @@ N = dace.symbol("N")
 f64 = dace.float64
 
 
-def two_statement_map() -> Tuple[dace.SDFG, SDFGState, nodes.MapEntry]:
+def two_statement_map() -> tuple[dace.SDFG, SDFGState, nodes.MapEntry]:
     """One flat map computing ``b = a + 1`` and ``c = a * 2`` -- both statements under ONE map."""
     sdfg = dace.SDFG("multi_statement_map")
     sdfg.add_array("a", [N], f64)
@@ -50,7 +48,7 @@ def multi_statement_map_sdfg() -> dace.SDFG:
     return sdfg
 
 
-def all_map_entries(sdfg: dace.SDFG) -> List[nodes.MapEntry]:
+def all_map_entries(sdfg: dace.SDFG) -> list[nodes.MapEntry]:
     return [
         n
         for sd in sdfg.all_sdfgs_recursive()
@@ -60,9 +58,9 @@ def all_map_entries(sdfg: dace.SDFG) -> List[nodes.MapEntry]:
     ]
 
 
-def tasklet_scopes(sdfg: dace.SDFG) -> Dict[str, Optional[nodes.Node]]:
+def tasklet_scopes(sdfg: dace.SDFG) -> dict[str, nodes.Node | None]:
     """Tasklet label -> its immediate enclosing MapEntry (``None`` if unmapped at that state)."""
-    scopes: Dict[str, Optional[nodes.Node]] = {}
+    scopes: dict[str, nodes.Node | None] = {}
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.all_states():
             scope = state.scope_dict()

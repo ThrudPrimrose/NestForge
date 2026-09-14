@@ -8,7 +8,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Union
+from typing import TYPE_CHECKING
 
 from nestforge.build.toolchain import COMPILE_TIMEOUT_S
 
@@ -22,12 +22,12 @@ __all__ = ["DRIVER", "translate"]
 
 def translate(
     spec: BenchSpec,
-    numpy_path: Union[str, Path],
+    numpy_path: str | Path,
     name: str,
-    out_dir: Union[str, Path],
+    out_dir: str | Path,
     target: str = "c",
     precision: str = "float64",
-) -> List[Path]:
+) -> list[Path]:
     """Translate the ``*_numpy.py`` kernel at ``numpy_path`` into ``target`` source under ``out_dir``.
 
     :returns: the generated source files, C then C++ then Fortran.

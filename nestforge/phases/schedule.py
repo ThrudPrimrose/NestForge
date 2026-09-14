@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Type, Union
+from typing import Any
+from collections.abc import Callable, Iterable, Iterator, Sequence
 
 import dace
 import sympy
@@ -34,8 +35,8 @@ class FusionMove:
     arguments)."""
 
     kind: str
-    where: Dict[str, nodes.Node]
-    xform: Type = field(repr=False)
+    where: dict[str, nodes.Node]
+    xform: type = field(repr=False)
 
     def label(self) -> str:
         return f"{self.kind}({', '.join(str(n) for n in self.where.values())})"
@@ -60,7 +61,7 @@ def iter_loop_fusion_moves(sdfg: dace.SDFG) -> Iterator[FusionMove]:
                 yield FusionMove("fuse-loops", {"first": first, "second": second}, FuseLoops)
 
 
-def loop_fusion_moves(sdfg: dace.SDFG) -> List[FusionMove]:
+def loop_fusion_moves(sdfg: dace.SDFG) -> list[FusionMove]:
     return list(iter_loop_fusion_moves(sdfg))
 
 
@@ -84,7 +85,7 @@ def iter_vertical_map_moves(sdfg: dace.SDFG) -> Iterator[FusionMove]:
                         )
 
 
-def vertical_map_moves(sdfg: dace.SDFG) -> List[FusionMove]:
+def vertical_map_moves(sdfg: dace.SDFG) -> list[FusionMove]:
     return list(iter_vertical_map_moves(sdfg))
 
 
@@ -109,18 +110,18 @@ def iter_horizontal_map_moves(sdfg: dace.SDFG) -> Iterator[FusionMove]:
                     )
 
 
-def horizontal_map_moves(sdfg: dace.SDFG) -> List[FusionMove]:
+def horizontal_map_moves(sdfg: dace.SDFG) -> list[FusionMove]:
     return list(iter_horizontal_map_moves(sdfg))
 
 
-def enumerate_fusions(sdfg: dace.SDFG) -> List[FusionMove]:
+def enumerate_fusions(sdfg: dace.SDFG) -> list[FusionMove]:
     """Every legal fusion move on ``sdfg`` right now, across all three arms. The agent picks one, applies it
     (:func:`apply_fusion`), and re-enumerates -- applying a fusion invalidates the other moves' node
     references."""
     return loop_fusion_moves(sdfg) + vertical_map_moves(sdfg) + horizontal_map_moves(sdfg)
 
 
-def first_fusion(sdfg: dace.SDFG) -> Optional[FusionMove]:
+def first_fusion(sdfg: dace.SDFG) -> FusionMove | None:
     """The first legal fusion move, in the SAME order :func:`enumerate_fusions` lists them (loop, then
     vertical, then horizontal) -- i.e. exactly ``enumerate_fusions(sdfg)[0]`` when one exists, else
     ``None``. Stops at the first hit instead of materializing every arm: the greedy granularity policies
@@ -202,7 +203,7 @@ def fuse_maps_reason(sdfg: dace.SDFG, first: nodes.MapEntry, second: nodes.MapEn
     return "blocked by MapFusionHorizontal: not both parallel-compatible, or a data dependency links them."
 
 
-def intermediates(state: SDFGState, exit_node: nodes.MapExit, consumer: nodes.MapEntry) -> List[nodes.AccessNode]:
+def intermediates(state: SDFGState, exit_node: nodes.MapExit, consumer: nodes.MapEntry) -> list[nodes.AccessNode]:
     """The access nodes ``exit_node`` writes and ``consumer`` reads: what a vertical fusion could fuse through."""
     written = dict.fromkeys(e.dst for e in state.out_edges(exit_node) if isinstance(e.dst, nodes.AccessNode))
     return [arr for arr in written if any(oe.dst is consumer for oe in state.out_edges(arr))]
@@ -210,7 +211,7 @@ def intermediates(state: SDFGState, exit_node: nodes.MapExit, consumer: nodes.Ma
 
 def map_pair_fusion(
     sdfg: dace.SDFG, state: SDFGState, first: nodes.MapEntry, second: nodes.MapEntry
-) -> Optional[FusionMove]:
+) -> FusionMove | None:
     """The fusion two maps of ``state`` admit: vertical through a transient in either data-flow order, else
     horizontal when no data links them; ``None`` when neither transformation accepts the pair."""
     linked = False
@@ -230,7 +231,7 @@ def map_pair_fusion(
 
 def vertical_reason(
     sdfg: dace.SDFG, state: dace.SDFGState, producer: nodes.MapEntry, consumer: nodes.MapEntry
-) -> Optional[str]:
+) -> str | None:
     """``"yes"``/reason if ``producer`` feeds ``consumer`` through a transient (vertical fusion), else
     ``None`` when no such data path exists (so the caller can try the other direction, then horizontal)."""
     exit_p = state.exit_node(producer)
@@ -238,7 +239,7 @@ def vertical_reason(
     # transient intermediate applies, so returning on the first one would report "live output" for a pair
     # that list_fusions still offers via another (transient) array -- can_fuse and enumerate_fusions
     # disagreeing, and the agent steered away from a legal fusion.
-    reasons: List[str] = []
+    reasons: list[str] = []
     for arr in intermediates(state, exit_p, consumer):
         if not sdfg.arrays[arr.data].transient:
             reasons.append(f"intermediate '{arr.data}' is a live output (non-transient); fusing would drop a result")
@@ -311,7 +312,7 @@ def fission_multi_output_maps(sdfg: dace.SDFG) -> int:
     return applied
 
 
-def map_fission_moves(sdfg: dace.SDFG) -> List[Tuple[nodes.MapEntry, nodes.NestedSDFG]]:
+def map_fission_moves(sdfg: dace.SDFG) -> list[tuple[nodes.MapEntry, nodes.NestedSDFG]]:
     """``(map_entry, nested_sdfg)`` pairs ``MapFission`` can split (a map whose nested-SDFG body has
     independent output groups) -- the single-pair fission move for fine agent control. Each pair is applied
     with ``MapFission.apply_to(sdfg, expr_index=1, map_entry=me, nested_sdfg=nsdfg)``; the validated body is
@@ -327,7 +328,7 @@ def map_fission_moves(sdfg: dace.SDFG) -> List[Tuple[nodes.MapEntry, nodes.Neste
 
 def map_fissions_at(
     sdfg: dace.SDFG, state: SDFGState, entry: nodes.MapEntry
-) -> List[Tuple[nodes.MapEntry, nodes.NestedSDFG]]:
+) -> list[tuple[nodes.MapEntry, nodes.NestedSDFG]]:
     """The :func:`map_fission_moves` pairs of one map of ``state``."""
     # A map entry reaches its body over one edge per connector, so dedup before checking.
     body = dict.fromkeys(e.dst for e in state.out_edges(entry) if isinstance(e.dst, nodes.NestedSDFG))
@@ -352,7 +353,7 @@ class FissionMove:
         return f"fission-map({self.map_entry}): splits nested body {self.nested_sdfg} into independent output groups"
 
 
-def enumerate_map_fissions(sdfg: dace.SDFG) -> List[FissionMove]:
+def enumerate_map_fissions(sdfg: dace.SDFG) -> list[FissionMove]:
     """:func:`map_fission_moves` wrapped as labeled :class:`FissionMove` objects, mirroring how
     :func:`enumerate_fusions` wraps its arms for the agent-facing API."""
     return [FissionMove(entry, nsdfg) for entry, nsdfg in map_fission_moves(sdfg)]
@@ -378,14 +379,14 @@ class RegionMove:
     control-flow blocks."""
 
     kind: str
-    where: Dict[str, object]
-    xform: Type = field(repr=False)
+    where: dict[str, object]
+    xform: type = field(repr=False)
 
     def label(self) -> str:
         return f"{self.kind}({', '.join(str(b) for b in self.where.values())})"
 
 
-def enumerate_region_fusions(sdfg: dace.SDFG) -> List[RegionMove]:
+def enumerate_region_fusions(sdfg: dace.SDFG) -> list[RegionMove]:
     """Every legal region merge right now: the adjacent ``SDFGState`` pairs ``StateFusion`` accepts -- the
     merge that dissolves the map barrier so cross-state maps become fusable. Enumerated across every
     control-flow region (recursive), mirroring :func:`nestforge.fusion_arms.enumerate_fusions`.
@@ -436,13 +437,13 @@ def iter_map_fusion_moves(sdfg: dace.SDFG) -> Iterator[FusionMove]:
 
 
 #: A tree row: the block or node a label names, and the state holding it (``None`` for a block).
-Row = Tuple[Any, Optional[SDFGState]]
+Row = tuple[Any, SDFGState | None]
 
 #: A move ready to commit, with the SDFG that owns its nodes.
-Planned = Tuple[dace.SDFG, Union[FusionMove, FissionMove]]
+Planned = tuple[dace.SDFG, FusionMove | FissionMove]
 
 #: Every move kind, with the tree rows it takes in order.
-MOVE_SHAPES: Dict[str, Tuple[type, ...]] = {
+MOVE_SHAPES: dict[str, tuple[type, ...]] = {
     "loop-fusion": (LoopRegion, LoopRegion),
     "loop-fission": (LoopRegion,),
     "map-fusion": (nodes.MapEntry, nodes.MapEntry),
@@ -454,7 +455,7 @@ MOVE_SHAPES: Dict[str, Tuple[type, ...]] = {
 }
 
 #: Kinds no single DaCe transformation implements, and why.
-NOT_IMPLEMENTED: Dict[str, str] = {
+NOT_IMPLEMENTED: dict[str, str] = {
     "loop-fission": (
         "DaCe's LoopFission is a whole-SDFG pass with no per-loop form; fission_all runs it over the whole program."
     ),
@@ -484,7 +485,7 @@ def tree_label(obj: Any) -> str:
     return obj.map.label if isinstance(obj, (nodes.MapEntry, nodes.MapExit)) else obj.label
 
 
-def loop_maps(loop: LoopRegion) -> List[nodes.MapEntry]:
+def loop_maps(loop: LoopRegion) -> list[nodes.MapEntry]:
     """The outermost maps of the states directly inside ``loop``."""
     return [
         n
@@ -495,7 +496,7 @@ def loop_maps(loop: LoopRegion) -> List[nodes.MapEntry]:
     ]
 
 
-def move_labels(move: Union[FusionMove, FissionMove]) -> Tuple[str, ...]:
+def move_labels(move: FusionMove | FissionMove) -> tuple[str, ...]:
     """The tree labels an agent passes to request ``move``."""
     if isinstance(move, FissionMove):
         return (move.map_entry.map.label,)
@@ -506,7 +507,7 @@ def move_labels(move: Union[FusionMove, FissionMove]) -> Tuple[str, ...]:
 
 
 #: Enumerators of the legal moves of each implemented kind.
-MOVE_LISTINGS: Dict[str, Callable[[dace.SDFG], Iterable[Union[FusionMove, FissionMove]]]] = {
+MOVE_LISTINGS: dict[str, Callable[[dace.SDFG], Iterable[FusionMove | FissionMove]]] = {
     "loop-fusion": iter_loop_fusion_moves,
     "map-fusion": iter_map_fusion_moves,
     "map-fission": enumerate_map_fissions,
@@ -515,7 +516,7 @@ MOVE_LISTINGS: Dict[str, Callable[[dace.SDFG], Iterable[Union[FusionMove, Fissio
 }
 
 
-def legal_moves(sdfg: dace.SDFG, kind: Optional[str] = None) -> List[Tuple[str, Tuple[str, ...]]]:
+def legal_moves(sdfg: dace.SDFG, kind: str | None = None) -> list[tuple[str, tuple[str, ...]]]:
     """``(kind, labels)`` of every legal move right now, of ``kind`` or of all kinds; not-implemented kinds list none.
 
     :raises ValueError: ``kind`` is not a move kind.
@@ -529,7 +530,7 @@ def legal_moves(sdfg: dace.SDFG, kind: Optional[str] = None) -> List[Tuple[str, 
     ]
 
 
-def plan_loop_fusion(first: Row, second: Row) -> Union[Planned, str]:
+def plan_loop_fusion(first: Row, second: Row) -> Planned | str:
     loop_a, loop_b = first[0], second[0]
     reason = fuse_loops_reason(loop_a.sdfg, loop_a, loop_b)
     if reason != "yes":
@@ -545,7 +546,7 @@ def node_state(row: Row) -> SDFGState:
     return state
 
 
-def plan_map_fusion(first: Row, second: Row) -> Union[Planned, str]:
+def plan_map_fusion(first: Row, second: Row) -> Planned | str:
     entry_a, entry_b, state = first[0], second[0], node_state(first)
     if node_state(second) is not state:
         return STATE_BARRIER
@@ -553,13 +554,13 @@ def plan_map_fusion(first: Row, second: Row) -> Union[Planned, str]:
     return (state.sdfg, move) if move is not None else fuse_maps_reason(state.sdfg, entry_a, entry_b)
 
 
-def plan_map_fission(row: Row) -> Union[Planned, str]:
+def plan_map_fission(row: Row) -> Planned | str:
     state = node_state(row)
     pairs = map_fissions_at(state.sdfg, state, row[0])
     return (state.sdfg, FissionMove(*pairs[0])) if pairs else MAP_FISSION_REFUSED
 
 
-def plan_map_interchange(outer_row: Row, inner_row: Row) -> Union[Planned, str]:
+def plan_map_interchange(outer_row: Row, inner_row: Row) -> Planned | str:
     outer, inner, state = outer_row[0], inner_row[0], node_state(outer_row)
     if node_state(inner_row) is not state or state.entry_node(inner) is not outer:
         return (
@@ -571,7 +572,7 @@ def plan_map_interchange(outer_row: Row, inner_row: Row) -> Union[Planned, str]:
     return state.sdfg, FusionMove("interchange-map-map", where, MapInterchange)
 
 
-def plan_loop_map_interchange(loop_row: Row, map_row: Row) -> Union[Planned, str]:
+def plan_loop_map_interchange(loop_row: Row, map_row: Row) -> Planned | str:
     loop, entry = loop_row[0], map_row[0]
     inside = loop_maps(loop)
     if len(inside) != 1 or inside[0] is not entry:
@@ -581,7 +582,7 @@ def plan_loop_map_interchange(loop_row: Row, map_row: Row) -> Union[Planned, str
     return loop.sdfg, FusionMove("interchange-loop-map", {"loop": loop}, MoveLoopIntoMap)
 
 
-MOVE_PLANNERS: Dict[str, Callable[..., Union[Planned, str]]] = {
+MOVE_PLANNERS: dict[str, Callable[..., Planned | str]] = {
     "loop-fusion": plan_loop_fusion,
     "map-fusion": plan_map_fusion,
     "map-fission": plan_map_fission,
@@ -590,7 +591,7 @@ MOVE_PLANNERS: Dict[str, Callable[..., Union[Planned, str]]] = {
 }
 
 
-def plan_move(kind: str, rows: Sequence[Row]) -> Union[Planned, str]:
+def plan_move(kind: str, rows: Sequence[Row]) -> Planned | str:
     """The move ``kind`` makes of ``rows`` (one per label, from an implemented kind), or why it is illegal. Legality is
     the transformation's own ``can_be_applied``; nothing is mutated."""
     for (obj, _), wanted in zip(rows, MOVE_SHAPES[kind]):
@@ -600,7 +601,7 @@ def plan_move(kind: str, rows: Sequence[Row]) -> Union[Planned, str]:
     return MOVE_PLANNERS[kind](*rows)
 
 
-def commit_move(sdfg: dace.SDFG, move: Union[FusionMove, FissionMove]) -> str:
+def commit_move(sdfg: dace.SDFG, move: FusionMove | FissionMove) -> str:
     """Commit one move on the SDFG owning its nodes; returns the transformation's name."""
     if isinstance(move, FissionMove):
         apply_map_fission(sdfg, move)
@@ -619,7 +620,7 @@ class ScopeMetrics:
     work: sympy.Expr
     depth: sympy.Expr
     bytes: sympy.Expr
-    oi: Optional[sympy.Expr]
+    oi: sympy.Expr | None
 
     def suffix(self) -> str:
         if self.oi is None:
@@ -629,7 +630,7 @@ class ScopeMetrics:
         return f"work={self.work} depth={self.depth} bytes={self.bytes} OI={oi}"
 
 
-def standalone_scope(sdfg: dace.SDFG, node: Union[nodes.MapEntry, LoopRegion]) -> dace.SDFG:
+def standalone_scope(sdfg: dace.SDFG, node: nodes.MapEntry | LoopRegion) -> dace.SDFG:
     twin_sdfg = detach(sdfg)
     if isinstance(node, nodes.MapEntry):
         state = find_state_of_node(sdfg, node)
@@ -642,7 +643,7 @@ def standalone_scope(sdfg: dace.SDFG, node: Union[nodes.MapEntry, LoopRegion]) -
     raise TypeError(f"{node} is neither a top-level map of a state nor a loop at the top of the SDFG")
 
 
-def scope_metrics(sdfg: dace.SDFG, node: Union[nodes.MapEntry, LoopRegion]) -> ScopeMetrics:
+def scope_metrics(sdfg: dace.SDFG, node: nodes.MapEntry | LoopRegion) -> ScopeMetrics:
     """Work, depth, bytes moved and operational intensity of one scope, analyzed on a detached copy.
 
     :param sdfg: The program holding ``node``; never mutated.
@@ -657,7 +658,7 @@ def scope_metrics(sdfg: dace.SDFG, node: Union[nodes.MapEntry, LoopRegion]) -> S
     return ScopeMetrics(work, depth, moved, oi)
 
 
-def post_fusion_stages(targets: Targets) -> List[str]:
+def post_fusion_stages(targets: Targets) -> list[str]:
     """Canonicalization stages after :data:`FUSE_STAGE`; they run once the granularity is chosen."""
     labels = stage_labels(targets.canon_target)
     return labels[labels.index(FUSE_STAGE) + 1 :]

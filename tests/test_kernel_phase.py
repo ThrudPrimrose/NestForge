@@ -6,7 +6,6 @@ built kernel matches its NumPy oracle."""
 
 import re
 import subprocess
-from typing import Tuple
 
 import numpy as np
 import pytest
@@ -103,7 +102,7 @@ def gpu_lowered_kernel(program, on_device=()):
     return sdfg, ext, boundary
 
 
-def split_decl(decl: str) -> Tuple[str, str]:
+def split_decl(decl: str) -> tuple[str, str]:
     """``(type, name)`` of one C parameter declaration, qualifiers other than ``const`` dropped."""
     text = " ".join(re.sub(r"\b__restrict__\b", "", decl).split()).replace(" *", "*")
     name = re.split(r"[\s*]+", text)[-1]

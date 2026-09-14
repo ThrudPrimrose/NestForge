@@ -7,7 +7,8 @@ Operand resolution (read/write expressions, scalar handling) plus a flat class-n
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
+from collections.abc import Callable
 
 import sympy
 
@@ -54,7 +55,7 @@ def index_str(subset: dace.subsets.Range, keep_singleton: bool = False) -> str:
     return ", ".join(parts)
 
 
-def exclusive_stop(end: sympy.Expr, step: sympy.Expr) -> Optional[sympy.Expr]:
+def exclusive_stop(end: sympy.Expr, step: sympy.Expr) -> sympy.Expr | None:
     """One past the last element for an inclusive-end range; ``None`` when the step's sign is undecidable."""
     sign = sympy.sign(sympy.sympify(step))
     if sign not in (1, -1):
@@ -99,7 +100,7 @@ def scalar_elem(name: str, desc: dace.data.Data) -> str:
     return f"{name}[{', '.join(['0'] * rank)}]"
 
 
-def read_expr(sdfg: dace.SDFG, name: str, subset: Optional[dace.subsets.Range], keep_singleton: bool = False) -> str:
+def read_expr(sdfg: dace.SDFG, name: str, subset: dace.subsets.Range | None, keep_singleton: bool = False) -> str:
     """Read expression for ``name[subset]``: scalar-transient variable, whole array, or slice."""
     desc = sdfg.arrays[name]
     scalar = is_scalar(desc)
@@ -113,7 +114,7 @@ def read_expr(sdfg: dace.SDFG, name: str, subset: Optional[dace.subsets.Range], 
     return f"{name}[{index_str(subset, keep_singleton=keep_singleton)}]"
 
 
-def write_lhs(sdfg: dace.SDFG, name: str, subset: Optional[dace.subsets.Range], keep_singleton: bool = False) -> str:
+def write_lhs(sdfg: dace.SDFG, name: str, subset: dace.subsets.Range | None, keep_singleton: bool = False) -> str:
     """Write target for ``name[subset]``, in place (``name[:]`` / ``name[slice]``), not rebound."""
     desc = sdfg.arrays[name]
     scalar = is_scalar(desc)
@@ -127,7 +128,7 @@ def write_lhs(sdfg: dace.SDFG, name: str, subset: Optional[dace.subsets.Range], 
     return f"{name}[{index_str(subset, keep_singleton=keep_singleton)}]"
 
 
-def operand_rank(sdfg: dace.SDFG, name: str, subset: Optional[dace.subsets.Range]) -> int:
+def operand_rank(sdfg: dace.SDFG, name: str, subset: dace.subsets.Range | None) -> int:
     """Rank of the operand as rendered by :func:`read_expr`/:func:`write_lhs`, not the buffer's rank."""
     desc = sdfg.arrays[name]
     if is_scalar(desc):
@@ -174,7 +175,7 @@ def out_conn_edge(edges: list, node: nodes.Node, conn: str) -> dace.sdfg.graph.M
 
 
 def in_expr(
-    state: dace.SDFGState, node: nodes.Node, conn: Optional[str], sdfg: dace.SDFG, edges: Optional[list] = None
+    state: dace.SDFGState, node: nodes.Node, conn: str | None, sdfg: dace.SDFG, edges: list | None = None
 ) -> str:
     """Read expression for one input connector; pass a precomputed ``edges`` list to avoid rescanning."""
     edges = list(state.in_edges(node)) if edges is None else edges
@@ -183,7 +184,7 @@ def in_expr(
 
 
 def out_expr(
-    state: dace.SDFGState, node: nodes.Node, conn: Optional[str], sdfg: dace.SDFG, edges: Optional[list] = None
+    state: dace.SDFGState, node: nodes.Node, conn: str | None, sdfg: dace.SDFG, edges: list | None = None
 ) -> str:
     """Read expression for the buffer an output connector writes (for a ``beta`` accumulate with no input)."""
     edges = list(state.out_edges(node)) if edges is None else edges
@@ -192,7 +193,7 @@ def out_expr(
 
 
 def out_lhs(
-    state: dace.SDFGState, node: nodes.Node, conn: Optional[str], sdfg: dace.SDFG, edges: Optional[list] = None
+    state: dace.SDFGState, node: nodes.Node, conn: str | None, sdfg: dace.SDFG, edges: list | None = None
 ) -> str:
     """Write target for one output connector (see :func:`in_expr` for ``edges``)."""
     edges = list(state.out_edges(node)) if edges is None else edges
@@ -349,14 +350,14 @@ def emit_fft(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) ->
 def emit_ifft(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> str:
     """``factor * np.fft.ifft(x, norm='forward')`` (DaCe's inverse DFT has no built-in ``1/N``)."""
     inp = in_expr(state, node, "_inp", sdfg)
-    call = "np.fft.ifft(%s, norm='forward')" % inp
+    call = f"np.fft.ifft({inp}, norm='forward')"
     return f"{out_lhs(state, node, '_out', sdfg)} = {scaled(call, node.factor)}"
 
 
 ARGREDUCE_FUNC = {"max": ("np.argmax", "np.max"), "min": ("np.argmin", "np.min")}
 
 
-def emit_argreduce(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> List[str]:
+def emit_argreduce(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> list[str]:
     """``np.argmax``/``np.argmin`` plus the extreme value, as two statements."""
     argfn, valfn = ARGREDUCE_FUNC[node.op]
     inp = in_expr(state, node, "_in", sdfg)
@@ -396,7 +397,7 @@ def emit_integer_sort(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace
     return f"{out_lhs(state, node, '_keys_out', sdfg)} = np.sort({in_expr(state, node, '_keys_in', sdfg)})"
 
 
-def emit_scatter_conflict_check(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> List[str]:
+def emit_scatter_conflict_check(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> list[str]:
     """Duplicate count over a 1-D integer index array, via last-writer-wins ownership (TAGCOUNT form)."""
     idx = in_expr(state, node, "_idx_in", sdfg)
     count = out_lhs(state, node, "_count_out", sdfg)
@@ -430,7 +431,7 @@ def reject_runtime_scalars(node: nodes.LibraryNode, state: dace.SDFGState) -> No
         )
 
 
-def triangle_funcs(uplo: str) -> Tuple[str, str, int]:
+def triangle_funcs(uplo: str) -> tuple[str, str, int]:
     """``(write_fn, keep_fn, keep_offset)`` selecting the touched vs. preserved triangle for ``uplo``."""
     return ("np.tril", "np.triu", 1) if uplo == "L" else ("np.triu", "np.tril", -1)
 
@@ -477,7 +478,7 @@ def emit_symm(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -
     return f"{out_lhs(state, node, '_c', sdfg)} = {rhs}"
 
 
-def emit_potrf(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> List[str]:
+def emit_potrf(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> list[str]:
     """LAPACK POTRF -> ``np.linalg.cholesky``, mirroring :func:`emit_cholesky`; ``_res`` always reports success."""
     a = in_expr(state, node, "_xin", sdfg)
     expr = f"np.linalg.cholesky({a})"
@@ -548,7 +549,7 @@ def emit_reduce(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG)
 
 
 #: class name -> emitter ``(node, state, sdfg) -> "lhs = rhs"`` (or a list of statements).
-LIBNODE_EMITTERS: Dict[str, Callable] = {
+LIBNODE_EMITTERS: dict[str, Callable] = {
     "MatMul": emit_matmul,
     "Gemm": emit_gemm,
     "Gemv": emit_gemv,
@@ -577,7 +578,7 @@ LIBNODE_EMITTERS: Dict[str, Callable] = {
 }
 
 #: Library nodes deliberately not emitted as numpy, each mapped to the refusal reason.
-REFUSED_LIBRARY_NODES: Dict[str, str] = {
+REFUSED_LIBRARY_NODES: dict[str, str] = {
     "CSRMM": "sparse CSR matrix-matrix product; not emitted as dense numpy",
     "CSRMV": "sparse CSR matrix-vector product; not emitted as dense numpy",
     "Gearbox": "FPGA stream rate-changer; operands are Streams, not arrays",
@@ -596,7 +597,7 @@ def is_comm_node(node: nodes.LibraryNode) -> bool:
     return type(node).__module__.startswith(COMM_MODULE_PREFIXES)
 
 
-def emit_library_node(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> List[str]:
+def emit_library_node(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG) -> list[str]:
     """Numpy statement(s) for a library node; raises if it is a communication / refused / unregistered node."""
     cls = type(node).__name__
     if is_comm_node(node):  # checked before the name registry: MPI Reduce collides by name with ours

@@ -20,7 +20,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from types import ModuleType
-from typing import Callable, Dict, List, Mapping, Optional
+from collections.abc import Callable, Mapping
 
 import numpy
 import sympy
@@ -61,14 +61,14 @@ def access(sdfg: dace.SDFG, name: str, subset: dace.subsets.Range) -> str:
     return f"{name}[{index_str(subset)}]"
 
 
-def connector_pattern(conn_expr: Dict[str, str]) -> Optional[re.Pattern]:
+def connector_pattern(conn_expr: dict[str, str]) -> re.Pattern | None:
     """Whole-word alternation pattern matching every connector name in ``conn_expr``, or ``None``."""
     if not conn_expr:
         return None
     return re.compile(r"\b(" + "|".join(re.escape(c) for c in sorted(conn_expr, key=len, reverse=True)) + r")\b")
 
 
-def sub_connectors(code: str, conn_expr: Dict[str, str], pattern: Optional[re.Pattern] = None) -> str:
+def sub_connectors(code: str, conn_expr: dict[str, str], pattern: re.Pattern | None = None) -> str:
     """Replace whole-word connector tokens with their expressions, single-pass (no re-substitution)."""
     if not conn_expr:
         return code
@@ -174,7 +174,7 @@ STANDALONE_PREAMBLE = (
 )
 
 
-def standalone_source(fn_name: str, args: List[str], body: List[str]) -> str:
+def standalone_source(fn_name: str, args: list[str], body: list[str]) -> str:
     """Rendered kernel plus the preamble that makes it importable standalone, with no injected namespace."""
     return f"{STANDALONE_PREAMBLE}\n\n{render(fn_name, args, body)}"
 
@@ -302,7 +302,7 @@ C_TO_PYTHON = (
 )
 
 
-def trap_guard_lines(tasklet: nodes.Tasklet) -> List[str] | None:
+def trap_guard_lines(tasklet: nodes.Tasklet) -> list[str] | None:
     """Python equivalent of a C trap guard (an aborted precondition), or ``None`` if not one."""
     matched = TRAP_GUARD.match(tasklet.code.as_string)
     if matched is None:
@@ -335,7 +335,7 @@ WCR_BINOP = {
 }
 
 
-def tasklet_lines(state: dace.SDFGState, sdfg: dace.SDFG, tasklet: nodes.Tasklet) -> List[str]:
+def tasklet_lines(state: dace.SDFGState, sdfg: dace.SDFG, tasklet: nodes.Tasklet) -> list[str]:
     """Tasklet's Python code with connectors substituted by the array element they name.
 
     :returns: for a WCR (reduction) output, an augmented assignment (body writes a temporary, then
@@ -346,11 +346,11 @@ def tasklet_lines(state: dace.SDFGState, sdfg: dace.SDFG, tasklet: nodes.Tasklet
         return trap_guard_lines(tasklet) or [f"# no-op tasklet ({tasklet.label}): no connectors, no data effect"]
     if tasklet.code.language != dace.dtypes.Language.Python:
         raise UnsupportedNest(f"tasklet {tasklet.label} is not Python ({tasklet.code.language})")
-    conn_expr: Dict[str, str] = {}
+    conn_expr: dict[str, str] = {}
     for e in state.in_edges(tasklet):
         if e.dst_conn is not None:
             conn_expr[e.dst_conn] = access(sdfg, e.data.data, e.data.subset)
-    wcr_updates: List[str] = []
+    wcr_updates: list[str] = []
     for e in state.out_edges(tasklet):
         if e.src_conn is None:
             continue
@@ -369,7 +369,7 @@ def tasklet_lines(state: dace.SDFGState, sdfg: dace.SDFG, tasklet: nodes.Tasklet
     return lines + [normalize_casts(u) for u in wcr_updates]  # a strided subset may render int_floor/int_ceil
 
 
-def copy_side(sdfg: dace.SDFG, name: str, subset: Optional[dace.subsets.Range]) -> str:
+def copy_side(sdfg: dace.SDFG, name: str, subset: dace.subsets.Range | None) -> str:
     """One side of a memlet copy as a squeezed view (length-1 axes dropped), matching DaCe's copy order."""
     if scalar_local(sdfg, name):
         return name
@@ -395,9 +395,9 @@ def copy_direction(edge: dace.sdfg.graph.MultiConnectorEdge) -> tuple:
     raise UnsupportedNest(f"copy memlet {m.data!r} names neither {edge.src.data!r} nor {edge.dst.data!r}")
 
 
-def copy_lines(state: dace.SDFGState, sdfg: dace.SDFG, dst: nodes.AccessNode) -> List[str]:
+def copy_lines(state: dace.SDFGState, sdfg: dace.SDFG, dst: nodes.AccessNode) -> list[str]:
     """Emit ``dst[..] = src[..]`` for each memlet copy feeding ``dst`` from an access node or a map entry."""
-    lines: List[str] = []
+    lines: list[str] = []
     for e in state.in_edges(dst):
         m = e.data
         if m.is_empty():
@@ -424,9 +424,9 @@ def copy_lines(state: dace.SDFGState, sdfg: dace.SDFG, dst: nodes.AccessNode) ->
 def copy_sides(
     sdfg: dace.SDFG,
     dst_name: str,
-    dst_sub: Optional[dace.subsets.Range],
+    dst_sub: dace.subsets.Range | None,
     src_name: str,
-    src_sub: Optional[dace.subsets.Range],
+    src_sub: dace.subsets.Range | None,
 ) -> tuple:
     """``(lhs, rhs, dst_read)`` for one data copy -- the shared body of :func:`copy_lines` and
     :func:`map_exit_writes`. ``dst_read`` is the destination rendered for reading (a WCR accumulates into it).
@@ -448,7 +448,7 @@ def copy_sides(
     )
 
 
-def reshape_side(sdfg: dace.SDFG, name: str, subset: Optional[dace.subsets.Range], write: bool) -> str:
+def reshape_side(sdfg: dace.SDFG, name: str, subset: dace.subsets.Range | None, write: bool) -> str:
     """One side of a rank-changing copy: bare local, explicit index, or the whole array."""
     if scalar_local(sdfg, name):
         return name
@@ -505,7 +505,7 @@ def reconcile_connector_descriptor(inner: dace.SDFG, sdfg: dace.SDFG, outer: str
     inner.arrays[outer] = copy.deepcopy(outer_desc)
 
 
-def emit_nested_sdfg(state: dace.SDFGState, sdfg: dace.SDFG, node: nodes.NestedSDFG) -> List[str]:
+def emit_nested_sdfg(state: dace.SDFGState, sdfg: dace.SDFG, node: nodes.NestedSDFG) -> list[str]:
     """Inline a nested SDFG (e.g. one map iteration's sub-kernel) as flat statements, in place."""
     for e in state.out_edges(node):
         if e.data.wcr is not None:
@@ -544,7 +544,7 @@ def emit_nested_sdfg(state: dace.SDFGState, sdfg: dace.SDFG, node: nodes.NestedS
     return lines
 
 
-def symbol_mapping_lines(mapping: Dict[str, object], node_id: int) -> List[str]:
+def symbol_mapping_lines(mapping: dict[str, object], node_id: int) -> list[str]:
     """Bind a nested SDFG's ``symbol_mapping`` simultaneously (via a temp) when a swap would interfere."""
     binds = [(str(sym), normalize_casts(str(expr))) for sym, expr in mapping.items() if str(sym) != str(expr)]
     if not binds:
@@ -559,9 +559,9 @@ def symbol_mapping_lines(mapping: Dict[str, object], node_id: int) -> List[str]:
     return [f"{tmp} = {expr}" for tmp, _, expr in temps] + [f"{sym} = {tmp}" for tmp, sym, _ in temps]
 
 
-def map_exit_writes(state: dace.SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry) -> List[str]:
+def map_exit_writes(state: dace.SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry) -> list[str]:
     """Writes that leave the map through its exit from an in-scope AccessNode (a privatized reduction)."""
-    lines: List[str] = []
+    lines: list[str] = []
     for e in state.in_edges(state.exit_node(entry)):
         if not isinstance(e.src, nodes.AccessNode) or state.entry_node(e.src) is not entry:
             # A nested map/library/NestedSDFG source emits its body only and never applies an exit WCR,
@@ -596,9 +596,9 @@ def range_stop(end: sympy.Expr, step: sympy.Expr, what: str) -> sympy.Expr:
     return end + sign
 
 
-def map_headers(entry: nodes.MapEntry) -> List[str]:
+def map_headers(entry: nodes.MapEntry) -> list[str]:
     """One ``for`` header per map dimension, outermost first, unindented."""
-    headers: List[str] = []
+    headers: list[str] = []
     for param, (beg, end, step) in zip(entry.map.params, entry.map.range.ranges):
         stop = range_stop(end, step, f"map parameter {param!r}")
         headers.append(
@@ -609,9 +609,9 @@ def map_headers(entry: nodes.MapEntry) -> List[str]:
     return headers
 
 
-def map_body_lines(state: dace.SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry) -> List[str]:
+def map_body_lines(state: dace.SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry) -> list[str]:
     """What one map scope computes, unindented and without its ``for`` headers."""
-    body: List[str] = []
+    body: list[str] = []
     scope = state.scope_subgraph(entry, include_entry=False, include_exit=False)
     for node in dfs_topological_sort(scope):
         # scope_subgraph returns the whole subtree; skip a grandchild here, the recursion below emits it
@@ -632,7 +632,7 @@ def map_body_lines(state: dace.SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry
     return body
 
 
-def map_lines(state: dace.SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry) -> List[str]:
+def map_lines(state: dace.SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry) -> list[str]:
     """Emit a map scope as ``for`` loops over pre-allocated buffers (no allocation of its own)."""
     headers = map_headers(entry)
     body = map_body_lines(state, sdfg, entry)
@@ -641,9 +641,9 @@ def map_lines(state: dace.SDFGState, sdfg: dace.SDFG, entry: nodes.MapEntry) -> 
     return lines
 
 
-def state_body(sdfg: dace.SDFG, state: dace.SDFGState) -> List[str]:
+def state_body(sdfg: dace.SDFG, state: dace.SDFGState) -> list[str]:
     """Numpy statements for a whole state, in dataflow order (library nodes + maps + tasklets)."""
-    lines: List[str] = []
+    lines: list[str] = []
     for node in dfs_topological_sort(state):
         if state.entry_node(node) is not None:
             continue  # emitted as part of its enclosing map scope
@@ -663,12 +663,12 @@ def state_body(sdfg: dace.SDFG, state: dace.SDFGState) -> List[str]:
     return lines
 
 
-def ordered_blocks(region: dace.sdfg.state.ControlFlowRegion) -> List:
+def ordered_blocks(region: dace.sdfg.state.ControlFlowRegion) -> list:
     """Blocks of a control-flow region (SDFG or LoopRegion) in execution order."""
     return list(dfs_topological_sort(region, [region.start_block]))
 
 
-def body_or_pass(lines: List[str]) -> List[str]:
+def body_or_pass(lines: list[str]) -> list[str]:
     """Append ``pass`` if ``lines`` holds only provenance comments, so the block body is non-empty Python."""
     return lines if any(not ln.lstrip().startswith("#") for ln in lines) else lines + ["pass"]
 
@@ -678,7 +678,7 @@ def targets_continue(loop: LoopRegion) -> bool:
     return any(isinstance(b, ContinueBlock) and innermost_loop(b) is loop for b in loop.all_control_flow_blocks())
 
 
-def emit_loop(loop: LoopRegion, sdfg: dace.SDFG) -> List[str]:
+def emit_loop(loop: LoopRegion, sdfg: dace.SDFG) -> list[str]:
     """Emit a ``LoopRegion`` as init + ``while`` (do-while when ``inverted``) around its body."""
     if loop.loop_condition is None:
         raise UnsupportedNest(f"loop {loop.label} has no condition")
@@ -695,7 +695,7 @@ def emit_loop(loop: LoopRegion, sdfg: dace.SDFG) -> List[str]:
     body = body_or_pass(emit_region(loop, sdfg, continue_update=None if loop.inverted else update))
     ind = "    "
 
-    lines: List[str] = []
+    lines: list[str] = []
     if init is not None:
         lines.append(init)
     if loop.inverted:  # do-while: body executes before the condition is tested
@@ -713,10 +713,10 @@ def emit_loop(loop: LoopRegion, sdfg: dace.SDFG) -> List[str]:
     return lines
 
 
-def emit_conditional(cond_block: ConditionalBlock, sdfg: dace.SDFG, continue_update: Optional[str] = None) -> List[str]:
+def emit_conditional(cond_block: ConditionalBlock, sdfg: dace.SDFG, continue_update: str | None = None) -> list[str]:
     """Emit a ``ConditionalBlock`` as ``if``/``elif``/``else`` over its branches, in their stored order."""
     ind = "    "
-    lines: List[str] = []
+    lines: list[str] = []
     keyword = "if"
     last = len(cond_block.branches) - 1
     for index, (condition, region) in enumerate(cond_block.branches):
@@ -745,9 +745,9 @@ def strip_scalar_local_subscript(code: str, sdfg: dace.SDFG) -> str:
 
 def interstate_lines(
     region: dace.sdfg.state.ControlFlowRegion, sdfg: dace.SDFG, block: dace.sdfg.state.ControlFlowBlock
-) -> List[str]:
+) -> list[str]:
     """Assignments carried on the edge(s) entering ``block`` (e.g. an indirect index ``s = A[i]``)."""
-    lines: List[str] = []
+    lines: list[str] = []
     carrying = []
     for e in region.in_edges(block):
         if not e.data.is_unconditional():
@@ -770,14 +770,14 @@ def interstate_lines(
 
 
 def emit_region(
-    region: dace.sdfg.state.ControlFlowRegion, sdfg: dace.SDFG, continue_update: Optional[str] = None
-) -> List[str]:
+    region: dace.sdfg.state.ControlFlowRegion, sdfg: dace.SDFG, continue_update: str | None = None
+) -> list[str]:
     """Numpy statements for every block of a control-flow region, in execution order.
 
     :param continue_update: the enclosing loop's update statement, emitted in front of each
         ``continue`` since python's ``while`` keeps the update in the body.
     """
-    lines: List[str] = []
+    lines: list[str] = []
     for block in ordered_blocks(region):
         lines.extend(interstate_lines(region, sdfg, block))
         if isinstance(block, dace.SDFGState):
@@ -805,7 +805,7 @@ def emit_region(
     return lines
 
 
-def scratch_arrays(sdfg: dace.SDFG) -> List[str]:
+def scratch_arrays(sdfg: dace.SDFG) -> list[str]:
     """Transient array buffers the caller must pre-allocate (scalar transients stay locals)."""
     return sorted(name for name, desc in sdfg.arrays.items() if desc.transient and not is_scalar(desc))
 
@@ -853,8 +853,8 @@ def symbol_ranges(sdfg: dace.SDFG) -> tuple:
     A symbol's range comes from a loop's ``[init, condition-bound]`` and/or every value an inter-state
     edge assigns it; several sources take ``Min``/``Max``, resolved recursively into kernel symbols.
     """
-    los: Dict[str, list] = {}
-    his: Dict[str, list] = {}
+    los: dict[str, list] = {}
+    his: dict[str, list] = {}
     for cfg in sdfg.all_control_flow_regions():
         if isinstance(cfg, LoopRegion) and cfg.loop_condition is not None:
             rel = symbolic.pystr_to_symbolic(cfg.loop_condition.as_string)
@@ -873,7 +873,7 @@ def symbol_ranges(sdfg: dace.SDFG) -> tuple:
                 los.setdefault(var, []).append(value)
                 his.setdefault(var, []).append(value)
 
-    def resolve(bounds: Dict[str, list], combine: Callable[..., sympy.Expr]) -> Dict[str, sympy.Expr]:
+    def resolve(bounds: dict[str, list], combine: Callable[..., sympy.Expr]) -> dict[str, sympy.Expr]:
 
         def r(expr: sympy.Expr, seen: set) -> sympy.Expr:
             for sym in list(expr.free_symbols):
@@ -890,11 +890,11 @@ def symbol_ranges(sdfg: dace.SDFG) -> tuple:
 
 def max_over_loops(
     dim: sympy.Expr,
-    lo_of: Dict[str, sympy.Expr],
-    hi_of: Dict[str, sympy.Expr],
+    lo_of: dict[str, sympy.Expr],
+    hi_of: dict[str, sympy.Expr],
     known: set,
     arrays: Mapping[str, dace.data.Data],
-) -> Optional[sympy.Expr]:
+) -> sympy.Expr | None:
     """Largest value a shape dimension takes over the loop variables' ranges, or ``None`` if unresolved."""
     result = dim
     for s in list(dim.free_symbols):
@@ -907,7 +907,7 @@ def max_over_loops(
     return result if sizable(result, known, arrays) else None
 
 
-def maxsize_loop_scratch(sdfg: dace.SDFG, symbols: List[str]) -> dace.SDFG:
+def maxsize_loop_scratch(sdfg: dace.SDFG, symbols: list[str]) -> dace.SDFG:
     """Widen a scratch transient sized by loop variables to a caller-sizable bound; runs on a copy."""
     known = set(symbols)
     # cheap filter before symbol_ranges walks the whole CFG: most kernels have no such candidate
@@ -920,7 +920,7 @@ def maxsize_loop_scratch(sdfg: dace.SDFG, symbols: List[str]) -> dace.SDFG:
         return sdfg
 
     lo_of, hi_of = symbol_ranges(sdfg)
-    resize: Dict[str, tuple] = {}
+    resize: dict[str, tuple] = {}
     for name, desc in candidates:
         new_shape = []
         for dim in desc.shape:
@@ -941,7 +941,7 @@ def maxsize_loop_scratch(sdfg: dace.SDFG, symbols: List[str]) -> dace.SDFG:
     return out
 
 
-def reject_unsizable_scratch(sdfg: dace.SDFG, scratch: List[str], symbols: List[str]) -> None:
+def reject_unsizable_scratch(sdfg: dace.SDFG, scratch: list[str], symbols: list[str]) -> None:
     """Refuse a scratch buffer whose extent is a loop variable or reads array data, per :func:`sizable`."""
     known = set(symbols)
     for name in scratch:
@@ -959,7 +959,7 @@ def reject_unsizable_scratch(sdfg: dace.SDFG, scratch: List[str], symbols: List[
             )
 
 
-def innermost_loop(block: dace.sdfg.state.ControlFlowBlock) -> Optional[LoopRegion]:
+def innermost_loop(block: dace.sdfg.state.ControlFlowBlock) -> LoopRegion | None:
     """The ``LoopRegion`` a ``break`` / ``continue`` inside ``block`` targets, or ``None`` when the block
     has no loop ancestor in its SDFG (walks ``parent_graph`` up to the root)."""
     region = block.parent_graph
@@ -996,7 +996,7 @@ def reject_nonexternalizable(sdfg: dace.SDFG) -> None:
     reject_orphan_break_continue(sdfg)
 
 
-def render(fn_name: str, args: List[str], body: List[str]) -> str:
+def render(fn_name: str, args: list[str], body: list[str]) -> str:
     lines = [f"def {fn_name}({', '.join(args)}):"]
     lines += ["    " + bl for bl in body_or_pass(body)]
     return "\n".join(lines) + "\n"

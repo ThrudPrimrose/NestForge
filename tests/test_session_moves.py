@@ -7,7 +7,6 @@ import hashlib
 import json
 import re
 from collections import Counter
-from typing import Dict, List, Tuple
 
 import numpy as np
 import pytest
@@ -119,7 +118,7 @@ def sweep_then_scale(A: dace.float64[T, N], B: dace.float64[N]):
         B[i] = A[1, i] * 2.0
 
 
-def tree_labels(sdfg: dace.SDFG) -> List[str]:
+def tree_labels(sdfg: dace.SDFG) -> list[str]:
     return [
         node.label
         for node, _ in sdfg.all_nodes_recursive()
@@ -127,7 +126,7 @@ def tree_labels(sdfg: dace.SDFG) -> List[str]:
     ]
 
 
-def duplicate_labels(sdfg: dace.SDFG) -> Dict[str, int]:
+def duplicate_labels(sdfg: dace.SDFG) -> dict[str, int]:
     return {label: count for label, count in Counter(tree_labels(sdfg)).items() if count > 1}
 
 
@@ -135,17 +134,17 @@ def digest(sdfg: dace.SDFG) -> str:
     return hashlib.sha256(json.dumps(sdfg.to_json(), sort_keys=True, default=str).encode()).hexdigest()
 
 
-def loops(sdfg: dace.SDFG) -> List[LoopRegion]:
+def loops(sdfg: dace.SDFG) -> list[LoopRegion]:
     return [
         b for cfg in sdfg.all_control_flow_regions(recursive=True) for b in cfg.nodes() if isinstance(b, LoopRegion)
     ]
 
 
-def top_level_maps(sdfg: dace.SDFG) -> List[nodes.MapEntry]:
+def top_level_maps(sdfg: dace.SDFG) -> list[nodes.MapEntry]:
     return [n for state in sdfg.all_states() for n in state.scope_children()[None] if isinstance(n, nodes.MapEntry)]
 
 
-def map_writes(sdfg: dace.SDFG) -> List[List[str]]:
+def map_writes(sdfg: dace.SDFG) -> list[list[str]]:
     """The arrays each map writes, over every map in the SDFG hierarchy."""
     return sorted(
         sorted({e.data.data for e in state.out_edges(state.exit_node(node))})
@@ -154,7 +153,7 @@ def map_writes(sdfg: dace.SDFG) -> List[List[str]]:
     )
 
 
-def session_and_reference(program, simplify: bool = True) -> Tuple[Session, dace.SDFG]:
+def session_and_reference(program, simplify: bool = True) -> tuple[Session, dace.SDFG]:
     sdfg = program.to_sdfg(simplify=simplify)
     reference = copy.deepcopy(sdfg)
     reference.name = f"{sdfg.name}_reference"
@@ -166,12 +165,12 @@ def apply_listed(session: Session, kind: str) -> MoveResult:
     return session.apply_move(move["kind"], move["labels"], move["epoch"])
 
 
-def random_arrays(**shapes: Tuple[int, ...]) -> Dict[str, np.ndarray]:
+def random_arrays(**shapes: tuple[int, ...]) -> dict[str, np.ndarray]:
     rng = np.random.default_rng(0)
     return {name: rng.random(shape) for name, shape in shapes.items()}
 
 
-def assert_same_values(reference: dace.SDFG, moved: dace.SDFG, arrays: Dict[str, np.ndarray], **symbols: int) -> None:
+def assert_same_values(reference: dace.SDFG, moved: dace.SDFG, arrays: dict[str, np.ndarray], **symbols: int) -> None:
     expected = {name: value.copy() for name, value in arrays.items()}
     actual = {name: value.copy() for name, value in arrays.items()}
     reference(**expected, **symbols)

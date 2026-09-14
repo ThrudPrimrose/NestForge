@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
 
 import dace
 from dace import dtypes
@@ -22,11 +21,11 @@ from nestforge.phases.normalize import Targets
 class Placement:
     """Device per kernel name, and ``(source, destination)`` containers of every host/device copy."""
 
-    devices: Dict[str, str]
-    copies: Tuple[Tuple[str, str], ...]
+    devices: dict[str, str]
+    copies: tuple[tuple[str, str], ...]
 
 
-def external_calls(sdfg: dace.SDFG) -> List[ExternalCall]:
+def external_calls(sdfg: dace.SDFG) -> list[ExternalCall]:
     return [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, ExternalCall)]
 
 
@@ -38,9 +37,9 @@ def on_device(state: dace.SDFGState, node: nodes.AccessNode) -> bool:
     return node.desc(state.sdfg).storage in GPU_RESIDENT_STORAGES
 
 
-def device_copies(sdfg: dace.SDFG) -> List[Tuple[str, str]]:
+def device_copies(sdfg: dace.SDFG) -> list[tuple[str, str]]:
     """Access-to-access edges whose two ends live in different memory spaces, in state order."""
-    copies: List[Tuple[str, str]] = []
+    copies: list[tuple[str, str]] = []
     for state in sdfg.all_states():
         for edge in state.edges():
             if not isinstance(edge.src, nodes.AccessNode) or not isinstance(edge.dst, nodes.AccessNode):
@@ -69,8 +68,8 @@ class Transfer:
     consumer: str
 
 
-def edge_transfers(edge: ArgEdge, consumer_device: str, devices: Dict[str, str]) -> List[Transfer]:
-    moves: List[Transfer] = []
+def edge_transfers(edge: ArgEdge, consumer_device: str, devices: dict[str, str]) -> list[Transfer]:
+    moves: list[Transfer] = []
     # a producer reaching both carried and not moves once
     for producer in dict.fromkeys(reach.producer for reach in edge.producers):
         source_device = devices[producer.name] if producer.kind == "kernel" else "cpu"
@@ -80,10 +79,10 @@ def edge_transfers(edge: ArgEdge, consumer_device: str, devices: Dict[str, str])
     return moves
 
 
-def transfers(graph: KernelGraph, devices: Dict[str, str]) -> List[Transfer]:
+def transfers(graph: KernelGraph, devices: dict[str, str]) -> list[Transfer]:
     """Every kernel input and program exit whose producer sits in the other memory space. ``program`` and ``host``
     producers, and the program exit, are host memory; ``devices`` maps each kernel to ``cpu`` or ``gpu``."""
-    moves: List[Transfer] = []
+    moves: list[Transfer] = []
     for edge in graph.edges:
         if edge.role == "input":
             moves += edge_transfers(edge, devices[edge.consumer], devices)

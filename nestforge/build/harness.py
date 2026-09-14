@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import ctypes
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -14,7 +13,7 @@ from nestforge.build.arena import CTYPE, call_native, scalar_ctype
 from nestforge.build.toolchain import raw_signature
 
 
-def signature_order(text: str, symbol: str, lang: str = "c") -> List[str]:
+def signature_order(text: str, symbol: str, lang: str = "c") -> list[str]:
     """Parameter names of the kernel entry, in declaration order; the emitted C order (sorted arrays, then
     symbols) is NOT the manifest ``input_args`` order, so args must bind to this or a size lands in a
     pointer slot."""
@@ -24,7 +23,7 @@ def signature_order(text: str, symbol: str, lang: str = "c") -> List[str]:
     return [p.strip().split()[-1].lstrip("*") for p in params.split(",") if p.strip() and p.strip() != "void"]
 
 
-def c_argtypes(order: List[str], boundary) -> list:
+def c_argtypes(order: list[str], boundary) -> list:
     """ctypes type per C parameter: array name -> pointer-to-dtype, size/index symbol -> int64, value scalar -> its SDFG dtype."""
     sdfg = boundary.standalone_sdfg
     return [
@@ -36,14 +35,14 @@ def c_argtypes(order: List[str], boundary) -> list:
 def call_c(
     so: Path,
     symbol: str,
-    order: List[str],
+    order: list[str],
     argtypes: list,
     boundary,
     inputs,
     sizes,
     reps: int,
     copy_outputs: bool = True,
-) -> Tuple[Optional[Dict[str, np.ndarray]], float]:
+) -> tuple[dict[str, np.ndarray] | None, float]:
     """Bind by the C signature order, run once for correctness, then time ``reps`` calls, mutating
     ``inputs`` in place. Callers must run this in a forked child."""
     return call_native(

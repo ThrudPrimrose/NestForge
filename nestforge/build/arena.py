@@ -10,7 +10,8 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -24,7 +25,7 @@ from nestforge.ir.extract import Boundary
 from nestforge.corpus.translate import Prepared
 
 #: Strict rung overridden to bit-exact: a same-order NumPy oracle reaches 0.0, unlike whole-program FP_ATOL.
-ARENA_ATOL: Dict[str, float] = {**flags.FP_ATOL, "strict-ieee": 0.0}
+ARENA_ATOL: dict[str, float] = {**flags.FP_ATOL, "strict-ieee": 0.0}
 
 # numpy dtype name -> ctypes scalar for the ABI (bool needed: DaCe lowers a comparison transient to C bool).
 CTYPE = {
@@ -36,8 +37,8 @@ CTYPE = {
 }
 
 
-def resolve_shape(shape: Sequence[Any], sizes: Dict[str, int]) -> Tuple[int, ...]:
-    env: Dict[Union[symbolic.symbol, str], Union[int, float]] = {symbolic.symbol(k): v for k, v in sizes.items()}
+def resolve_shape(shape: Sequence[Any], sizes: dict[str, int]) -> tuple[int, ...]:
+    env: dict[symbolic.symbol | str, int | float] = {symbolic.symbol(k): v for k, v in sizes.items()}
     return tuple(int(symbolic.evaluate(d, env)) for d in shape)
 
 
@@ -47,7 +48,7 @@ def emitted_sdfg(boundary: Boundary) -> dace.SDFG:
     return maxsize_loop_scratch(boundary.standalone_sdfg, boundary.symbols)
 
 
-def scratch_names(boundary: Boundary) -> List[str]:
+def scratch_names(boundary: Boundary) -> list[str]:
     """Transient array buffers the C-style kernel expects the caller to pre-allocate."""
     return scratch_arrays(emitted_sdfg(boundary))
 
@@ -57,14 +58,14 @@ INPUT_HIGH = 0.25
 
 
 def make_inputs(
-    boundary: Boundary, sizes: Dict[str, int], seed: int = 0, given: Optional[Dict[str, np.ndarray]] = None
-) -> Dict[str, np.ndarray]:
+    boundary: Boundary, sizes: dict[str, int], seed: int = 0, given: dict[str, np.ndarray] | None = None
+) -> dict[str, np.ndarray]:
     """Random arrays for inputs; zeros for outputs and scratch buffers (all caller-pre-allocated).
     :param given: ready-made values (e.g. index arrays) that must match the resolved shape/dtype exactly."""
     sdfg = emitted_sdfg(boundary)  # widened scratch: allocate what the kernel indexes, not the raw shape
     rng = np.random.default_rng(seed)
     given = given or {}
-    arrays: Dict[str, np.ndarray] = {}
+    arrays: dict[str, np.ndarray] = {}
     out_only = [o for o in boundary.outputs if o not in boundary.inputs]
     zero_filled = out_only + [s for s in scratch_arrays(sdfg) if s not in boundary.inputs]
     for name in list(boundary.inputs) + zero_filled:
@@ -85,8 +86,8 @@ def make_inputs(
 
 
 def run_oracle(
-    prep: Prepared, boundary: Boundary, inputs: Dict[str, np.ndarray], sizes: Dict[str, int]
-) -> Dict[str, np.ndarray]:
+    prep: Prepared, boundary: Boundary, inputs: dict[str, np.ndarray], sizes: dict[str, int]
+) -> dict[str, np.ndarray]:
     """Run the emitted numpy kernel to get reference outputs."""
     missing = [s for s in boundary.symbols if s not in sizes]
     if missing:
@@ -109,18 +110,18 @@ def scalar_ctype(sdfg: dace.SDFG, name: str) -> type[ctypes._SimpleCData]:
     return ctypes.c_int64
 
 
-def accumulating_outputs(boundary: Boundary, buffers: Dict[str, np.ndarray]) -> List[str]:
+def accumulating_outputs(boundary: Boundary, buffers: dict[str, np.ndarray]) -> list[str]:
     """Outputs the kernel both reads and writes; a timed rep loop restores these so an unrestored in-place
     kernel does not decay into denormals within a few reps and time subnormal arithmetic instead."""
     return [o for o in boundary.outputs if o in boundary.inputs and o in buffers]
 
 
-def rewind_snapshot(boundary: Boundary, buffers: Dict[str, np.ndarray]) -> List[Tuple[np.ndarray, np.ndarray]]:
+def rewind_snapshot(boundary: Boundary, buffers: dict[str, np.ndarray]) -> list[tuple[np.ndarray, np.ndarray]]:
     """Each accumulating buffer paired with a pristine copy, taken once before the warm call for :func:`rewind`."""
     return [(buffers[o], buffers[o].copy()) for o in accumulating_outputs(boundary, buffers)]
 
 
-def rewind(snapshot: List[Tuple[np.ndarray, np.ndarray]]) -> None:
+def rewind(snapshot: list[tuple[np.ndarray, np.ndarray]]) -> None:
     """Restore the pristine contents of every accumulating buffer. Call OUTSIDE the timed region."""
     for buf, pristine in snapshot:
         buf[...] = pristine
@@ -130,7 +131,7 @@ def rewind(snapshot: List[Tuple[np.ndarray, np.ndarray]]) -> None:
 POINTER_TYPE = type(ctypes.POINTER(ctypes.c_double))
 
 
-def bind_argument(arg: str, ctype: type, buffers: Dict[str, np.ndarray], sizes: Dict[str, int]) -> object:
+def bind_argument(arg: str, ctype: type, buffers: dict[str, np.ndarray], sizes: dict[str, int]) -> object:
     """One ctypes argument: a buffer by pointer, a Scalar's one-element buffer by value, else a size by value."""
     if arg not in buffers:
         return ctype(sizes[arg])
@@ -140,23 +141,23 @@ def bind_argument(arg: str, ctype: type, buffers: Dict[str, np.ndarray], sizes: 
 
 
 def bind_arguments(
-    order: List[str], argtypes: List[type], buffers: Dict[str, np.ndarray], sizes: Dict[str, int]
-) -> List[object]:
+    order: list[str], argtypes: list[type], buffers: dict[str, np.ndarray], sizes: dict[str, int]
+) -> list[object]:
     return [bind_argument(arg, ctype, buffers, sizes) for arg, ctype in zip(order, argtypes)]
 
 
 def call_native(
     so: Path,
     symbol: str,
-    order: List[str],
+    order: list[str],
     argtypes: list,
     boundary: Boundary,
-    inputs: Dict[str, np.ndarray],
-    sizes: Dict[str, int],
+    inputs: dict[str, np.ndarray],
+    sizes: dict[str, int],
     reps: int,
     copy_inputs: bool = True,
     copy_outputs: bool = True,
-) -> Tuple[Optional[Dict[str, np.ndarray]], float]:
+) -> tuple[dict[str, np.ndarray] | None, float]:
     """Bind + call the compiled entry, then time ``reps`` calls on the same buffers.
     ``order`` must be the EMITTED-signature order (not the manifest's), or same-typed buffers land in the
     wrong slot silently. A read-write output is restored before every timed rep, outside the timed region,
@@ -209,7 +210,7 @@ class DeviceMemory:
     """Device copies of a kernel's pointer arguments, allocated and freed through one ``libcudart``."""
 
     cudart: ctypes.CDLL
-    pointers: Dict[str, ctypes.c_void_p]
+    pointers: dict[str, ctypes.c_void_p]
 
     def upload(self, name: str, host: np.ndarray) -> None:
         source = host.ctypes.data_as(ctypes.c_void_p)
@@ -226,7 +227,7 @@ class DeviceMemory:
             self.cudart.cudaFree(pointer)
 
 
-def device_memory(cudart: ctypes.CDLL, buffers: Dict[str, np.ndarray], names: Sequence[str]) -> DeviceMemory:
+def device_memory(cudart: ctypes.CDLL, buffers: dict[str, np.ndarray], names: Sequence[str]) -> DeviceMemory:
     """A device buffer per name, holding the host contents."""
     memory = DeviceMemory(cudart, {})
     for name in names:
@@ -240,8 +241,8 @@ def device_memory(cudart: ctypes.CDLL, buffers: Dict[str, np.ndarray], names: Se
 
 
 def time_device_reps(
-    fn: Any, args: list, memory: DeviceMemory, boundary: Boundary, host: Dict[str, np.ndarray], reps: int
-) -> Tuple[Dict[str, np.ndarray], float]:
+    fn: Any, args: list, memory: DeviceMemory, boundary: Boundary, host: dict[str, np.ndarray], reps: int
+) -> tuple[dict[str, np.ndarray], float]:
     """One correctness call and its outputs, a warm call, then ``reps`` timed calls; an accumulating output is
     uploaded again from its pristine host copy before every call, outside the timed region."""
     restore = accumulating_outputs(boundary, host)
@@ -262,13 +263,13 @@ def time_device_reps(
 def call_on_device(
     so: Path,
     symbol: str,
-    order: List[str],
+    order: list[str],
     argtypes: list,
     boundary: Boundary,
-    inputs: Dict[str, np.ndarray],
-    sizes: Dict[str, int],
+    inputs: dict[str, np.ndarray],
+    sizes: dict[str, int],
     reps: int,
-) -> Tuple[Optional[Dict[str, np.ndarray]], float]:
+) -> tuple[dict[str, np.ndarray] | None, float]:
     """:func:`call_native` for a device kernel: every pointer argument is a device buffer, copied down once and
     read back once; scalars and sizes still go by value."""
     fn = ctypes.CDLL(str(so))[symbol]  # ctypes CDLL indexing (not getattr) to bind the kernel symbol
@@ -287,7 +288,7 @@ def call_on_device(
         memory.free()
 
 
-def dtype_floor(arrays: Dict[str, np.ndarray]) -> float:
+def dtype_floor(arrays: dict[str, np.ndarray]) -> float:
     """The loosest :data:`flags.DTYPE_ATOL` floor among ``arrays`` (one ULP of the narrowest format present)."""
     return max(
         (flags.DTYPE_ATOL[v.dtype.name] for v in arrays.values() if v.dtype.name in flags.DTYPE_ATOL), default=0.0
@@ -299,7 +300,7 @@ def rung_atol(mode: str, floor: float) -> float:
     return max(ARENA_ATOL[mode], floor)
 
 
-def diff_stats(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> Tuple[float, float]:
+def diff_stats(a: dict[str, np.ndarray], b: dict[str, np.ndarray]) -> tuple[float, float]:
     """``(worst_abs, worst_scaled)`` in one pass over every array: the absolute elementwise difference, and
     the same difference scaled by the magnitude of the values compared (the denominator floors at 1.0, since
     an absolute gate is unreachable for a reduction -- fp64 ULP noise exceeds 1e-14 at reduction scale --
@@ -329,11 +330,11 @@ def diff_stats(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> Tuple[floa
     return worst_abs, worst_rel
 
 
-def maxdiff(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> float:
+def maxdiff(a: dict[str, np.ndarray], b: dict[str, np.ndarray]) -> float:
     """The absolute half of :func:`diff_stats`."""
     return diff_stats(a, b)[0]
 
 
-def relative_maxdiff(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> float:
+def relative_maxdiff(a: dict[str, np.ndarray], b: dict[str, np.ndarray]) -> float:
     """The scaled half of :func:`diff_stats`."""
     return diff_stats(a, b)[1]

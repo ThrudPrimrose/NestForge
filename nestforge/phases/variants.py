@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
 
 from dace.codegen import cpf
 
@@ -32,7 +32,7 @@ class Variant:
     compiler: str
     fp_mode: str
     cost_model: str
-    flags: Tuple[str, ...]
+    flags: tuple[str, ...]
     toolchain: str
 
     @property
@@ -46,7 +46,7 @@ class VariantCell:
 
     variant: Variant
     verdict: KernelVerdict
-    archive: Optional[Path] = None
+    archive: Path | None = None
     same_as: str = ""
 
 
@@ -54,20 +54,20 @@ class VariantCell:
 class VariantResult:
     """Every cell, the collapsed groups, and the fastest correct cell with the entry it links through."""
 
-    cells: List[VariantCell]
-    collapsed: List[str]
-    winner: Optional[VariantCell]
+    cells: list[VariantCell]
+    collapsed: list[str]
+    winner: VariantCell | None
     symbol: str
-    abi_order: List[str]
+    abi_order: list[str]
 
     @property
-    def library(self) -> Optional[Path]:
+    def library(self) -> Path | None:
         return self.winner.archive if self.winner is not None else None
 
 
-def enumerate_variants(toolchains: Sequence[Toolchain]) -> List[Variant]:
+def enumerate_variants(toolchains: Sequence[Toolchain]) -> list[Variant]:
     """Every compiler x FP mode x cost model cell the toolchains support, one per distinct flag set."""
-    variants: Dict[Tuple[str, str, Tuple[str, ...]], Variant] = {}
+    variants: dict[tuple[str, str, tuple[str, ...]], Variant] = {}
     for tc in toolchains:
         if tc.cxx is None:
             continue
@@ -80,7 +80,7 @@ def enumerate_variants(toolchains: Sequence[Toolchain]) -> List[Variant]:
     return list(variants.values())
 
 
-def enumerate_cuda_variants(toolchains: Sequence[CudaToolchain]) -> List[Variant]:
+def enumerate_cuda_variants(toolchains: Sequence[CudaToolchain]) -> list[Variant]:
     """Every nvcc x GPU FP rung cell; a GPU cell has no cost model to sweep."""
     return [
         Variant(tc.nvcc, fp_mode, flags.NO_COST_MODEL, tuple(composed), tc.name)
@@ -89,12 +89,12 @@ def enumerate_cuda_variants(toolchains: Sequence[CudaToolchain]) -> List[Variant
     ]
 
 
-def cpu_variants(compilers: Optional[Sequence[str]]) -> List[Variant]:
+def cpu_variants(compilers: Sequence[str] | None) -> list[Variant]:
     """The CPU cells of every toolchain on PATH, narrowed to the toolchain names in ``compilers``."""
     return enumerate_variants([tc for tc in discover_toolchains() if compilers is None or tc.name in compilers])
 
 
-def gpu_variants(compilers: Optional[Sequence[str]]) -> List[Variant]:
+def gpu_variants(compilers: Sequence[str] | None) -> list[Variant]:
     """The GPU cells of every nvcc on PATH; ``compilers`` names one (``nvcc-13.1``) or all of them (``nvcc``)."""
     nvccs = discover_cuda_toolchains()
     return enumerate_cuda_variants(
@@ -102,23 +102,23 @@ def gpu_variants(compilers: Optional[Sequence[str]]) -> List[Variant]:
     )
 
 
-VARIANTS_BY_DEVICE: Dict[str, Callable[[Optional[Sequence[str]]], List[Variant]]] = {
+VARIANTS_BY_DEVICE: dict[str, Callable[[Sequence[str] | None], list[Variant]]] = {
     "cpu": cpu_variants,
     "gpu": gpu_variants,
 }
 
 
-def device_variants(device: str, compilers: Optional[Sequence[str]] = None) -> List[Variant]:
+def device_variants(device: str, compilers: Sequence[str] | None = None) -> list[Variant]:
     """Every sweep cell this machine offers for a kernel on ``device``."""
     return VARIANTS_BY_DEVICE[device](compilers)
 
 
 def build_variants(
     src: KernelSource, variants: Sequence[Variant], out_dir: Path
-) -> Tuple[Dict[str, VariantCell], Dict[str, str]]:
+) -> tuple[dict[str, VariantCell], dict[str, str]]:
     """``(cells by id, artifact key by id)``; a failed build is a cell without a key."""
-    cells: Dict[str, VariantCell] = {}
-    keys: Dict[str, str] = {}
+    cells: dict[str, VariantCell] = {}
+    keys: dict[str, str] = {}
     for index, variant in enumerate(variants):
         cell_id = f"{index}:{variant.label}"
         try:
@@ -133,7 +133,7 @@ def build_variants(
 
 
 def select_variant(
-    src: KernelSource, prep: Prepared, sizes: Dict[str, int], reps: int, variants: Sequence[Variant], out_dir: Path
+    src: KernelSource, prep: Prepared, sizes: dict[str, int], reps: int, variants: Sequence[Variant], out_dir: Path
 ) -> VariantResult:
     """Build ``variants`` of ``src`` under ``out_dir``, time each distinct artifact once against the NumPy oracle
     (gating every cell at its own FP rung), and return all cells with the fastest correct one as winner."""

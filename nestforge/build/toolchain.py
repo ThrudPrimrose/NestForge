@@ -17,7 +17,7 @@ import tempfile
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple, Type, Union
+from collections.abc import Iterator
 
 C_SCALAR = {
     "int32_t": ctypes.c_int32,
@@ -67,7 +67,7 @@ class OpenMPRuntime:
     name: str = "libomp"  # selected by name on LLVM (``-fopenmp=<name>``)
     soname: str = "omp"  # ``-l<soname>`` for explicit linking
     #: ``-L`` for the runtime; None -> discovered via linkable_lib_dir. ``""`` forces bare ``-l<soname>``.
-    lib_dir: Optional[str] = None
+    lib_dir: str | None = None
     #: ABIs this runtime implements; libgomp is GOMP_*-only, unusable by a kmpc compiler (clang/nvc++).
     provides: frozenset = frozenset({"kmpc", "gomp"})
 
@@ -101,7 +101,7 @@ class OpenMPRuntime:
             f"(libomp/libiomp5 carry a GOMP-compat layer; libgomp is gomp-only)."
         )
 
-    def compile_flags(self, compiler: str) -> List[str]:
+    def compile_flags(self, compiler: str) -> list[str]:
         """Flags to compile a translation unit with OpenMP against this runtime."""
         self.check(compiler)
         fam = compiler_family(compiler)
@@ -109,7 +109,7 @@ class OpenMPRuntime:
             return [f"-fopenmp={self.name}"]
         return ["-fopenmp"]  # gnu: runtime fixed at link, not by this flag
 
-    def link_flags(self, compiler: str) -> List[str]:
+    def link_flags(self, compiler: str) -> list[str]:
         """Flags to link a program against THIS runtime only (avoids dual-runtime oversubscription)."""
         self.check(compiler)
         pinned, library = self.link_location(compiler)
@@ -120,7 +120,7 @@ class OpenMPRuntime:
         # gnu: link the runtime EXPLICITLY (bare -fopenmp would pull libgomp instead)
         return [*libdir, library]
 
-    def link_location(self, compiler: str) -> Tuple[Optional[str], str]:
+    def link_location(self, compiler: str) -> tuple[str | None, str]:
         """``(-L directory or None, library flag)``. An explicit ``lib_dir`` wins (pin a spack/module runtime; ``""``
         forces a bare ``-l<soname>``); otherwise both are discovered, see :func:`runtime_library`."""
         if self.lib_dir is not None:
@@ -133,10 +133,10 @@ SUPPORT_LIB_PROBE = "svml"
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def support_rpath_flags(compiler: str) -> Tuple[str, ...]:
+def support_rpath_flags(compiler: str) -> tuple[str, ...]:
     """-Wl,-rpath for the compiler's own auto-linked support libs (icx svml/imf/irng/intlc), or () if none."""
     found = driver_lib_path(SUPPORT_LIB_PROBE, compiler)
-    return ("-Wl,-rpath,%s" % found.parent,) if found else ()
+    return (f"-Wl,-rpath,{found.parent}",) if found else ()
 
 
 #: Ready-made OpenMP runtimes; libomp/libgomp/libiomp5 share the GOMP ABI.
@@ -152,9 +152,9 @@ LIBIOMP5 = OpenMPRuntime(name="libiomp5", soname="iomp5")
 OPENMP_RUNTIMES = {"libomp": LIBOMP, "libgomp": LIBGOMP, "libiomp5": LIBIOMP5}
 
 
-def env_library_dirs() -> List[str]:
+def env_library_dirs() -> list[str]:
     """Dirs from LD_LIBRARY_PATH/LIBRARY_PATH; find_library only consults ldconfig, missing these."""
-    dirs: List[str] = []
+    dirs: list[str] = []
     for var in ("LD_LIBRARY_PATH", "LIBRARY_PATH"):
         dirs += [d for d in os.environ.get(var, "").split(os.pathsep) if d]
     return dirs
@@ -168,7 +168,7 @@ PROBE_TIMEOUT_S: float = 15.0
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def driver_lib_path(soname: str, compiler: str) -> Optional[Path]:
+def driver_lib_path(soname: str, compiler: str) -> Path | None:
     """Where ``compiler`` resolves ``lib<soname>.so``, or ``None`` (a different question from what
     ldconfig/find_library find); cached since it sits on the hot flag-composition path."""
     try:
@@ -184,7 +184,7 @@ def driver_lib_path(soname: str, compiler: str) -> Optional[Path]:
     return path if path.exists() else None
 
 
-def driver_search_dirs(compiler: str) -> List[str]:
+def driver_search_dirs(compiler: str) -> list[str]:
     """Library directories ``compiler`` itself searches, via -print-search-dirs."""
     try:
         out = subprocess.run(
@@ -216,13 +216,13 @@ def ldconfig_output() -> str:
     return ""
 
 
-def ldconfig_dirs(soname: str) -> List[str]:
+def ldconfig_dirs(soname: str) -> list[str]:
     """Directories the loader cache lists for lib<soname>. The linker needs the -dev .so symlink, which
     ldconfig does not index, but it shares a directory with the versioned .so.N ldconfig does index."""
     out = ldconfig_output()
     if not out:
         return []
-    dirs: List[str] = []
+    dirs: list[str] = []
     for line in out.splitlines():
         if f"lib{soname}.so" not in line or "=>" not in line:
             continue
@@ -238,7 +238,7 @@ LIB_DIR_HINT_ROOTS = ("/usr/lib", "/usr/lib64")
 LIB_DIR_HINTS = ("/usr/lib64", "/usr/local/lib64", "/usr/local/lib")
 
 
-def llvm_version(path: Path) -> Tuple[int, ...]:
+def llvm_version(path: Path) -> tuple[int, ...]:
     """Version tuple of an llvm-N[.M] dir, or (-1,); string sort ranks llvm-9 above llvm-21, so parsed as ints."""
     parts = path.parent.name.partition("llvm-")[2].split(".")
     if not parts or not parts[0].isdigit():
@@ -246,7 +246,7 @@ def llvm_version(path: Path) -> Tuple[int, ...]:
     return tuple(int(p) for p in parts if p.isdigit())
 
 
-def hint_dirs() -> List[str]:
+def hint_dirs() -> list[str]:
     """Guessed library dirs, newest LLVM first, ranked ACROSS roots (per-root sorting would put
     /usr/lib/llvm-14 ahead of /usr/lib64/llvm-18) with path as a stable tiebreaker for glob order."""
     found = [p for root in LIB_DIR_HINT_ROOTS for p in Path(root).glob("llvm-*/lib*")]
@@ -263,7 +263,7 @@ LLVM_DRIVERS = ("clang++", "clang")
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def llvm_config_libdir() -> Optional[str]:
+def llvm_config_libdir() -> str | None:
     """``llvm-config --libdir`` of the LLVM on PATH, or ``None``."""
     if shutil.which("llvm-config") is None:
         return None
@@ -274,7 +274,7 @@ def llvm_config_libdir() -> Optional[str]:
     return out.stdout.strip() or None
 
 
-def shared_object_in(directory: str, soname: str) -> Optional[Path]:
+def shared_object_in(directory: str, soname: str) -> Path | None:
     """``lib<soname>.so`` in ``directory``, else its highest-versioned ``lib<soname>.so.N``."""
     unversioned = Path(directory) / f"lib{soname}.so"
     if unversioned.exists():
@@ -295,7 +295,7 @@ def library_search_dirs(soname: str) -> Iterator[str]:
     yield from hint_dirs()
 
 
-def runtime_library_candidates(soname: str, compiler: str) -> Iterator[Optional[Path]]:
+def runtime_library_candidates(soname: str, compiler: str) -> Iterator[Path | None]:
     yield driver_lib_path(soname, compiler)
     for driver in LLVM_DRIVERS:
         if driver != compiler and shutil.which(driver):
@@ -307,7 +307,7 @@ def runtime_library_candidates(soname: str, compiler: str) -> Iterator[Optional[
         yield shared_object_in(directory, soname)
 
 
-def runtime_library(soname: str, compiler: str) -> Optional[Path]:
+def runtime_library(soname: str, compiler: str) -> Path | None:
     """The shared object ``lib<soname>`` links from for ``compiler``: its own driver first, then an LLVM driver
     on PATH and ``llvm-config --libdir``, then the environment, loader and layout search. A versioned
     ``lib<soname>.so.N`` stands in for a missing ``lib<soname>.so``; ``None`` if nothing provides it."""
@@ -321,7 +321,7 @@ def library_flag(soname: str, compiler: str) -> str:
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def linkable_lib_dir(soname: str, compiler: str = DEFAULT_COMPILER) -> Optional[str]:
+def linkable_lib_dir(soname: str, compiler: str = DEFAULT_COMPILER) -> str | None:
     """The -L directory needed to link lib<soname>, or None if ``compiler`` finds it unaided or nothing provides
     it. Loader and linker search different paths, so the directory comes from :func:`runtime_library`."""
     if shutil.which(compiler) is None:
@@ -337,7 +337,7 @@ def lib_linkable(soname: str, compiler: str = DEFAULT_COMPILER) -> bool:
     return linker_finds(soname, compiler) or linkable_lib_dir(soname, compiler) is not None
 
 
-def lib_findable(soname: str, lib_dir: Optional[str]) -> bool:
+def lib_findable(soname: str, lib_dir: str | None) -> bool:
     """True if lib<soname> is in lib_dir, an env loader path, or the system loader path (matches .so.N too)."""
     for d in ([lib_dir] if lib_dir else []) + env_library_dirs():
         p = Path(d)
@@ -352,7 +352,7 @@ def runtime_installed(rt: OpenMPRuntime) -> bool:
 
 
 @functools.lru_cache(maxsize=None, typed=True)
-def usable_openmp(compiler: str) -> Optional[OpenMPRuntime]:
+def usable_openmp(compiler: str) -> OpenMPRuntime | None:
     """The ONE OpenMP runtime ``compiler`` can actually link, preferring libomp. Never a bare -fopenmp
     (gcc/clang would each link a different default, doubling thread pools in a mixed-compiler sweep): a
     runtime-less build makes the compiler silently drop the OpenMP pragma and run serial. None if nothing links."""
@@ -365,7 +365,7 @@ def usable_openmp(compiler: str) -> Optional[OpenMPRuntime]:
 
 
 #: The two ctypes shapes a kernel parameter can take: a scalar type, or a pointer to one.
-CType = Union[Type[ctypes._SimpleCData], Type[ctypes._Pointer]]
+CType = type[ctypes._SimpleCData] | type[ctypes._Pointer]
 
 
 @dataclass(slots=True)
@@ -375,9 +375,9 @@ class Param:
     is_pointer: bool
 
 
-def parse_params(param_str: str) -> List[Param]:
+def parse_params(param_str: str) -> list[Param]:
     """Parse a C parameter list into typed params; skips the leading N_state_t *__state handle."""
-    params: List[Param] = []
+    params: list[Param] = []
     for raw in split_params(param_str):
         # strip qualifiers as whole WORDS: a substring strip would corrupt names like `const_term`
         tok = re.sub(r"\b(?:const|__restrict__)\b", "", raw).strip()
@@ -406,7 +406,7 @@ def parse_params(param_str: str) -> List[Param]:
     return params
 
 
-def split_params(param_str: str) -> List[str]:
+def split_params(param_str: str) -> list[str]:
     out, depth, cur = [], 0, ""
     for ch in param_str:
         if ch in "(<":
@@ -454,7 +454,7 @@ class Toolchain:
 
     name: str
     cc: str
-    cxx: Optional[str]  # None -> no native column
+    cxx: str | None  # None -> no native column
 
     @property
     def family(self) -> str:
@@ -481,18 +481,18 @@ ALIASES = {
 }  # yapf: disable
 
 
-def discover_toolchains(requested: str = "auto") -> List[Toolchain]:
+def discover_toolchains(requested: str = "auto") -> list[Toolchain]:
     """Discover toolchain families on PATH ("auto"/"all" -> gcc/clang/intel); C compiler required, C++
     optional."""
     tokens = list(FAMILY_EXES) if requested.strip() in ("", "auto", "all") else requested.split()
-    families: List[str] = []
+    families: list[str] = []
     for t in tokens:
         fam = ALIASES.get(t.strip())
         if fam is None:
             warnings.warn(f"unknown compiler token {t!r}; known: {sorted(ALIASES)}")
         elif fam not in families:
             families.append(fam)
-    out: List[Toolchain] = []
+    out: list[Toolchain] = []
     for fam in families:
         cc_exe, cxx_exe = FAMILY_EXES[fam]
         cc = shutil.which(cc_exe)
@@ -519,9 +519,9 @@ class CudaToolchain:
         return f"nvcc-{self.release}"
 
 
-def path_executables(exe: str) -> List[str]:
+def path_executables(exe: str) -> list[str]:
     """Every distinct ``exe`` on PATH, resolved through symlinks, in PATH order."""
-    found: Dict[str, None] = {}
+    found: dict[str, None] = {}
     for directory in os.environ.get("PATH", "").split(os.pathsep):
         candidate = Path(directory) / exe
         if candidate.is_file() and os.access(candidate, os.X_OK):
@@ -570,17 +570,17 @@ def nvcc_linker_flag(flag: str) -> str:
     return "-Xlinker=" + flag.removeprefix("-Wl,")
 
 
-def discover_cuda_toolchains() -> List[CudaToolchain]:
+def discover_cuda_toolchains() -> list[CudaToolchain]:
     """Every nvcc on PATH, one toolchain per distinct compiler."""
     return [CudaToolchain(nvcc, nvcc_release(nvcc), cudart_dir(nvcc)) for nvcc in path_executables("nvcc")]
 
 
-def cudart_link_flags(directory: str) -> List[str]:
+def cudart_link_flags(directory: str) -> list[str]:
     """Link ``libcudart`` from ``directory`` and find it there again at load time."""
     return [f"-L{directory}", "-lcudart", f"-Wl,-rpath,{directory}"]
 
 
-def needed_libraries(shared: Path) -> List[str]:
+def needed_libraries(shared: Path) -> list[str]:
     """The ``NEEDED`` sonames of a shared object, in ``readelf -d`` order."""
     out = subprocess.run(["readelf", "-d", str(shared)], capture_output=True, text=True, check=True).stdout
     return re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", out)
@@ -596,7 +596,7 @@ COMPILE_TIMEOUT_S: float = float(os.environ.get("NF_COMPILE_TIMEOUT", "900"))
 WARN_BUDGET: int = 5
 
 #: tool name -> (distinct texts already reported (insertion order, as a dict), total suppressed past the budget).
-WARNED: Dict[str, Tuple[Dict[str, None], int]] = {}
+WARNED: dict[str, tuple[dict[str, None], int]] = {}
 
 
 def warning_kinds(stderr: str) -> str:
@@ -622,7 +622,7 @@ def warn_once(tool: str, stderr: str) -> None:
     warnings.warn(f"{tool} warnings [{kinds}]:\n{stderr[-2000:]}")
 
 
-def warning_summary() -> List[str]:
+def warning_summary() -> list[str]:
     """One line per tool naming what was reported and how many further warnings were only counted."""
     out = []
     for tool, (seen, suppressed) in sorted(WARNED.items()):
@@ -633,7 +633,7 @@ def warning_summary() -> List[str]:
     return out
 
 
-def run(cmd: List[str], timeout: Optional[float] = COMPILE_TIMEOUT_S) -> None:
+def run(cmd: list[str], timeout: float | None = COMPILE_TIMEOUT_S) -> None:
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:

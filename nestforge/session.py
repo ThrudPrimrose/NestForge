@@ -14,7 +14,7 @@ import re
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from collections.abc import Callable, Sequence
 
 import dace
 from dace.sdfg import nodes
@@ -84,7 +84,7 @@ class MoveResult:
 
     status: str
     kind: str
-    labels: Tuple[str, ...]
+    labels: tuple[str, ...]
     reason: str
 
 
@@ -108,24 +108,24 @@ class Session:
     def __init__(
         self,
         sdfg: dace.SDFG,
-        targets: Optional[Targets] = None,
-        name: Optional[str] = None,
-        work_dir: Optional[str] = None,
+        targets: Targets | None = None,
+        name: str | None = None,
+        work_dir: str | None = None,
     ) -> None:
         self.sdfg = sdfg
         self.targets = targets if targets is not None else Targets()
         self.name = name or sdfg.label
         self.epoch = 0
-        self.handles: Dict[str, object] = {}
+        self.handles: dict[str, object] = {}
         # tree labels are unique across the whole SDFG hierarchy, rebuilt by every bump()
         normalize_labels(sdfg)
-        self.rows: Optional[Dict[str, Row]] = None
+        self.rows: dict[str, Row] | None = None
         self.work_dir = Path(work_dir) if work_dir else Path(tempfile.mkdtemp(prefix="nfsession_"))
-        self.prepared: Dict[str, Prepared] = {}
-        self.kernel_sources: Dict[str, KernelSource] = {}
-        self.kernel_deps: Optional[KernelGraph] = None
+        self.prepared: dict[str, Prepared] = {}
+        self.kernel_sources: dict[str, KernelSource] = {}
+        self.kernel_deps: KernelGraph | None = None
         # phase 3's placement outlives its epoch: the device lives on the kernel node
-        self.devices: Dict[str, str] = {}
+        self.devices: dict[str, str] = {}
 
     # Ids
 
@@ -134,7 +134,7 @@ class Session:
         self.handles[hid] = obj
         return hid
 
-    def resolve(self, hid: str, kind: Optional[str] = None) -> object:
+    def resolve(self, hid: str, kind: str | None = None) -> object:
         """The object ``hid`` names; raises :class:`StaleHandle` for a well-formed id from a past epoch."""
         if hid not in self.handles:
             stamp = hid.split(":", 1)[0] if ":" in hid else ""
@@ -179,7 +179,7 @@ class Session:
             epoch=self.epoch,
         )
 
-    def deps_line(self, node: nodes.LibraryNode) -> Optional[str]:
+    def deps_line(self, node: nodes.LibraryNode) -> str | None:
         graph = self.kernel_graph()
         return graph.line(node.label) if node.label in graph.kernels else None
 
@@ -189,9 +189,9 @@ class Session:
     def tree_handle(self, kind: str, obj: object) -> str:
         return self.mint("nest", obj) if kind == "nest" else f"region:{obj.label}"
 
-    def list_nests(self) -> List[dict]:
+    def list_nests(self) -> list[dict]:
         """Every map-nest and loop-nest with an id, label, parallel flag and read/write sets."""
-        out: List[dict] = []
+        out: list[dict] = []
         for container, nest in fusion_units(self.sdfg):
             reads, writes = nest_reads_writes(container, nest)
             out.append(
@@ -210,7 +210,7 @@ class Session:
         """``"yes"`` or a one-line reason; the same gate :meth:`fuse` applies."""
         return can_fuse(self.sdfg, self.resolve(first_id, "nest"), self.resolve(second_id, "nest"))
 
-    def list_fusions(self) -> List[dict]:
+    def list_fusions(self) -> list[dict]:
         return [{"id": self.mint("move", m), "kind": m.kind, "label": m.label()} for m in enumerate_fusions(self.sdfg)]
 
     def fuse(self, move_id: str) -> str:
@@ -218,7 +218,7 @@ class Session:
         self.commit(self.sdfg, move)
         return self.describe()
 
-    def list_moves(self, kind: Optional[str] = None) -> List[dict]:
+    def list_moves(self, kind: str | None = None) -> list[dict]:
         """Every legal move right now, of ``kind`` or of every kind, as ``{kind, labels, epoch}``: exactly what
         :meth:`apply_move` takes back. A not-implemented kind lists nothing."""
         return [
@@ -256,19 +256,19 @@ class Session:
             return MoveResult("illegal", kind, names, plan)
         return MoveResult("applied", kind, names, self.commit(*plan))
 
-    def row_index(self) -> Dict[str, Row]:
+    def row_index(self) -> dict[str, Row]:
         """Tree label -> ``(block or node, state)``, built once per epoch."""
         if self.rows is None:
             self.rows = tree_rows(self.sdfg)
         return self.rows
 
-    def commit(self, sdfg: dace.SDFG, move: Union[FusionMove, FissionMove]) -> str:
+    def commit(self, sdfg: dace.SDFG, move: FusionMove | FissionMove) -> str:
         """Apply one move on the SDFG owning its nodes and start a new epoch; returns the transformation's name."""
         applied = commit_move(sdfg, move)
         self.bump()
         return applied
 
-    def list_region_fusions(self) -> List[dict]:
+    def list_region_fusions(self) -> list[dict]:
         """Adjacent state pairs that may merge, so nests in them can fuse afterwards."""
         return [
             {"id": self.mint("regmove", m), "kind": m.kind, "label": m.label()}
@@ -287,7 +287,7 @@ class Session:
         self.bump()
         return self.describe()
 
-    def list_fissions(self) -> List[dict]:
+    def list_fissions(self) -> list[dict]:
         """Every legal single-pair map-fission split right now, each naming which nest and where it splits."""
         return [{"id": self.mint("fission", m), "label": m.label()} for m in enumerate_map_fissions(self.sdfg)]
 
@@ -308,7 +308,7 @@ class Session:
         self.bump()
         return self.describe()
 
-    def kernel_body(self, nest_id: str) -> List[str]:
+    def kernel_body(self, nest_id: str) -> list[str]:
         state, nest = self.map_nest(nest_id)
         return kernel_body(state, self.sdfg, nest, state.scope_children())
 
@@ -336,7 +336,7 @@ class Session:
         twin_state = list(work.all_states())[state_index]
         return extract_map_nest(work, list(twin_state.nodes())[node_index], name=nest.map.label)
 
-    def map_nest(self, nest_id: str) -> Tuple[SDFGState, nodes.MapEntry]:
+    def map_nest(self, nest_id: str) -> tuple[SDFGState, nodes.MapEntry]:
         nest = self.resolve(nest_id, "nest")
         if not isinstance(nest, nodes.MapEntry):
             raise TypeError(f"{nest_id} is a {type(nest).__name__}; its kernels are the nests inside it")
@@ -344,9 +344,9 @@ class Session:
 
     # Phase 2: scope definition
 
-    def list_scope_candidates(self) -> List[dict]:
+    def list_scope_candidates(self) -> list[dict]:
         """The parallel top-level maps phase 2 would extract, without mutating."""
-        out: List[dict] = []
+        out: list[dict] = []
         for cand in offload_candidates(self.sdfg):
             container = find_state_of_node(cand.parent_sdfg, cand.node)
             reads, writes = nest_reads_writes(container, cand.node)
@@ -361,7 +361,7 @@ class Session:
             )
         return out
 
-    def define_scopes(self) -> List[dict]:
+    def define_scopes(self) -> list[dict]:
         """Replace every parallel top-level map with an ``ExternalCall`` kernel; returns kernel ids."""
         lowered = lower_nests_to_external_call(self.sdfg)
         if lowered:
@@ -400,7 +400,7 @@ class Session:
         path.write_text(json.dumps(self.kernel_graph().to_json(), indent=2, sort_keys=True) + "\n")
         return str(path)
 
-    def snapshot_kernel_graph(self) -> Optional[KernelGraph]:
+    def snapshot_kernel_graph(self) -> KernelGraph | None:
         """Phases 2 and 3 save :meth:`kernel_graph` when the analysis accepts the program. A refused program still
         completes the phase: no snapshot, and ``None``."""
         try:
@@ -410,7 +410,7 @@ class Session:
         self.save_kernel_graph()
         return graph
 
-    def list_kernels(self) -> List[dict]:
+    def list_kernels(self) -> list[dict]:
         """Every kernel with an id, its device once phase 3 placed it, its arguments, the producer labels reaching
         each argument (``depends``), and the loops a reaching value crossed (``carried``)."""
         graph = self.kernel_graph()
@@ -509,9 +509,9 @@ class Session:
         kernel_id: str,
         lib_path: str,
         symbol: str,
-        abi_order: List[str],
+        abi_order: list[str],
         fp_mode: str = "",
-        runtime_libraries: Optional[List[str]] = None,
+        runtime_libraries: list[str] | None = None,
     ) -> dict:
         """Point a kernel at a compiled library exposing ``symbol``; ``abi_order`` must match its signature.
         ``runtime_libraries`` are the link items its runtimes need; libomp alone when ``None``."""
@@ -530,7 +530,7 @@ class Session:
     # Phase 5: sweep configurations
 
     def sweep_configurations(
-        self, kernel_id: str, sizes: Dict[str, int], reps: int = 10, compilers: Optional[List[str]] = None
+        self, kernel_id: str, sizes: dict[str, int], reps: int = 10, compilers: list[str] | None = None
     ) -> dict:
         """Build and time the kernel's variants, link the fastest correct one, and summarize the sweep; ``config``
         is the winner's compiler, FP mode, cost model, flags and time.
@@ -577,7 +577,7 @@ class Session:
         }
 
 
-def winner_config(winner: Optional[VariantCell]) -> dict:
+def winner_config(winner: VariantCell | None) -> dict:
     """The configuration phase 5 chose: compiler, FP mode, cost model, flags and measured time, or all ``None``."""
     if winner is None:
         return dict.fromkeys(("compiler", "fp_mode", "cost_model", "flags", "time_us"))
@@ -591,7 +591,7 @@ def winner_config(winner: Optional[VariantCell]) -> dict:
     }
 
 
-def fusion_units(sdfg: dace.SDFG) -> List[Tuple[object, Union[nodes.MapEntry, LoopRegion]]]:
+def fusion_units(sdfg: dace.SDFG) -> list[tuple[object, nodes.MapEntry | LoopRegion]]:
     """``(container, nest)`` for every loop-nest and every top-level map-nest, as :func:`can_fuse` accepts."""
     regions = sdfg.all_control_flow_regions(recursive=True)
     loops = [(sdfg, node) for cfg in regions for node in cfg.nodes() if isinstance(node, LoopRegion)]

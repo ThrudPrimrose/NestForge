@@ -8,7 +8,7 @@ import copy
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -42,7 +42,7 @@ class KernelSource:
 
     name: str
     unit: Path
-    abi_order: List[str]
+    abi_order: list[str]
     boundary: Boundary
     device: str
 
@@ -98,26 +98,26 @@ def gpu_schedule(boundary: Boundary) -> dace.SDFG:
     return finalize_for_target(sdfg, "gpu")
 
 
-def build_cpu_library(unit: Path, compiler: str, flags: Optional[List[str]], archive: Path) -> None:
+def build_cpu_library(unit: Path, compiler: str, flags: list[str] | None, archive: Path) -> None:
     opts = BuildOptions(compiler=compiler, flags=flags, openmp=LIBOMP, link_external=True)
     build_archive([unit], None, archive, archive.with_suffix(".so"), opts)
 
 
-def build_gpu_library(unit: Path, compiler: str, flags: Optional[List[str]], archive: Path) -> None:
+def build_gpu_library(unit: Path, compiler: str, flags: list[str] | None, archive: Path) -> None:
     chosen = flags if flags is not None else cuda_base_flags(cpf.CUDA_BUILD_FLAGS)
     build_cuda_archive(unit, archive, archive.with_suffix(".so"), compiler, chosen)
 
 
-def process_runtime_libraries() -> List[str]:
+def process_runtime_libraries() -> list[str]:
     """libomp, the process's one OpenMP runtime, spelled for the program's linker."""
     return LIBOMP.link_flags(program_compiler())
 
 
-def cpu_runtime_libraries(compiler: str) -> List[str]:
+def cpu_runtime_libraries(compiler: str) -> list[str]:
     return process_runtime_libraries()
 
 
-def gpu_runtime_libraries(compiler: str) -> List[str]:
+def gpu_runtime_libraries(compiler: str) -> list[str]:
     """libomp, and the ``libcudart`` the kernel's own nvcc links."""
     return [*process_runtime_libraries(), *cudart_link_flags(cudart_dir(compiler))]
 
@@ -129,12 +129,12 @@ class KernelForm:
     language: str
     suffix: str
     schedule: Callable[[Boundary], dace.SDFG]
-    build: Callable[[Path, str, Optional[List[str]], Path], None]
-    call: Callable[..., Tuple[Optional[Dict[str, np.ndarray]], float]]
-    runtime: Callable[[str], List[str]]
+    build: Callable[[Path, str, list[str] | None, Path], None]
+    call: Callable[..., tuple[dict[str, np.ndarray] | None, float]]
+    runtime: Callable[[str], list[str]]
 
 
-FORMS: Dict[str, KernelForm] = {
+FORMS: dict[str, KernelForm] = {
     "cpu": KernelForm("c++", ".cpp", cpu_schedule, build_cpu_library, call_native, cpu_runtime_libraries),
     "gpu": KernelForm("cuda", ".cu", gpu_schedule, build_gpu_library, call_on_device, gpu_runtime_libraries),
 }
@@ -154,20 +154,20 @@ def schedule_kernel(ext: ExternalCall, boundary: Boundary, out_dir: Path) -> Ker
     return KernelSource(ext.name, unit, list(rendering.arguments), boundary, device)
 
 
-def build_kernel_library(src: KernelSource, compiler: str, flags: Optional[List[str]], out_dir: Path) -> Path:
+def build_kernel_library(src: KernelSource, compiler: str, flags: list[str] | None, out_dir: Path) -> Path:
     """Build ``<out_dir>/lib<kernel>.a`` from the kernel's unit, plus its shared twin for validation."""
     archive = out_dir / f"lib{src.name}.a"
     FORMS[src.device].build(src.unit, compiler, flags, archive)
     return archive
 
 
-def kernel_runtime_libraries(src: KernelSource, compiler: str) -> List[str]:
+def kernel_runtime_libraries(src: KernelSource, compiler: str) -> list[str]:
     """What a program linking ``src``'s library, built by ``compiler``, must link after its objects."""
     return FORMS[src.device].runtime(compiler)
 
 
 def use_kernel_library(
-    ext: ExternalCall, lib_path: Path, symbol: str, abi_order: List[str], runtime_libraries: Sequence[str]
+    ext: ExternalCall, lib_path: Path, symbol: str, abi_order: list[str], runtime_libraries: Sequence[str]
 ) -> None:
     """Point ``ext`` at a built library and the runtimes it needs, and select the extern-call expansion."""
     ext.lib_path, ext.symbol, ext.abi_order = str(lib_path), symbol, list(abi_order)
@@ -178,9 +178,9 @@ def use_kernel_library(
 def measure_kernel(
     archive: Path,
     src: KernelSource,
-    inputs: Dict[str, np.ndarray],
-    oracle: Dict[str, np.ndarray],
-    sizes: Dict[str, int],
+    inputs: dict[str, np.ndarray],
+    oracle: dict[str, np.ndarray],
+    sizes: dict[str, int],
     reps: int,
     fp_mode: str,
 ) -> KernelVerdict:
@@ -190,7 +190,7 @@ def measure_kernel(
     shared = archive.with_suffix(".so")
     call = FORMS[src.device].call
 
-    def work() -> Dict[str, float]:
+    def work() -> dict[str, float]:
         outs, us = call(shared, src.symbol, src.abi_order, argtypes, src.boundary, inputs, sizes, reps)
         assert outs is not None, "the kernel call snapshots outputs unless told not to"
         md, md_rel = diff_stats(oracle, outs)
@@ -208,7 +208,7 @@ def validate_kernel(
     archive: Path,
     src: KernelSource,
     prep: Prepared,
-    sizes: Dict[str, int],
+    sizes: dict[str, int],
     reps: int = 10,
     fp_mode: str = "strict-ieee",
 ) -> KernelVerdict:

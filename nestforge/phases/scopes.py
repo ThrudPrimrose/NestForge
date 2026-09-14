@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple, Union
+from collections.abc import Callable
 
 import dace
 from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
@@ -19,7 +19,7 @@ from nestforge.ir.depends import kernel_symbols
 from nestforge.ir.libnode import ExternalCall, in_conn, out_conn
 
 
-def top_level_map_entries(state: dace.SDFGState) -> List[nodes.MapEntry]:
+def top_level_map_entries(state: dace.SDFGState) -> list[nodes.MapEntry]:
     """MapEntry nodes at the top of a state's scope tree (not nested inside another map)."""
     return [n for n in state.scope_children()[None] if isinstance(n, nodes.MapEntry)]
 
@@ -31,7 +31,7 @@ def is_parallel_nest(node: NestNode) -> bool:
     return False  # LoopRegion (or anything non-Map): sequential
 
 
-def parallel_top_level_maps(sdfg: dace.SDFG) -> List[Tuple[dace.SDFG, nodes.MapEntry]]:
+def parallel_top_level_maps(sdfg: dace.SDFG) -> list[tuple[dace.SDFG, nodes.MapEntry]]:
     """Phase 2's scope candidates: one scope per parallel top-level map, anywhere in the SDFG's
     control flow (including inside a loop region)."""
     return [
@@ -42,7 +42,7 @@ def parallel_top_level_maps(sdfg: dace.SDFG) -> List[Tuple[dace.SDFG, nodes.MapE
     ]
 
 
-def label_nest(node: Union[nodes.MapEntry, LoopRegion]) -> str:
+def label_nest(node: nodes.MapEntry | LoopRegion) -> str:
     """A short human/agent-readable label for a map-nest or loop-nest."""
     if isinstance(node, nodes.MapEntry):
         return f"map[{', '.join(node.map.params)}] over {node.map.range}"
@@ -61,7 +61,7 @@ class OffloadCandidate:
     parallel: bool
 
 
-def offload_candidates(sdfg: dace.SDFG) -> List[OffloadCandidate]:
+def offload_candidates(sdfg: dace.SDFG) -> list[OffloadCandidate]:
     """The scopes phase 2 would externalize, without mutating ``sdfg`` (detection only, not extraction)."""
     return [
         OffloadCandidate(parent, node, label_nest(node), is_parallel_nest(node))
@@ -69,7 +69,7 @@ def offload_candidates(sdfg: dace.SDFG) -> List[OffloadCandidate]:
     ]
 
 
-def reference_sdfg(boundary: Boundary) -> "dace.SDFG":
+def reference_sdfg(boundary: Boundary) -> dace.SDFG:
     """Copy of the standalone SDFG with boundary arrays renamed to the node's connectors; an in-place
     array gets both an ``_in_`` and an ``_out_`` connector since one array carries two connectors."""
     ref = copy.deepcopy(boundary.standalone_sdfg)
@@ -84,7 +84,7 @@ def reference_sdfg(boundary: Boundary) -> "dace.SDFG":
     return ref
 
 
-def kernel_arguments(ext: ExternalCall) -> Tuple[List[str], List[str], List[str]]:
+def kernel_arguments(ext: ExternalCall) -> tuple[list[str], list[str], list[str]]:
     """``(inputs, outputs, symbols)`` read off the kernel node: its connectors in boundary order, and the manifest's
     non-array inputs."""
     inputs = [conn.removeprefix(in_conn("")) for conn in ext.in_connectors]
@@ -112,7 +112,7 @@ def node_boundary(ext: ExternalCall) -> Boundary:
     return Boundary(inputs, outputs, symbols, nsdfg_node=None, state=None, standalone_sdfg=nest)
 
 
-def kernel_connector(prefixed: Callable[[str], str], conn: Optional[str]) -> Optional[str]:
+def kernel_connector(prefixed: Callable[[str], str], conn: str | None) -> str | None:
     """``prefixed(conn)``, or ``None`` for an ordering edge (empty memlet, no connector), so it never becomes
     ``_in_None``."""
     return None if conn is None else prefixed(conn)
@@ -155,14 +155,14 @@ def is_host_length1_array(desc: dace.data.Data) -> bool:
     )
 
 
-def host_length1_inputs(sdfg: dace.SDFG, entry: nodes.MapEntry) -> List[str]:
+def host_length1_inputs(sdfg: dace.SDFG, entry: nodes.MapEntry) -> list[str]:
     """Read-only inputs of the nest at ``entry`` that are length-1 arrays in host memory."""
     state = find_state_of_node(sdfg, entry)
     reads, writes = nest_reads_writes(state, entry)
     return [name for name in reads if name not in writes and is_host_length1_array(state.sdfg.arrays[name])]
 
 
-def refuse_host_length1_inputs(refs: List[Tuple[dace.SDFG, nodes.MapEntry]]) -> None:
+def refuse_host_length1_inputs(refs: list[tuple[dace.SDFG, nodes.MapEntry]]) -> None:
     """A host kernel takes a scalar input by value, so a length-1 array standing in for one is refused
     rather than converted; only a device pointer (a GPU-resident length-1 array) may carry one."""
     offenders = [(entry.map.label, name) for parent, entry in refs for name in host_length1_inputs(parent, entry)]
@@ -173,13 +173,13 @@ def refuse_host_length1_inputs(refs: List[Tuple[dace.SDFG, nodes.MapEntry]]) -> 
         )
 
 
-def lower_nests_to_external_call(sdfg: dace.SDFG) -> List[Tuple[ExternalCall, Boundary]]:
+def lower_nests_to_external_call(sdfg: dace.SDFG) -> list[tuple[ExternalCall, Boundary]]:
     """Lowers every parallel top-level map into an ``ExternalCall`` node, returning
     ``[(call, boundary), ...]`` in extraction order. Refuses before extracting anything if a nest
     reads a host length-1 array (:func:`refuse_host_length1_inputs`)."""
     refs = parallel_top_level_maps(sdfg)
     refuse_host_length1_inputs(refs)
-    out: List[Tuple[ExternalCall, Boundary]] = []
+    out: list[tuple[ExternalCall, Boundary]] = []
     for idx, (parent, node) in enumerate(refs):
         name = f"extcall_{idx}"
         boundary = extract_nest_to_sdfg(parent, node, name=name)

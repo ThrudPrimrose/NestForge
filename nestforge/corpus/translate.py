@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -28,7 +28,7 @@ class Prepared:
     numpy_path: Path
     yaml_path: Path
     numpy_source: str
-    manifest: Dict[str, Any]
+    manifest: dict[str, Any]
     spec: BenchSpec
 
 
@@ -36,7 +36,7 @@ def prepare(
     boundary: Boundary,
     name: str,
     out_dir: os.PathLike,
-    sizes: Optional[Dict[str, int]] = None,
+    sizes: dict[str, int] | None = None,
     preset: str = "S",
 ) -> Prepared:
     """Write ``<name>_numpy.py`` + ``<name>.yaml`` for one extracted kernel and build its ``BenchSpec``."""
@@ -54,6 +54,6 @@ def prepare(
     return Prepared(name, numpy_path, yaml_path, numpy_source, manifest, spec)
 
 
-def emit_sources(prep: Prepared, out_dir: os.PathLike, target: str = "c", precision: str = "float64") -> List[Path]:
+def emit_sources(prep: Prepared, out_dir: os.PathLike, target: str = "c", precision: str = "float64") -> list[Path]:
     """Run the numpy translator; return the generated source files."""
     return translate(prep.spec, prep.numpy_path, prep.name, out_dir, target=target, precision=precision)

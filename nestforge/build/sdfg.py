@@ -14,7 +14,8 @@ import time
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Type, cast
+from typing import Any, cast
+from collections.abc import Iterator, Sequence
 
 import numpy as np
 
@@ -59,16 +60,16 @@ class BuiltSDFG:
 
     name: str
     so_path: Path
-    lib: Optional[ctypes.CDLL]
-    init_params: List[Param]
-    prog_params: List[Param]
+    lib: ctypes.CDLL | None
+    init_params: list[Param]
+    prog_params: list[Param]
     #: wall time of DaCe codegen + C++ emission (the optimization phase).
     codegen_seconds: float = 0.0
     #: wall time of the compiler/linker turning C++ into the .so.
     compile_seconds: float = 0.0
-    handle: Optional[ctypes.c_void_p] = field(default=None, repr=False)
+    handle: ctypes.c_void_p | None = field(default=None, repr=False)
 
-    def init(self, sizes: Dict[str, int]) -> None:
+    def init(self, sizes: dict[str, int]) -> None:
         if self.lib is None:
             raise RuntimeError(f"{self.name}: init() called after unload(); the compiled library is not mapped")
         fn = self.lib[f"__dace_init_{self.name}"]  # ctypes CDLL indexing (not getattr) binds the entry point
@@ -77,25 +78,25 @@ class BuiltSDFG:
         # each param's OWN ctype: a hardcoded width would mismatch (jacobi's int N vs gemm's int64_t NI)
         self.handle = ctypes.c_void_p(fn(*[p.ctype(int(sizes[p.name])) for p in self.init_params]))
 
-    def bind_program(self, buffers: Dict[str, np.ndarray], sizes: Dict[str, int]) -> Tuple[Any, list]:
+    def bind_program(self, buffers: dict[str, np.ndarray], sizes: dict[str, int]) -> tuple[Any, list]:
         """Bind ``__program_N`` and its ctypes args once, so a timed rep loop calls ``fn(*args)`` with no per-rep marshaling."""
         if self.lib is None:
             raise RuntimeError(f"{self.name}: bind_program() called after unload(); the compiled library is not mapped")
         fn = self.lib[f"__program_{self.name}"]
         fn.restype = None
         fn.argtypes = [ctypes.c_void_p] + [p.ctype for p in self.prog_params]
-        args: List[Any] = [self.handle]
+        args: list[Any] = [self.handle]
         for p in self.prog_params:
             if p.is_pointer:
                 # is_pointer guarantees ctype is a Pointer type (parse_params); the cast reflects that.
-                args.append(buffers[p.name].ctypes.data_as(cast(Type[ctypes._Pointer], p.ctype)))
+                args.append(buffers[p.name].ctypes.data_as(cast(type[ctypes._Pointer], p.ctype)))
             elif p.name in buffers:  # a DaCe Scalar passed by value
                 args.append(p.ctype(buffers[p.name].item()))
             else:  # a size symbol
                 args.append(p.ctype(int(sizes[p.name])))
         return fn, args
 
-    def program(self, buffers: Dict[str, np.ndarray], sizes: Dict[str, int]) -> None:
+    def program(self, buffers: dict[str, np.ndarray], sizes: dict[str, int]) -> None:
         """Call ``__program_N(handle, args...)`` once, in place (init must have run)."""
         fn, args = self.bind_program(buffers, sizes)
         fn(*args)
@@ -122,7 +123,7 @@ class BuiltSDFG:
         fn(self.handle)
         self.handle = None
 
-    def run(self, buffers: Dict[str, np.ndarray], sizes: Dict[str, int]) -> None:
+    def run(self, buffers: dict[str, np.ndarray], sizes: dict[str, int]) -> None:
         """One-shot init -> program -> exit (for correctness; for timing, init once + loop program)."""
         self.init(sizes)
         try:
@@ -139,7 +140,7 @@ def codegen_config() -> Iterator[None]:
         yield
 
 
-def generate_program_folder(sdfg: dace.SDFG, out_dir: Path) -> Tuple[Path, str]:
+def generate_program_folder(sdfg: dace.SDFG, out_dir: Path) -> tuple[Path, str]:
     """Lay out DaCe's compilable source tree (``src/cpu/<name>.cpp`` + ``include/``), without letting DaCe compile it."""
     out_dir.mkdir(parents=True, exist_ok=True)
     with codegen_config():
@@ -151,7 +152,7 @@ def generate_program_folder(sdfg: dace.SDFG, out_dir: Path) -> Tuple[Path, str]:
     return frame, sdfg.name
 
 
-def include_flags(folder: Path) -> List[str]:
+def include_flags(folder: Path) -> list[str]:
     """Header search paths: the generated ``include/`` and DaCe's runtime include."""
     return [f"-I{folder / 'include'}", f"-I{dace_runtime_include()}"]
 
@@ -161,14 +162,14 @@ class BuildOptions:
     """Toolchain + optimization knobs for the owned build; each axis is independent."""
 
     compiler: str = DEFAULT_COMPILER
-    flags: Optional[List[str]] = None  # None -> DEFAULT_FLAGS
+    flags: list[str] | None = None  # None -> DEFAULT_FLAGS
     expand_libnodes: bool = False
-    openmp: Optional[OpenMPRuntime] = None
+    openmp: OpenMPRuntime | None = None
     link_external: bool = False  # link the nest as a separate static .a (else a monolithic single TU)
     # object, not the vectorizer's own config type, to keep the vectorizer import lazy
-    vectorize: Optional[object] = None
+    vectorize: object | None = None
 
-    def resolved_flags(self) -> List[str]:
+    def resolved_flags(self) -> list[str]:
         """``flags`` (or :data:`DEFAULT_FLAGS`), with the C++ standard and ``-Wall`` guaranteed."""
         # the DaCe runtime headers need C++20 (std::bit_cast unguarded); fill in -std= only if the caller's
         # own flags did not already set one, so overriding flags for one axis does not silently lose it
@@ -183,12 +184,12 @@ class BuildOptions:
 @dataclass(slots=True)
 class BuildCommands:
     compiler: str
-    cflags: List[str]
-    compile_extra: List[str]
-    link_libs: List[str]  # after the object: the linker resolves left to right
+    cflags: list[str]
+    compile_extra: list[str]
+    link_libs: list[str]  # after the object: the linker resolves left to right
 
 
-def build_commands(folder: Optional[Path], opts: BuildOptions) -> BuildCommands:
+def build_commands(folder: Path | None, opts: BuildOptions) -> BuildCommands:
     compiler = opts.compiler
     # dace emits `#pragma omp parallel for` for every multicore map; a build without OpenMP runs it serially.
     omp = opts.openmp or usable_openmp(compiler)
@@ -210,7 +211,7 @@ def build_commands(folder: Optional[Path], opts: BuildOptions) -> BuildCommands:
 
 
 def build_archive(
-    sources: Sequence[Path], folder: Optional[Path], archive: Path, shared: Path, opts: BuildOptions
+    sources: Sequence[Path], folder: Path | None, archive: Path, shared: Path, opts: BuildOptions
 ) -> float:
     """Compile ``sources`` (against ``folder``'s headers, if given), archive them, and link ``shared`` from the
     whole archive."""
@@ -251,7 +252,7 @@ def build_cuda_archive(source: Path, archive: Path, shared: Path, nvcc: str, fla
     return time.perf_counter() - t0
 
 
-def compile(frame: Path, folder: Path, name: str, opts: BuildOptions) -> Tuple[Path, float]:
+def compile(frame: Path, folder: Path, name: str, opts: BuildOptions) -> tuple[Path, float]:
     """Compile the generated frame into ``lib<name>.so``; ``link_external`` picks monolithic vs :func:`build_archive`."""
     so = folder / f"lib{name}.so"
     if opts.link_external:
@@ -269,7 +270,7 @@ def program_compiler() -> str:
     return str(dace.config.Config.get("compiler", "cpu", "executable") or "c++")
 
 
-def libomp_cmake_args(compiler: str) -> List[str]:
+def libomp_cmake_args(compiler: str) -> list[str]:
     """CMake cache values under which DaCe's ``find_package(OpenMP)`` resolves LLVM libomp for ``compiler``."""
     library = runtime_library(LIBOMP.soname, compiler)
     if library is None:
@@ -314,7 +315,7 @@ class GeneratedProgram:
         return self.frame.parent.parent.parent  # <out>/src/cpu/x.cpp -> <out>
 
 
-def generate_program(sdfg: dace.SDFG, out_dir: Path, opts: Optional[BuildOptions] = None) -> GeneratedProgram:
+def generate_program(sdfg: dace.SDFG, out_dir: Path, opts: BuildOptions | None = None) -> GeneratedProgram:
     """Run the optimization phase only: apply the configured passes and emit the program folder."""
     opts = opts or BuildOptions()
     t_opt = time.perf_counter()
@@ -329,7 +330,7 @@ def generate_program(sdfg: dace.SDFG, out_dir: Path, opts: Optional[BuildOptions
     )
 
 
-def compile_program(gen: GeneratedProgram, opts: Optional[BuildOptions] = None) -> BuiltSDFG:
+def compile_program(gen: GeneratedProgram, opts: BuildOptions | None = None) -> BuiltSDFG:
     """Compile + link an already-generated program and bind its entry points."""
     opts = opts or BuildOptions()
     init_params = parse_params(signature(gen.source, f"__dace_init_{gen.name}"))
@@ -346,7 +347,7 @@ def compile_program(gen: GeneratedProgram, opts: Optional[BuildOptions] = None) 
     )
 
 
-def build_sdfg(sdfg: dace.SDFG, out_dir: Path, opts: Optional[BuildOptions] = None) -> BuiltSDFG:
+def build_sdfg(sdfg: dace.SDFG, out_dir: Path, opts: BuildOptions | None = None) -> BuiltSDFG:
     """Generate + compile + link an SDFG ourselves. Resolves a real OpenMP runtime by default, so a caller
     comparing against serial must pin ``OMP_NUM_THREADS=1`` rather than assume none is linked."""
     opts = opts or BuildOptions()

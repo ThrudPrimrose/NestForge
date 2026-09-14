@@ -8,7 +8,6 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Tuple
 
 import pytest
 
@@ -44,7 +43,7 @@ def lib_paths(node):
 
 
 @pytest.fixture(scope="module")
-def quickstart_run(tmp_path_factory) -> Tuple[Path, str]:
+def quickstart_run(tmp_path_factory) -> tuple[Path, str]:
     """The CPU quick start, run once for every test here: its output folder and what it printed."""
     out = tmp_path_factory.mktemp("quickstart")
     env = {**os.environ, "CUDA_VISIBLE_DEVICES": "", "PYTHONPATH": os.pathsep.join([str(REPO), *sys.path])}

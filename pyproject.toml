@@ -51,6 +51,10 @@ include = ["nestforge*"]
 line-length = 120
 target-version = "py312"
 
+[tool.ruff.lint]
+# Default rules plus pyupgrade, so annotations use builtin generics and `X | None`.
+select = ["E4", "E7", "E9", "F", "UP"]
+
 [tool.ruff.lint.per-file-ignores]
 # Tests import after a module-level skip guard, use lambda helpers, and keep the reference's math names.
 "tests/*" = ["E402", "E731", "E741"]

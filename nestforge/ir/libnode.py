@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import os
 from dataclasses import dataclass
-from typing import Collection, List, Optional, Sequence, Set, Tuple
+from collections.abc import Collection, Sequence
 
 import numpy as np
 
@@ -37,7 +37,7 @@ def connector_for(arg: str, outputs: Collection[str]) -> str:
     return out_conn(arg) if arg in outputs else in_conn(arg)
 
 
-def value_connectors(node: "ExternalCall", state: dace.SDFGState) -> Set[str]:
+def value_connectors(node: ExternalCall, state: dace.SDFGState) -> set[str]:
     """Connectors whose memlet covers one element: DaCe declares these as a VALUE, so the call
     must take their address, not pass them as a pointer."""
     single = set()
@@ -57,7 +57,7 @@ def value_connectors(node: "ExternalCall", state: dace.SDFGState) -> Set[str]:
     return single
 
 
-def scalar_inputs(node: "ExternalCall", state: dace.SDFGState) -> OrderedSet:
+def scalar_inputs(node: ExternalCall, state: dace.SDFGState) -> OrderedSet:
     """Input connectors fed from a ``Scalar`` in the parent: the kernel takes those by value."""
     return OrderedSet(
         edge.dst_conn
@@ -78,7 +78,7 @@ class CallSite:
     scalars: Collection[str]
 
 
-def data_param(node: "ExternalCall", arg: str, dtype: str, site: CallSite) -> Tuple[str, str]:
+def data_param(node: ExternalCall, arg: str, dtype: str, site: CallSite) -> tuple[str, str]:
     """``(parameter, call argument)`` of one data argument: a read-only Scalar input by value, the rest by pointer."""
     if dtype not in CPP_SCALAR:
         # No C spelling for this dtype (complex, float16, unsigned, ...): refuse instead of a codegen KeyError.
@@ -102,7 +102,7 @@ def data_param(node: "ExternalCall", arg: str, dtype: str, site: CallSite) -> Tu
     return f"{const}{ctype}* {arg}", f"&{conn}" if conn in site.by_value else conn
 
 
-def proto_and_call(node: "ExternalCall", state: dace.SDFGState) -> Tuple[str, str]:
+def proto_and_call(node: ExternalCall, state: dace.SDFGState) -> tuple[str, str]:
     """Build the ``extern "C"`` prototype and call expression for the linked kernel, in
     ``node.abi_order`` (the order the .so was actually compiled with, not the manifest's role order --
     C linkage matches on name alone, so the wrong order links cleanly and silently swaps buffers)."""
@@ -128,8 +128,8 @@ def proto_and_call(node: "ExternalCall", state: dace.SDFGState) -> Tuple[str, st
         by_value=value_connectors(node, state),
         scalars=scalar_inputs(node, state),
     )
-    params: List[str] = []
-    call_args: List[str] = []
+    params: list[str] = []
+    call_args: list[str] = []
     for arg in order:
         if arg not in arrays:
             params.append(f"{CPP_SCALAR.get(scalar_dtypes.get(arg, 'int64'), 'int64_t')} {arg}")
@@ -143,7 +143,7 @@ def proto_and_call(node: "ExternalCall", state: dace.SDFGState) -> Tuple[str, st
     return proto, call
 
 
-def with_new_items(existing: List[str], items: Sequence[str]) -> List[str]:
+def with_new_items(existing: list[str], items: Sequence[str]) -> list[str]:
     """``existing`` followed by each item of ``items`` it does not hold yet, in order."""
     return [*existing, *(item for item in dict.fromkeys(items) if item not in existing)]
 
@@ -196,7 +196,7 @@ class ExpandDaceReference(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node: "ExternalCall", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
+    def expansion(node: ExternalCall, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
         if node.standalone_sdfg is None:
             raise ValueError(f"ExternalCall {node.name} has no standalone SDFG to fall back to")
         return copy.deepcopy(node.standalone_sdfg)
@@ -210,7 +210,7 @@ class ExpandExternCall(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node: "ExternalCall", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+    def expansion(node: ExternalCall, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         if not node.lib_path or not node.symbol:
             raise ValueError(f"ExternalCall {node.name} needs lib_path + symbol for ExpandExternCall")
         proto, call = proto_and_call(node, parent_state)
@@ -259,11 +259,11 @@ class ExternalCall(nodes.LibraryNode):
     def __init__(
         self,
         name: str,
-        inputs: Optional[Sequence[str]] = None,
-        outputs: Optional[Sequence[str]] = None,
+        inputs: Sequence[str] | None = None,
+        outputs: Sequence[str] | None = None,
         numpy_source: str = "",
-        config: Optional[dict] = None,
-        standalone_sdfg: Optional[dace.SDFG] = None,
+        config: dict | None = None,
+        standalone_sdfg: dace.SDFG | None = None,
         **kwargs,
     ) -> None:
         # Ordered, not a set: connector order (in_connectors/out_connectors) must stay deterministic.
@@ -273,12 +273,12 @@ class ExternalCall(nodes.LibraryNode):
         self.standalone_sdfg = standalone_sdfg  # in-memory only (not serialized in M0)
 
     @property
-    def standalone_sdfg(self) -> Optional[dace.SDFG]:
+    def standalone_sdfg(self) -> dace.SDFG | None:
         """Detached, independently compilable copy of the nest; in-memory only (not serialized in M0).
         A plain ``@property`` over ``_standalone_sdfg``: dace's ``make_properties`` rejects any stored
         instance attribute that is neither a declared Property nor underscore-prefixed."""
         return self._standalone_sdfg
 
     @standalone_sdfg.setter
-    def standalone_sdfg(self, value: Optional[dace.SDFG]) -> None:
+    def standalone_sdfg(self, value: dace.SDFG | None) -> None:
         self._standalone_sdfg = value

@@ -9,7 +9,8 @@ import importlib.util
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Iterator, List, Optional
+from typing import TYPE_CHECKING
+from collections.abc import Iterator
 
 import numpy as np
 
@@ -77,7 +78,7 @@ def module_path(short_name: str) -> str:
     return f"hpcagent_bench.benchmarks.{'.'.join(dirs)}.{module_name}_dace"
 
 
-def iter_dace_kernels(track: Optional[str] = None) -> Iterator[CorpusKernel]:
+def iter_dace_kernels(track: str | None = None) -> Iterator[CorpusKernel]:
     """Yields every corpus kernel that ships a ``_dace.py`` impl, optionally filtered by track."""
     # deferred: hpcagent_bench imports nestforge at top level
     from hpcagent_bench import autogen
@@ -100,7 +101,7 @@ def iter_dace_kernels(track: Optional[str] = None) -> Iterator[CorpusKernel]:
         )
 
 
-def materialize_dace_corpus(track: Optional[str] = None) -> None:
+def materialize_dace_corpus(track: str | None = None) -> None:
     """Generates every missing ``_dace.py`` up front; call once, serially, before a parallel test run
     -- concurrent xdist workers would otherwise race the same non-atomic write."""
     # deferred: hpcagent_bench imports nestforge at top level
@@ -115,11 +116,11 @@ def materialize_dace_corpus(track: Optional[str] = None) -> None:
         autogen.ensure(short_name, ("dace",))
 
 
-def dace_kernel_names(track: Optional[str] = None) -> List[str]:
+def dace_kernel_names(track: str | None = None) -> list[str]:
     return [k.short_name for k in iter_dace_kernels(track)]
 
 
-def preset_sizes(kernel: CorpusKernel, preset: str) -> Dict[str, int]:
+def preset_sizes(kernel: CorpusKernel, preset: str) -> dict[str, int]:
     """Concrete shape-symbol sizes for one preset rung, read from the kernel's manifest (skips
     non-int fuzz-spec entries)."""
     from hpcagent_bench.sizing import is_plain_int  # deferred: hpcagent_bench imports nestforge at top level
@@ -129,8 +130,8 @@ def preset_sizes(kernel: CorpusKernel, preset: str) -> Dict[str, int]:
 
 
 def index_fills(
-    manifest_name: Optional[str], boundary: Boundary, sizes: Dict[str, int], seed: Optional[int] = 0
-) -> Dict[str, np.ndarray]:
+    manifest_name: str | None, boundary: Boundary, sizes: dict[str, int], seed: int | None = 0
+) -> dict[str, np.ndarray]:
     """Valid-subscript fill values for the nest's manifest-declared integer INDEX arrays, at the SDFG
     descriptor's dtype -- a permutation fill, not the default all-zero uniform-float-cast fill that
     would degrade a gather/scatter to a same-index race once lowered to a ``dace.map``."""
@@ -145,7 +146,7 @@ def index_fills(
         return {}
     rng = np.random.default_rng(seed)
     arrays = boundary.standalone_sdfg.arrays
-    fills: Dict[str, np.ndarray] = {}
+    fills: dict[str, np.ndarray] = {}
     for name, declared in sorted(spec.init.dtypes.items()):
         if np.dtype(declared).kind not in "iu" or name not in boundary.inputs:
             continue

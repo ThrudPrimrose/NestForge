@@ -5,7 +5,7 @@ by phase 2 and on hand-built SDFGs where the frontend cannot express the case. S
 
 import copy
 import json
-from typing import Dict, List, Sequence, Tuple
+from collections.abc import Sequence
 
 import pytest
 
@@ -120,7 +120,7 @@ def copy_between(A: dace.float64[N], T: dace.float64[N], U: dace.float64[N], C: 
         C[i] = U[i] * 2
 
 
-def lowered(program) -> Tuple[dace.SDFG, Dict[str, List[str]]]:
+def lowered(program) -> tuple[dace.SDFG, dict[str, list[str]]]:
     """``program`` through phase 2, with the arguments each kernel writes (read off its out-connectors)."""
     sdfg = program.to_sdfg(simplify=True)
     kernels = lower_nests_to_external_call(sdfg)
@@ -128,7 +128,7 @@ def lowered(program) -> Tuple[dace.SDFG, Dict[str, List[str]]]:
     return sdfg, writes
 
 
-def reaching(graph: KernelGraph) -> Dict[Tuple[str, str], Tuple[str, ...]]:
+def reaching(graph: KernelGraph) -> dict[tuple[str, str], tuple[str, ...]]:
     return {(edge.consumer, edge.arg): tuple(r.text() for r in edge.producers) for edge in (*graph.edges, *graph.exits)}
 
 

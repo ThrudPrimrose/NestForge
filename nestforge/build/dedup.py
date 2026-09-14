@@ -9,7 +9,7 @@ import hashlib
 import re
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Tuple
+from collections.abc import Mapping
 
 SYMBOL_LINE = re.compile(r"^[0-9a-f]+ <([^>]+)>:$")  # objdump -d symbol header
 INSN_LINE = re.compile(r"^\s*[0-9a-f]+:\t(.*)$")  # objdump -d instruction line
@@ -21,7 +21,7 @@ BRANCH_TARGET = re.compile(r"\b[0-9a-f]+ (?=<)")
 TOOL_TIMEOUT_S: float = 120.0
 
 
-def tool_stdout(cmd: List[str], stdin: Optional[str] = None) -> Optional[str]:
+def tool_stdout(cmd: list[str], stdin: str | None = None) -> str | None:
     """stdout of ``cmd``, or ``None`` on failure -- callers must degrade to measuring, never collapsing."""
     try:
         done = subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=TOOL_TIMEOUT_S)
@@ -37,9 +37,9 @@ def clang_formatted(code: str) -> str:
     return out if out is not None else code
 
 
-def function_bodies(code: str) -> List[str]:
+def function_bodies(code: str) -> list[str]:
     """Every top-level ``{...}`` block, brace-matched outside string/char literals and comments."""
-    bodies: List[str] = []
+    bodies: list[str] = []
     depth, start, i, n = 0, -1, 0, len(code)
     while i < n:
         c = code[i]
@@ -76,11 +76,11 @@ def cpp_body_key(code: str) -> str:
     return hashlib.sha256("\n".join(ln for ln in bodies.splitlines() if ln.strip()).encode()).hexdigest()
 
 
-def parse_disassembly(out: str) -> Dict[str, str]:
+def parse_disassembly(out: str) -> dict[str, str]:
     """``objdump -d --no-show-raw-insn`` text -> symbol -> its instruction text, with addresses and
     relocation comments dropped, but immediates left alone since they are what the key must see."""
-    bodies: Dict[str, List[str]] = {}
-    current: Optional[str] = None
+    bodies: dict[str, list[str]] = {}
+    current: str | None = None
     for line in out.splitlines():
         header = SYMBOL_LINE.match(line)
         if header:
@@ -97,13 +97,13 @@ def parse_disassembly(out: str) -> Dict[str, str]:
     return {name: "\n".join(lines) for name, lines in bodies.items()}
 
 
-def asm_bodies(obj: Path) -> Dict[str, str]:
+def asm_bodies(obj: Path) -> dict[str, str]:
     """symbol -> instruction text for ``obj``; empty when objdump is missing or the file has no code."""
     out = tool_stdout(["objdump", "-d", "--no-show-raw-insn", str(obj)])
     return parse_disassembly(out) if out is not None else {}
 
 
-def asm_text(bodies: Mapping[str, str], obj: Path, symbol: Optional[str]) -> str:
+def asm_text(bodies: Mapping[str, str], obj: Path, symbol: str | None) -> str:
     """The instruction text to key: one ``symbol``, or every symbol when ``None``."""
     if symbol is None:
         return "\n".join(f"{name}\n{bodies[name]}" for name in sorted(bodies))
@@ -112,7 +112,7 @@ def asm_text(bodies: Mapping[str, str], obj: Path, symbol: Optional[str]) -> str
     return bodies[symbol]
 
 
-def asm_body_key(obj: Path, symbol: Optional[str] = None) -> str:
+def asm_body_key(obj: Path, symbol: str | None = None) -> str:
     """Key over ``obj``'s disassembly -- one ``symbol`` or every symbol when ``None``; name a symbol
     only when it is the code that RUNS (a DaCe trampoline disassembles the same regardless of body)."""
     bodies = asm_bodies(obj)
@@ -124,7 +124,7 @@ def asm_body_key(obj: Path, symbol: Optional[str] = None) -> str:
 NEEDED_LINE = re.compile(r"^\s*NEEDED\s+(\S+)$")  # objdump -p dependency line
 
 
-def needed_libraries(path: Path) -> Tuple[str, ...]:
+def needed_libraries(path: Path) -> tuple[str, ...]:
     """``DT_NEEDED`` of a linked artifact, sorted (a link-only axis the object key alone cannot see)."""
     out = tool_stdout(["objdump", "-p", str(path)])
     if out is None:
@@ -132,7 +132,7 @@ def needed_libraries(path: Path) -> Tuple[str, ...]:
     return tuple(sorted(m.group(1) for m in (NEEDED_LINE.match(ln) for ln in out.splitlines()) if m))
 
 
-def variant_key(artifact: Path, symbol: Optional[str] = None) -> Optional[str]:
+def variant_key(artifact: Path, symbol: str | None = None) -> str | None:
     """One key for a BUILT artifact: its code and its link together, or ``None`` when it cannot be
     read (a caller falls back to measuring; a failure to inspect must never read as "same as before")."""
     bodies = asm_bodies(artifact)  # one objdump: going through asm_body_key would disassemble twice
@@ -142,15 +142,15 @@ def variant_key(artifact: Path, symbol: Optional[str] = None) -> Optional[str]:
     return hashlib.sha256("\n".join((code, *needed_libraries(artifact))).encode()).hexdigest()
 
 
-def collapse(keys: Mapping[str, str]) -> Dict[str, List[str]]:
+def collapse(keys: Mapping[str, str]) -> dict[str, list[str]]:
     """``key -> variants sharing it``; each group's first member is the one to measure."""
-    groups: Dict[str, List[str]] = {}
+    groups: dict[str, list[str]] = {}
     for name, key in keys.items():
         groups.setdefault(key, []).append(name)
     return groups
 
 
-def representatives(keys: Mapping[str, str]) -> Tuple[List[str], List[str]]:
+def representatives(keys: Mapping[str, str]) -> tuple[list[str], list[str]]:
     """``(measure_these, collapsed_notes)``: notes record which variants were dropped, and why."""
     groups = collapse(keys)
     picks = [members[0] for members in groups.values()]
