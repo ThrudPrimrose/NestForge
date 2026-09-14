@@ -8,14 +8,12 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from nestforge.ir.extract import NestNode
 import copy
-from typing import List, Tuple, Union
 from nestforge.ir.emit_numpy import nest_to_numpy
 from nestforge.ir.emit_yaml import manifest_dict
 from nestforge.ir.extract import Boundary, extract_nest_to_sdfg
 from nestforge.ir.libnode import ExternalCall, in_conn, out_conn
 from dataclasses import dataclass
-from dace.sdfg.state import ConditionalBlock, LoopRegion
-from nestforge.ir.extract import NestNode, extract_nest_to_sdfg, whole_program_boundary
+from nestforge.ir.extract import whole_program_boundary
 
 Strategy = Callable[[dace.SDFG], List[Tuple[dace.SDFG, NestNode]]]
 
