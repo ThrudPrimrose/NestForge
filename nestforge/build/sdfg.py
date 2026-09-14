@@ -1,14 +1,7 @@
 # Copyright 2021 ETH Zurich and the NestForge authors.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Owns the DaCe build (BUILD.md): codegen + compile/link with one compiler, call via ctypes
-(manual init/program/exit) -- not ``dace.compile()``, whose ``__call__`` re-marshals args and
-confounds timing. Entry points: ``__dace_init_N``/``__program_N``/``__dace_exit_N``.
-
-What the machine's toolchains can DO -- compiler families, OpenMP runtimes, vector-math libraries,
-linkers, ccache, C-signature parsing -- lives in :mod:`nestforge.build.toolchain`, which mentions dace nowhere.
-That half was the majority of this file and is used by five modules that never build an SDFG, so asking
-it a question no longer imports the codegen stack.
-"""
+"""Owns the DaCe build: codegen then compile/link via ctypes (manual init/program/exit), not
+``dace.compile()``, whose ``__call__`` re-marshals args and confounds timing."""
 from __future__ import annotations
 
 import contextlib
@@ -33,13 +26,10 @@ from nestforge.build.toolchain import (CXX_STD, DEFAULT_COMPILER, DEFAULT_FLAGS,
                                        ar_for, ccache_prefix, fastest_linker, fat_lto_flags, parse_params, run,
                                        signature, support_rpath_flags, usable_openmp)
 
-# TODO(blas): a BLAS/LAPACK axis (openblas/mkl/blis/nvpl/accelerate) the same way -- discovery exists
-# (arena.discover_blas_libraries); missing is threading a chosen BLAS into the link line + a prune step.
-
 
 @functools.lru_cache(maxsize=None, typed=True)
 def dace_runtime_include() -> Path:
-    """The ``-I`` directory holding DaCe's runtime headers (``dace/runtime/include``)."""
+    """The ``-I`` directory holding DaCe's runtime headers."""
     inc = Path(dace.__file__).parent / "runtime" / "include"
     if not inc.is_dir():
         raise FileNotFoundError(f"DaCe runtime include not found at {inc}")
@@ -54,9 +44,9 @@ class BuiltSDFG:
     _lib: ctypes.CDLL
     _init_params: List[Param]
     _prog_params: List[Param]
-    #: wall time of the OPTIMIZATION phase (DaCe codegen + C++ emission), distinct from the compile below.
+    #: wall time of DaCe codegen + C++ emission (the optimization phase).
     codegen_seconds: float = 0.0
-    #: wall time of the post-optimization COMPILE (compiler/linker turning C++ into the ``.so``).
+    #: wall time of the compiler/linker turning C++ into the .so.
     compile_seconds: float = 0.0
     _handle: Optional[ctypes.c_void_p] = field(default=None, repr=False)
 
@@ -68,8 +58,7 @@ class BuiltSDFG:
         self._handle = ctypes.c_void_p(fn(*[p.ctype(int(sizes[p.name])) for p in self._init_params]))
 
     def bind_program(self, buffers: Dict[str, np.ndarray], sizes: Dict[str, int]) -> Tuple[Any, list]:
-        """Bind ``__program_N`` and its ctypes args ONCE; return ``(fn, args)``, so a timed rep loop calls
-        ``fn(*args)`` with no per-rep marshaling. ``init`` must have run; ``buffers`` must stay alive."""
+        """Bind ``__program_N`` and its ctypes args once, so a timed rep loop calls ``fn(*args)`` with no per-rep marshaling."""
         fn = self._lib[f"__program_{self.name}"]
         fn.restype = None
         fn.argtypes = [ctypes.c_void_p] + [p.ctype for p in self._prog_params]
@@ -89,8 +78,7 @@ class BuiltSDFG:
         fn(*args)
 
     def unload(self) -> None:
-        """Release the ``dlopen`` mapping (file may be deleted after). Prevents a long sweep from
-        accumulating one live mapping per kernel."""
+        """Release the dlopen mapping so a long sweep does not accumulate one live mapping per kernel."""
         if self._lib is not None:
             dlclose(self._lib._handle)
             self._lib = None
@@ -113,8 +101,7 @@ class BuiltSDFG:
 
 
 def config_has(*path) -> bool:
-    """True when the running DaCe config schema DEFINES the key at ``path`` (``Config.get`` raises on an
-    unknown key), so the codegen axis degrades gracefully instead of crashing."""
+    """True when the running DaCe config schema defines the key at ``path``."""
     try:
         dace.config.Config.get(*path)
         return True
@@ -122,30 +109,24 @@ def config_has(*path) -> bool:
         return False
 
 
-#: Codegen-implementation axis (``compiler.cpu.implementation``): ``experimental`` is the readable
-#: constexpr-index-fn codegen (nest-forge's DEFAULT); ``legacy`` is the classic connector-based codegen.
+#: Codegen-implementation axis: ``experimental`` (default, readable codegen) vs ``legacy`` (connector-based).
 CODEGEN_IMPLS = ("experimental", "legacy")
-#: nest-forge defaults to DaCe's NEW (human-readable) codegen when the running DaCe build supports it.
 DEFAULT_CODEGEN_IMPL = "experimental"
 
 
 def default_codegen_impl() -> str:
-    """Codegen impl used when the caller specifies none: ``experimental`` if this DaCe build supports
-    ``compiler.cpu.implementation``, else ``legacy``."""
+    """Codegen impl used when the caller specifies none: ``experimental`` if supported, else ``legacy``."""
     return DEFAULT_CODEGEN_IMPL if config_has("compiler", "cpu", "implementation") else "legacy"
 
 
 def codegen_impls_available() -> Tuple[str, ...]:
-    """Codegen-implementation values THIS DaCe build supports, default first: both when the schema has
-    ``compiler.cpu.implementation``, else just ``('legacy',)``. The driver sweeps exactly this tuple."""
+    """Codegen-implementation values this DaCe build supports, default first."""
     return CODEGEN_IMPLS if config_has("compiler", "cpu", "implementation") else ("legacy", )
 
 
 @contextlib.contextmanager
 def codegen_config(codegen_impl: str) -> Iterator[None]:
-    """Scope the DaCe codegen config for ONE ``generate_code`` call: pin ``emit_tree_reductions`` true and
-    select the CPU codegen ``implementation``. Raises for ``experimental`` on a build lacking the key,
-    rather than silently emitting legacy and mislabelling it."""
+    """Scope the DaCe codegen config for one ``generate_code`` call; raises rather than silently mislabelling ``legacy``."""
     with dace.config.temporary_config():
         dace.config.Config.set("compiler", "emit_tree_reductions", value=True)
         if config_has("compiler", "cpu", "implementation"):
@@ -157,12 +138,7 @@ def codegen_config(codegen_impl: str) -> Iterator[None]:
 
 
 def generate_program_folder(sdfg: dace.SDFG, out_dir: Path, codegen_impl: Optional[str] = None) -> Tuple[Path, str]:
-    """Lay out DaCe's compilable source tree (``src/cpu/<name>.cpp`` + ``include/``) via DaCe's own
-    ``generate_program_folder`` so relative includes resolve, but WITHOUT letting DaCe compile it.
-
-    :param codegen_impl: ``experimental`` | ``legacy``; ``None`` -> :func:`default_codegen_impl`.
-    :returns: (the C++ Frame source path, sdfg name).
-    """
+    """Lay out DaCe's compilable source tree (``src/cpu/<name>.cpp`` + ``include/``), without letting DaCe compile it."""
     out_dir.mkdir(parents=True, exist_ok=True)
     with codegen_config(codegen_impl or default_codegen_impl()):
         code_objects = codegen.generate_code(sdfg)
@@ -180,44 +156,30 @@ def include_flags(folder: Path) -> List[str]:
 
 @dataclass(slots=True)
 class BuildOptions:
-    """Toolchain + optimization knobs for the owned build (:func:`build_sdfg` / :func:`compare_link_modes`
-    take this instead of a long parameter list). Each axis is independent."""
+    """Toolchain + optimization knobs for the owned build; each axis is independent."""
     compiler: str = DEFAULT_COMPILER
     flags: Optional[List[str]] = None  # None -> DEFAULT_FLAGS
-    expand_libnodes: bool = False  # expand library nodes to naive loops ("without libnodes" variant)
-    fast_libnodes: bool = False  # instead of expanding, pick the fast library impl (OpenBLAS/MKL)
-    blas_link: Optional[List[str]] = None  # link flags for the chosen BLAS (e.g. ['-lopenblas'])
-    openmp: Optional[OpenMPRuntime] = None  # the one mandated runtime to link (per-compiler flags)
+    expand_libnodes: bool = False
+    fast_libnodes: bool = False  # alternative to expand_libnodes: pick the fast OpenBLAS/MKL impl
+    blas_link: Optional[List[str]] = None
+    openmp: Optional[OpenMPRuntime] = None
     link_external: bool = False  # link the nest as a separate static .a (else a monolithic single TU)
-    lto: bool = False  # enable LTO: -flto (monolithic) / fat-LTO object in the .a (external)
-    veclib: Optional[VectorMathLib] = None  # SLEEF / libmvec / SVML, a separate axis from flags/openmp
-    # DaCe CPU codegen: 'experimental' (DEFAULT where available) | 'legacy'; downgrades on an older build.
+    lto: bool = False
+    veclib: Optional[VectorMathLib] = None
     codegen_impl: str = field(default_factory=default_codegen_impl)
-    # DaCe multi-dim tile-op vectorizer config applied before codegen; None = no vectorization. Typed as
-    # object to keep the vectorizer import lazy.
+    # object, not the vectorizer's own config type, to keep the vectorizer import lazy
     vectorize: Optional[object] = None
-    # Extra link arguments appended AFTER the frame object -- the extern nest-variant libs (absolute .so
-    # path + its -Wl,-rpath) for the differential swap path. nest-forge compiles the generated frame
-    # directly (bypassing DaCe's CMake), so ``ExternLibEnv``'s libraries are NOT auto-linked; the caller
-    # passes them here instead. Placed after the frame so ld resolves the extern-C entry symbols.
+    # extern nest-variant libs appended after the frame object, for the differential swap path: nest-forge
+    # bypasses DaCe's CMake, so ExternLibEnv's libraries are not auto-linked and must be passed here
     extra_link: Optional[List[str]] = None
-    # Compiler cache: None = AUTO (use ccache when installed), False = never. Set False for any build whose
-    # compile_seconds is reported as a measurement -- a cache hit reports ~0s (see ccache_prefix).
+    # None = ccache when installed, False = never; force False for any build whose compile_seconds is
+    # reported as a measurement, since a cache hit reports ~0s
     use_ccache: Optional[bool] = None
 
     def resolved_flags(self) -> List[str]:
-        """``flags`` (or :data:`DEFAULT_FLAGS`), with the C++ standard and ``-Wall`` guaranteed.
-
-        The standard is a REQUIREMENT of the DaCe runtime headers, not an optimization knob: ``types.h``
-        uses ``std::bit_cast`` unguarded, so anything below C++20 fails to compile. A caller overriding
-        ``flags`` for one axis (``-O2``, a veclib) must not silently lose it -- an explicit ``-std=`` is
-        honored, an absent one is filled in.
-
-        ``-Wall`` but deliberately NOT ``-Werror``: this compiles DACE-GENERATED C++, so a warning is a
-        codegen signal to read, not a reason to fail a measurement we do not control the source of.
-        :func:`toolchain.run` prints what it produces. Filled in the same way as ``-std=``, since most
-        callers pass their own ``flags`` for one axis and would otherwise lose it; an explicit ``-w``
-        (silence) is honored."""
+        """``flags`` (or :data:`DEFAULT_FLAGS`), with the C++ standard and ``-Wall`` guaranteed."""
+        # the DaCe runtime headers need C++20 (std::bit_cast unguarded); fill in -std= only if the caller's
+        # own flags did not already set one, so overriding flags for one axis does not silently lose it
         flags = list(self.flags if self.flags is not None else DEFAULT_FLAGS)
         if not any(f.startswith("-std=") for f in flags):
             flags.append(f"-std={CXX_STD}")
@@ -227,26 +189,22 @@ class BuildOptions:
 
 
 def set_fast_libnodes(sdfg: dace.SDFG) -> None:
-    """Select the fastest AVAILABLE library-node implementation (OpenBLAS/MKL/LAPACK) for every library
-    node, instead of lowering to naive loops. Link flags come via :attr:`BuildOptions.blas_link`.
-
-    TODO(lib-axis): generalize into a per-node "try every backend" sweep, keeping the timed winner."""
+    """Select the fastest available library-node implementation (OpenBLAS/MKL/LAPACK) for every library
+    node, instead of lowering to naive loops."""
     set_fast_implementations(sdfg, dace.dtypes.DeviceType.CPU)
 
 
 @dataclass(slots=True)
 class BuildCommands:
-    """The argument groups every compile and link of one build shares, resolved before any clock starts."""
     compiler: str
     ccache: List[str]
-    cflags: List[str]  # resolved flags minus the link-only -shared
-    compile_extra: List[str]  # OpenMP + veclib compile halves, then the include path
+    cflags: List[str]
+    compile_extra: List[str]
     ld: List[str]
     link_libs: List[str]  # after the object: ld resolves left to right
 
 
 def build_commands(folder: Path, opts: BuildOptions) -> BuildCommands:
-    """Resolve the compiler, OpenMP runtime, veclib, linker and cache for one build of ``folder``."""
     compiler = opts.compiler
     # dace emits `#pragma omp parallel for` for every multicore map; a build without OpenMP runs it serially.
     omp = opts.openmp or usable_openmp(compiler)
@@ -268,8 +226,7 @@ def build_commands(folder: Path, opts: BuildOptions) -> BuildCommands:
 
 
 def build_archive(sources: Sequence[Path], folder: Path, archive: Path, shared: Path, opts: BuildOptions) -> float:
-    """Compile ``sources`` to ``<archive dir>/<stem>.o`` against ``folder``'s headers, archive them, and link
-    ``shared`` from the whole archive; returns toolchain wall seconds."""
+    """Compile ``sources`` against ``folder``'s headers, archive them, and link ``shared`` from the whole archive."""
     cmds = build_commands(folder, opts)
     lto_c = fat_lto_flags(opts.compiler) if opts.lto else []
     ar = ar_for(opts.compiler)
@@ -291,11 +248,7 @@ def build_archive(sources: Sequence[Path], folder: Path, archive: Path, shared: 
 
 
 def compile(frame: Path, folder: Path, name: str, opts: BuildOptions) -> Tuple[Path, float]:
-    """Compile the generated frame into ``lib<name>.so``; return (path, toolchain wall_seconds only).
-    ``link_external=False`` builds one TU monolithically; ``True`` goes through :func:`build_archive`.
-
-    Compiling and linking are always separate commands: a compile is cacheable, a link is not, and ccache
-    declines any command that does both."""
+    """Compile the generated frame into ``lib<name>.so``; ``link_external`` picks monolithic vs :func:`build_archive`."""
     so = folder / f"lib{name}.so"
     if opts.link_external:
         return so, build_archive([frame], folder, folder / f"lib{name}_nest.a", so, opts)
@@ -309,22 +262,15 @@ def compile(frame: Path, folder: Path, name: str, opts: BuildOptions) -> Tuple[P
 
 
 def apply_vectorizer(sdfg: dace.SDFG, config: object) -> None:
-    """Apply the DaCe multi-dim tile-op CPU vectorizer to ``sdfg`` in place. Force-expands tile library
-    nodes to tasklets regardless of ``config`` (no ``dace.compile`` here to lower them later). Lazy
-    import: eager would close an import cycle."""
-    import dataclasses
+    """Apply the DaCe multi-dim tile-op CPU vectorizer to ``sdfg`` in place."""
+    import dataclasses  # lazy: closes an import cycle
     from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
     VectorizeCPUMultiDim(dataclasses.replace(config, expand_tile_nodes=True)).apply_pass(sdfg, {})
 
 
 @dataclass(slots=True)
 class GeneratedProgram:
-    """The optimization phase's output: emitted source, not yet compiled.
-
-    Split out of :func:`build_sdfg` so a search can hash ``source`` and SKIP a compile that would emit
-    byte-identical code -- the cheapest possible screen, since a knob whose flip changes nothing here
-    cannot change a timing.
-    """
+    """The optimization phase's output: emitted source, not yet compiled."""
     frame: Path  # the frame .cpp DaCe emitted
     name: str
     source: str
@@ -342,7 +288,7 @@ def generate_program(sdfg: dace.SDFG, out_dir: Path, opts: Optional[BuildOptions
     sdfg = copy.deepcopy(sdfg)
     if opts.expand_libnodes:
         sdfg.expand_library_nodes()
-    elif opts.fast_libnodes:  # keep the library nodes, but pick the fast (OpenBLAS/MKL) implementation
+    elif opts.fast_libnodes:
         set_fast_libnodes(sdfg)
     if opts.vectorize is not None:
         apply_vectorizer(sdfg, opts.vectorize)
@@ -369,36 +315,25 @@ def compile_program(gen: GeneratedProgram, opts: Optional[BuildOptions] = None) 
 
 
 def build_sdfg(sdfg: dace.SDFG, out_dir: Path, opts: Optional[BuildOptions] = None) -> BuiltSDFG:
-    """Generate + compile + link an SDFG ourselves; return a :class:`BuiltSDFG` carrying
-    ``codegen_seconds``/``compile_seconds`` timing.
-
-    :param opts: toolchain + optimization knobs; ``None`` uses all defaults (g++, monolithic, no veclib) --
-        including a RESOLVED OpenMP runtime, since dace emits ``#pragma omp parallel for`` for every
-        multicore map and a build without one runs that schedule serially. A caller comparing against a
-        serial baseline must therefore pin ``OMP_NUM_THREADS=1`` rather than assume no OpenMP.
-    """
+    """Generate + compile + link an SDFG ourselves. Resolves a real OpenMP runtime by default, so a caller
+    comparing against serial must pin ``OMP_NUM_THREADS=1`` rather than assume none is linked."""
     opts = opts or BuildOptions()
     return compile_program(generate_program(sdfg, out_dir, opts), opts)
 
 
 @dataclass(slots=True)
 class LinkTimings:
-    """Optimization time and the two post-optimization compile times isolated on ONE codegen."""
+    """Optimization time and the two post-optimization compile times isolated on one codegen."""
     codegen_seconds: float  # the optimization (DaCe codegen) phase, run once
     compile_seconds_monolithic: float  # WITHOUT external linking (single TU)
     compile_seconds_external: float  # WITH external linking (static .a -> .so)
 
 
 def compare_link_modes(sdfg: dace.SDFG, out_dir: Path, opts: Optional[BuildOptions] = None) -> LinkTimings:
-    """Generate the code ONCE, then compile that same frame both monolithically and externally, so
-    ``compile_seconds`` is the only thing that differs. ``opts``' link mode is overridden per build; its
-    other axes apply to both."""
+    """Generate the code once, then compile the same frame monolithically and externally so only ``compile_seconds`` differs."""
     opts = opts or BuildOptions()
-    # the SAME optimization phase build_sdfg runs, so the two link modes compare the code the caller's
-    # opts actually produce -- an inlined copy here silently dropped the vectorizer from the comparison
     gen = generate_program(sdfg, out_dir, opts)
-    # compile time IS the result here, so the cache is forced OFF: a hit would report ~0s and make the
-    # monolithic-vs-external comparison meaningless.
+    # cache forced off: a hit would report ~0s and make the monolithic-vs-external comparison meaningless
     _, mono = compile(gen.frame, gen.folder, gen.name, replace(opts, link_external=False, use_ccache=False))
     _, ext = compile(gen.frame, gen.folder, gen.name, replace(opts, link_external=True, use_ccache=False))
     return LinkTimings(codegen_seconds=gen.codegen_seconds,

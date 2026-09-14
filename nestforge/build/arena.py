@@ -22,13 +22,10 @@ from nestforge.ir.emit_numpy import load_emitted, maxsize_loop_scratch, scratch_
 from nestforge.ir.extract import Boundary
 from nestforge.corpus.translate import Prepared
 
-#: Strict rung overridden to BIT-EXACT: a kernel and its NumPy oracle in the same op order reach 0.0, unlike
-#: the whole-program oracle FP_ATOL is written for (pairwise sum vs tree). ``tests/test_variants_phase.py``
-#: pins ``maxdiff == 0.0`` for a strict winner. Relax this only against a build that demonstrably cannot reach it.
+#: Strict rung overridden to bit-exact: a same-order NumPy oracle reaches 0.0, unlike whole-program FP_ATOL.
 ARENA_ATOL: Dict[str, float] = {**flags.FP_ATOL, "strict-ieee": 0.0}
 
-# numpy dtype name -> ctypes scalar for the emitted kernel's ABI. ``bool`` is needed because a comparison
-# materialises a boolean transient, which DaCe lowers to a 1-byte C ``bool``.
+# numpy dtype name -> ctypes scalar for the ABI (bool needed: DaCe lowers a comparison transient to C bool).
 CTYPE = {
     "float64": ctypes.c_double,
     "float32": ctypes.c_float,
@@ -38,7 +35,6 @@ CTYPE = {
 }
 
 
-# --- BLAS backends (a link axis for matmul-heavy kernels) -------------------------------------
 @dataclass(slots=True)
 class BlasBackend:
     """An installed BLAS implementation and the link flags that select it."""
@@ -52,13 +48,11 @@ _BLAS_SONAMES = {
     "blis": ["blis"],
     "atlas": ["tatlas", "satlas"],
     "mkl": ["mkl_rt"],
-    # generic ``libblas.so``: may be netlib OR an alternatives symlink, so labelled by soname only
     "blas": ["blas"],
 }
 
 
 def ldconfig_sonames() -> set:
-    """Base library names (``openblas`` from ``libopenblas.so.0``) known to the dynamic linker."""
     out = ldconfig_output()
     names = set()
     for line in out.splitlines():
@@ -69,11 +63,7 @@ def ldconfig_sonames() -> set:
 
 
 def discover_blas_libraries() -> Dict[str, BlasBackend]:
-    """Discover installed BLAS backends (OpenBLAS / MKL / BLIS / ATLAS / netlib) + their link flags.
-
-    An extra link axis for kernels whose emitted numpy uses ``@``/``np.dot``. Probes the dynamic linker
-    cache plus ``MKLROOT``.
-    """
+    """Discover installed BLAS backends (OpenBLAS/MKL/BLIS/ATLAS/netlib) and their link flags."""
     sonames = ldconfig_sonames()
     found: Dict[str, BlasBackend] = {}
     for name, candidates in _BLAS_SONAMES.items():
@@ -83,29 +73,23 @@ def discover_blas_libraries() -> Dict[str, BlasBackend]:
                 break
     mklroot = os.environ.get("MKLROOT")
     if "mkl" not in found and mklroot:
-        # oneAPI 2024+ put the libraries directly under lib/; older layouts use lib/intel64.
+        # oneAPI 2024+ puts the libraries directly under lib/; older layouts use lib/intel64.
         for libdir in (Path(mklroot) / "lib", Path(mklroot) / "lib" / "intel64"):
             if (libdir / "libmkl_rt.so").exists():
-                # -rpath paired with -L: an MKLROOT install is off the loader path, so without it the
-                # linked .so needs LD_LIBRARY_PATH to run
+                # -rpath paired with -L: an MKLROOT install is off the loader path.
                 found["mkl"] = BlasBackend("mkl", [f"-L{libdir}", f"-Wl,-rpath,{libdir}", "-lmkl_rt"])
                 break
     return found
 
 
-# --- data generation from the manifest --------------------------------------------------------
 def resolve_shape(shape: Sequence[Any], sizes: Dict[str, int]) -> Tuple[int, ...]:
     env = {symbolic.symbol(k): v for k, v in sizes.items()}
     return tuple(int(symbolic.evaluate(d, env)) for d in shape)
 
 
 def emitted_sdfg(boundary: Boundary) -> dace.SDFG:
-    """The descriptors the EMITTED kernel is written against, not the raw nest's.
-
-    The emitter widens a loop-sized scratch transient (``maxsize_loop_scratch``) before rendering, so
-    caller-side allocation must use the SAME widened descriptor -- sizing from
-    ``boundary.standalone_sdfg`` gives a smaller buffer than the kernel writes: a heap overflow.
-    """
+    """The descriptors the EMITTED kernel is written against (widened scratch included); sizing from the
+    raw nest allocates a buffer too small and overflows the heap."""
     return maxsize_loop_scratch(boundary.standalone_sdfg, boundary.symbols)
 
 
@@ -114,9 +98,7 @@ def scratch_names(boundary: Boundary) -> List[str]:
     return scratch_arrays(emitted_sdfg(boundary))
 
 
-#: Upper bound of the random-input range ``[0, INPUT_HIGH)``. Must stay <= 1/4 so a squaring recurrence
-#: ``x = x*x + b`` (TSVC s232) has an attracting fixed point instead of overflowing to inf (nan maxdiff ->
-#: spurious validation failure); non-negative keeps ``sqrt``/``log`` kernels real.
+#: Upper bound of random inputs [0, INPUT_HIGH); must stay <= 1/4 so TSVC s232's squaring recurrence converges.
 INPUT_HIGH = 0.25
 
 
@@ -125,13 +107,7 @@ def make_inputs(boundary: Boundary,
                 seed: int = 0,
                 given: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, np.ndarray]:
     """Random arrays for inputs; zeros for outputs and scratch buffers (all caller-pre-allocated).
-
-    Inputs are drawn from ``[0, INPUT_HIGH)`` -- see :data:`INPUT_HIGH` for why the range is conditioned.
-
-    ``given`` supplies ready-made values a uniform float fill cannot express, chiefly the index arrays of
-    :func:`nestforge.tsvc.index_fills`. It is checked against the resolved shape/dtype: it crosses the ABI
-    as the kernel's own buffer, so a mismatch would corrupt memory instead of raising.
-    """
+    :param given: ready-made values (e.g. index arrays) that must match the resolved shape/dtype exactly."""
     sdfg = emitted_sdfg(boundary)  # widened scratch: allocate what the kernel indexes, not the raw shape
     rng = np.random.default_rng(seed)
     given = given or {}
@@ -167,36 +143,22 @@ def run_oracle(prep: Prepared, boundary: Boundary, inputs: Dict[str, np.ndarray]
     return {o: args[o] for o in boundary.outputs}
 
 
-# --- compile + call ---------------------------------------------------------------------------
 def scalar_ctype(sdfg: dace.SDFG, name: str) -> type[ctypes._SimpleCData]:
-    """ctypes type of a by-value (non-array) kernel arg, matching the translator's signature.
-
-    A float value scalar is ``double`` -> ``c_double``. EVERY integer symbol is emitted ``int64_t`` by the
-    translator regardless of the SDFG's own int width, so it must be ``c_int64`` here -- a 32-bit
-    ``c_int`` leaves the upper half of the register garbage and blows the loop bound out of range."""
+    """ctype of a by-value kernel arg: float -> c_double; every integer is always int64_t regardless of the
+    SDFG's own width, since a narrower c_int leaves the upper register half garbage."""
     if name in sdfg.symbols and np.dtype(sdfg.symbols[name].type).kind == "f":
         return ctypes.c_double
     return ctypes.c_int64
 
 
 def accumulating_outputs(boundary: Boundary, buffers: Dict[str, np.ndarray]) -> List[str]:
-    """Outputs the kernel both READS and WRITES -- the ones a timed rep loop must restore.
-
-    Every timing path in the repo needs this same set, and getting it wrong is invisible: an in-place nest
-    left un-restored feeds on its own output, so rep k computes ``a * b**k``, reaches denormals within a
-    handful of reps, and the median times subnormal arithmetic instead of the kernel. ONE definition, so a
-    caller cannot quietly disagree about which buffers decay.
-
-    A fully-overwritten output is deliberately NOT in the set: nothing it holds survives into the next rep,
-    so it cannot accumulate, and snapshotting it would double peak RSS at the profiling preset for nothing."""
+    """Outputs the kernel both reads and writes; a timed rep loop restores these so an unrestored in-place
+    kernel does not decay into denormals within a few reps and time subnormal arithmetic instead."""
     return [o for o in boundary.outputs if o in boundary.inputs and o in buffers]
 
 
 def rewind_snapshot(boundary: Boundary, buffers: Dict[str, np.ndarray]) -> List[Tuple[np.ndarray, np.ndarray]]:
-    """Each accumulating buffer paired with a pristine copy of itself, ready for :func:`rewind`.
-
-    Taken ONCE, before the warm call, so the copy is the state every rep starts from. Pairs hold the ARRAY,
-    not its name, so :func:`rewind` costs no dict lookup inside the rep loop."""
+    """Each accumulating buffer paired with a pristine copy, taken once before the warm call for :func:`rewind`."""
     return [(buffers[o], buffers[o].copy()) for o in accumulating_outputs(boundary, buffers)]
 
 
@@ -217,22 +179,11 @@ def call_native(so: Path,
                 copy_inputs: bool = True,
                 copy_outputs: bool = True) -> Tuple[Optional[Dict[str, np.ndarray]], float]:
     """Bind + call the compiled entry, then time ``reps`` calls on the same buffers.
-
-    ``order`` is the EMITTED-signature parameter order; binding by the manifest's role order instead puts
-    each buffer in the wrong parameter slot, which same-typed arrays make completely silent.
-
-    An array that is both READ and WRITTEN is restored before every timed rep, OUTSIDE the timed region.
-    Without it an in-place kernel (``a[:] = a[:] * b``) feeds on its own output: inputs are drawn from
-    [0, 0.25), so by rep k the buffer holds ``a * b**k`` and reaches denormals within a handful of reps --
-    the median then times subnormal arithmetic rather than the kernel, and the faster candidate is whichever
-    decayed slower. Only the read-write intersection is snapshotted: a fully-overwritten output cannot
-    accumulate, and at the profiling preset a blanket copy would double the child's peak RSS.
-
-    :param copy_inputs: ``False`` runs on the CALLER's buffers, so a validating caller can read the results
-        back out of them.
-    :param copy_outputs: ``False`` skips the RESULT snapshot for a pure-timing caller (same RSS reason);
-        the restore snapshot above is not optional, since it decides what the timing means.
-    """
+    ``order`` must be the EMITTED-signature order (not the manifest's), or same-typed buffers land in the
+    wrong slot silently. A read-write output is restored before every timed rep, outside the timed region,
+    since an unrestored in-place kernel decays into denormals within a few reps and times subnormal
+    arithmetic instead. ``copy_inputs=False`` runs on the caller's own buffers; ``copy_outputs=False`` skips
+    the result snapshot."""
     lib = ctypes.CDLL(str(so))
     fn = lib[symbol]  # ctypes CDLL indexing (not getattr) to bind the kernel symbol
     fn.argtypes = argtypes
@@ -255,7 +206,7 @@ def call_native(so: Path,
     outputs = {o: work[o].copy() for o in boundary.outputs} if copy_outputs else None
     total = 0.0
     rewind(snapshot)  # the warm call primes the caches from the same state a timed rep sees
-    fn(*args)  # warm
+    fn(*args)
     for _ in range(reps):
         rewind(snapshot)
         t0 = time.perf_counter()
@@ -267,10 +218,8 @@ def call_native(so: Path,
 
 def maxdiff(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> float:
     """Largest absolute elementwise difference; ``inf`` if any difference is non-finite.
-
-    The non-finite mapping is load-bearing: builtin ``max`` DROPS a non-first NaN (``nan > x`` is False),
-    so a NaN-poisoned kernel would report 0.0 and win the sweep.
-    """
+    Builtin ``max`` drops a non-first NaN (``nan > x`` is False), so unmapped this would report 0.0 and let
+    a NaN-poisoned kernel win."""
     worst = 0.0
     compared = False
     for k in a:
@@ -285,8 +234,7 @@ def maxdiff(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> float:
 
 
 def dtype_floor(arrays: Dict[str, np.ndarray]) -> float:
-    """The loosest :data:`flags.DTYPE_ATOL` floor among ``arrays`` -- one ULP of the narrowest format
-    present. An unlisted dtype (integer, bool) contributes nothing: it is exact or it is wrong."""
+    """The loosest :data:`flags.DTYPE_ATOL` floor among ``arrays`` (one ULP of the narrowest format present)."""
     return max((flags.DTYPE_ATOL[v.dtype.name] for v in arrays.values() if v.dtype.name in flags.DTYPE_ATOL),
                default=0.0)
 
@@ -302,9 +250,7 @@ def gate_atol(mode: str, outputs: Dict[str, np.ndarray]) -> float:
 
 
 def diff_stats(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> Tuple[float, float]:
-    """``(worst_abs, worst_scaled)`` in ONE pass over the abs-difference, instead of :func:`maxdiff` and
-    :func:`relative_maxdiff` each recomputing ``np.abs(a[k] - b[k])`` separately. Same semantics as calling
-    both (NaN/Inf still map to ``inf`` in both slots); use this wherever a caller needs both numbers."""
+    """``(worst_abs, worst_scaled)`` in one pass, matching :func:`maxdiff` + :func:`relative_maxdiff` combined."""
     worst_abs, worst_rel = 0.0, 0.0
     compared = False
     for k in a:
@@ -323,22 +269,15 @@ def diff_stats(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> Tuple[floa
         worst_abs = max(worst_abs, d_abs)
         worst_rel = max(worst_rel, d_rel)
     if not compared:
-        # Every array was zero-size, so the loop body never ran and 0.0 would be returned as "bit-exact"
-        # from a comparison that touched no element. Skipping an individual empty array is fine; a verdict
-        # read off nothing is not, and the gate is <= atol, so it must fail loudly.
+        # a verdict read off zero elements must fail loudly, not report 0.0 as bit-exact
         return float("inf"), float("inf")
     return worst_abs, worst_rel
 
 
 def relative_maxdiff(a: Dict[str, np.ndarray], b: Dict[str, np.ndarray]) -> float:
-    """Largest elementwise difference SCALED by the magnitude of the values it is between.
-
-    An absolute gate is unreachable for a reduction: summing 32000 order-1 elements lands near 1.6e4,
-    where one fp64 ULP (1.8e-12) already exceeds the 1e-14 default, so a correct vectorized reduce is
-    recorded WRONG and the kernel silently vanishes from the corpus. The denominator floors at 1.0, so
-    small values keep the absolute reading -- the gate is never loosened below what fp64 promises, and a
-    real miscompile (far more than a few ULP) is still caught. NaN/Inf still fail.
-    """
+    """Largest elementwise difference SCALED by the magnitude of the values compared.
+    An absolute gate is unreachable for a reduction (fp64 ULP noise exceeds 1e-14 at reduction scale), so
+    the denominator floors at 1.0 -- never loosened below what fp64 promises, but reachable for large sums."""
     worst = 0.0
     compared = False
     for k in a:

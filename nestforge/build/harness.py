@@ -14,10 +14,9 @@ from nestforge.build.toolchain import raw_signature
 
 
 def signature_order(text: str, symbol: str, lang: str = "c") -> List[str]:
-    """Parameter names of the kernel entry, in declaration order, for the language's syntax.
-
-    The emitted C order (sorted arrays, then symbols) is NOT the manifest ``input_args`` order, so args
-    must bind to this or a size lands in a pointer slot. Fortran ``&`` continuations are stripped first."""
+    """Parameter names of the kernel entry, in declaration order; the emitted C order (sorted arrays, then
+    symbols) is NOT the manifest ``input_args`` order, so args must bind to this or a size lands in a
+    pointer slot."""
     params = raw_signature(text, symbol, lang)
     if lang == "fortran":
         return [a.strip() for a in params.replace("&", " ").split(",") if a.strip()]
@@ -25,8 +24,7 @@ def signature_order(text: str, symbol: str, lang: str = "c") -> List[str]:
 
 
 def c_argtypes(order: List[str], boundary) -> list:
-    """ctypes type per C parameter: array name -> pointer-to-dtype, size/index symbol -> int64, value
-    scalar -> its SDFG dtype, matching the translator's signature."""
+    """ctypes type per C parameter: array name -> pointer-to-dtype, size/index symbol -> int64, value scalar -> its SDFG dtype."""
     sdfg = boundary.standalone_sdfg
     return [
         ctypes.POINTER(CTYPE[np.dtype(sdfg.arrays[a].dtype.type).name]) if a in sdfg.arrays else scalar_ctype(sdfg, a)
@@ -44,10 +42,7 @@ def call_c(so: Path,
            reps: int,
            copy_outputs: bool = True) -> Tuple[Optional[Dict[str, np.ndarray]], float]:
     """Bind by the C signature order, run once for correctness, then time ``reps`` calls, mutating
-    ``inputs`` in place. Callers must run this in a forked child.
-
-    :func:`nestforge.build.arena.call_native` on the caller's own buffers, so a validating caller reads the
-    results back out of what it passed in."""
+    ``inputs`` in place. Callers must run this in a forked child."""
     return call_native(so,
                        symbol,
                        order,
