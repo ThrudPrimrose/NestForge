@@ -252,7 +252,7 @@ def test_emit_compiled_matches_sdfg_across_compilers(kind, short, lang, compiler
         from nestforge.build.arena import make_inputs
         from nestforge.build.harness import c_argtypes, call_c, signature_order
         make_sdfg, sizes, _ = builder_for(kind, short)
-        nests = lower_nests_to_external_call(make_sdfg(), strategy="outer")
+        nests = lower_nests_to_external_call(make_sdfg())
         suffix = {"c": ".c", "cpp": ".c", "fortran": ".f90"}[lang]
         target = {"c": "c", "cpp": "c", "fortran": "fortran"}[lang]  # C++ compiles the emitted C
         worst = 0.0

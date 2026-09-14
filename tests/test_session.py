@@ -223,12 +223,15 @@ def test_malformed_id_is_not_reported_as_stale():
 
 
 def test_noop_define_scopes_does_not_strand_handles():
-    # define_scopes with a granularity that selects NO nest changes nothing, so it must not bump the
-    # epoch -- bumping would silently invalidate every move id the agent had already enumerated.
-    session = Session(vertical_pair.to_sdfg(simplify=True))
+    # define_scopes with no parallel top-level map to define a scope over changes nothing, so it must
+    # not bump the epoch -- bumping would silently invalidate every move id the agent had already
+    # enumerated.
+    sdfg = dace.SDFG("no_maps")
+    sdfg.add_state()
+    session = Session(sdfg)
     moves = session.list_fusions()
     epoch_before = session.epoch
-    assert session.define_scopes("cfg") == []  # a flat kernel has no LoopRegion to define a scope over
+    assert session.define_scopes() == []
     assert session.epoch == epoch_before
     if moves:
         session.resolve(moves[0]["id"], "move")  # the agent's ids survive a no-op

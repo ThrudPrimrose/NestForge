@@ -41,7 +41,7 @@ def externalized():
     normalize(sdfg, targets)
     full_fusion(sdfg, targets)
     assert fission_to_statements(sdfg) >= 1, "fixture fused to one map but fission split nothing back apart"
-    calls = lower_nests_to_external_call(sdfg, "map")
+    calls = lower_nests_to_external_call(sdfg)
     assert len(calls) == 2, "fixture must externalize both statements separately"
     return sdfg, calls
 

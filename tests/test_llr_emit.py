@@ -13,12 +13,14 @@ import inspect
 
 import numpy as np
 
+import dace
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
 from nestforge.corpus.bench import iter_dace_kernels
 from nestforge.ir.extract import extract_nest_to_sdfg
 from nestforge.ir.emit_numpy import load_emitted, sdfg_to_numpy
-from nestforge.phases.scopes import get_strategy
+from nestforge.phases.scopes import top_level_map_entries
 
 
 def load(key: str):
@@ -28,15 +30,27 @@ def load(key: str):
     raise AssertionError(f"{key} is not in the loop_level_reasoning track -- the corpus this test pins has changed")
 
 
+def top_level_nest(sdfg: dace.SDFG):
+    """The SDFG's first top-level compute unit (a loop region or a map) -- independent of phase 2's
+    parallel-only scope policy, since this file exercises extraction/emission, not scope selection."""
+    for block in sdfg.nodes():
+        if isinstance(block, LoopRegion):
+            return sdfg, block
+        if isinstance(block, dace.SDFGState):
+            maps = top_level_map_entries(block)
+            if maps:
+                return sdfg, maps[0]
+    raise AssertionError(f"{sdfg.label}: no top-level compute nest found")
+
+
 def emit_and_call(key: str, sizes: dict, inputs: dict):
     """Canonicalize + extract + emit ``key``, allocate every buffer C-style from the emitted signature,
     run it, return the call dict (buffers hold the results in place)."""
     kernel = load(key)
     sdfg = kernel.to_sdfg(simplify=True)
     canonicalize(sdfg, target="cpu")
-    refs = get_strategy("skip-taskloops")(sdfg)
-    assert len(refs) == 1, f"{key}: expected one compute nest, got {len(refs)}"
-    boundary = extract_nest_to_sdfg(refs[0][0], refs[0][1], name=key)
+    parent, node = top_level_nest(sdfg)
+    boundary = extract_nest_to_sdfg(parent, node, name=key)
     src = sdfg_to_numpy(boundary.standalone_sdfg, key)
     fn = vars(load_emitted(src, key))[key]
     call = {}

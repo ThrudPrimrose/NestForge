@@ -17,7 +17,7 @@ from dace.transformation.passes.canonicalize import canonicalize
 from nestforge.build.arena import make_inputs
 from nestforge.corpus.bench import iter_dace_kernels, index_fills, preset_sizes
 from nestforge.ir.extract import extract_nest_to_sdfg
-from nestforge.phases.scopes import get_strategy
+from nestforge.phases.scopes import parallel_top_level_maps
 
 #: (kernel, index array). Every one is a gather/scatter whose index array is the whole point of the test;
 #: loop_level_reasoning is a superset of TSVC-2, so these are the same kernels the old TSVC corpus pinned.
@@ -39,7 +39,7 @@ def load(key):
 def first_nest(kernel):
     sdfg = kernel.to_sdfg(simplify=True)
     canonicalize(sdfg, target="cpu")
-    refs = get_strategy("outer")(sdfg)
+    refs = parallel_top_level_maps(sdfg)
     assert refs, f"{kernel.short_name}: the splitter found no compute nest -- this kernel has one"
     return extract_nest_to_sdfg(refs[0][0], refs[0][1], name=kernel.short_name.rsplit("/", 1)[-1])
 

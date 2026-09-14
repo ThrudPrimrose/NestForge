@@ -15,7 +15,7 @@ from dace.transformation.passes.canonicalize import canonicalize
 from nestforge.corpus.bench import iter_dace_kernels
 from nestforge.ir.extract import extract_nest_to_sdfg
 from nestforge.ir.emit_numpy import load_emitted, sdfg_to_numpy
-from nestforge.phases.scopes import get_strategy, is_parallel_nest
+from nestforge.phases.scopes import is_parallel_nest, parallel_top_level_maps
 
 
 def load(key):
@@ -25,10 +25,10 @@ def load(key):
     raise AssertionError(f"{key} is not in the loop_level_reasoning track -- the corpus this test pins has changed")
 
 
-def nest_refs(key, strategy="skip-taskloops"):
+def nest_refs(key):
     sdfg = load(key).to_sdfg(simplify=True)
     canonicalize(sdfg, target="cpu")
-    return sdfg, get_strategy(strategy)(sdfg)
+    return sdfg, parallel_top_level_maps(sdfg)
 
 
 # --- is_parallel_nest ------------------------------------------------------------------------------
@@ -58,9 +58,9 @@ def test_real_parallel_map_kernel_is_parallel():
 def test_s2275_nested_map_emits_and_computes():
     # tsvc_2_s2275 baseline = an i-loop with an inner j-loop (2-D aa FMA) + an i-level 1-D statement.
     # Canonicalization legally DISTRIBUTES the two (the yaml puzzle: interchange for the matrix update
-    # is legal only once the vector statement is out of the i loop), so the 'outer' strategy sees two
-    # top-level nests; the 2-D aa update is the one that exercises map_lines' nested-for recursion.
-    _, refs = nest_refs("tsvc_2_s2275", strategy="outer")
+    # is legal only once the vector statement is out of the i loop), so phase 2 sees two top-level
+    # parallel maps; the 2-D aa update is the one that exercises map_lines' nested-for recursion.
+    _, refs = nest_refs("tsvc_2_s2275")
     assert len(refs) == 2
     boundary = extract_nest_to_sdfg(refs[0][0], refs[0][1], name="s2275_aa")
     src = sdfg_to_numpy(boundary.standalone_sdfg, "s2275_aa")

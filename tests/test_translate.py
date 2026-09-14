@@ -3,7 +3,7 @@
 import numpy as np
 import dace
 
-from nestforge.phases.scopes import outer
+from nestforge.phases.scopes import parallel_top_level_maps
 from nestforge.ir.extract import extract_nest_to_sdfg
 from nestforge.ir.emit_numpy import load_emitted, nest_to_numpy
 from nestforge.corpus.translate import prepare, emit_sources
@@ -19,7 +19,7 @@ def vadd(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 
 def boundary():
     sdfg = vadd.to_sdfg(simplify=True)
-    psdfg, node = outer(sdfg)[0]
+    psdfg, node = parallel_top_level_maps(sdfg)[0]
     return extract_nest_to_sdfg(psdfg, node, name="vadd_nest")
 
 
@@ -83,7 +83,7 @@ def test_a_fused_maps_scalar_transient_is_spelled_the_same_inside_and_out():
 
     sdfg = gather_two_map.to_sdfg(simplify=True)
     full_fusion(normalize(sdfg, Targets()), Targets())
-    calls = lower_nests_to_external_call(sdfg, "outer")
+    calls = lower_nests_to_external_call(sdfg)
     assert calls, "nothing lowered; the fixture no longer produces an offloadable nest"
     ext, b = calls[0]
     mod = load_emitted(nest_to_numpy(b, fn_name="fused"), "fused")

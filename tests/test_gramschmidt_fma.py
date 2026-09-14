@@ -56,7 +56,7 @@ def prepare_compute_nest():
     sdfg = kernels["scientific_computing/dense_linear_algebra/gramschmidt/gramschmidt"].to_sdfg(simplify=True)
     # simplify folds the two zero-inits (Q, R) into the compute nest, so ``outer`` returns a single nest
     # -- the one holding the two np.dot reductions (asserted via ``nrm[0] = np.dot`` in ``emit``).
-    nests = lower_nests_to_external_call(sdfg, strategy="outer")
+    nests = lower_nests_to_external_call(sdfg)
     assert len(nests) == 1, f"expected one compute nest, got {len(nests)}"
     _, boundary = nests[0]
     return boundary

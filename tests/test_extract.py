@@ -3,7 +3,7 @@
 import numpy as np
 import dace
 
-from nestforge.phases.scopes import outer
+from nestforge.phases.scopes import parallel_top_level_maps
 from nestforge.ir.extract import extract_nest_to_sdfg, trip_count_symbols
 
 N = dace.symbol('N')
@@ -27,7 +27,7 @@ def shifted(A: dace.float64[N], C: dace.float64[N]):
 
 def test_outer_finds_the_map():
     sdfg = vadd.to_sdfg(simplify=True)
-    refs = outer(sdfg)
+    refs = parallel_top_level_maps(sdfg)
     assert len(refs) == 1
     _, node = refs[0]
     assert isinstance(node, dace.sdfg.nodes.MapEntry)
@@ -35,7 +35,7 @@ def test_outer_finds_the_map():
 
 def test_extract_map_nest_boundary_and_correctness():
     sdfg = vadd.to_sdfg(simplify=True)
-    psdfg, node = outer(sdfg)[0]
+    psdfg, node = parallel_top_level_maps(sdfg)[0]
     b = extract_nest_to_sdfg(psdfg, node, name="vadd_nest")
 
     assert set(b.inputs) == {"A", "B"}

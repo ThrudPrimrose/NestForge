@@ -11,7 +11,7 @@ import pytest
 import dace
 from nestforge.phases.feedback import (FeedbackResult, Outcome, best_outcome, default_fuse_step, improved,
                                        run_feedback_loop)
-from nestforge.phases.scopes import outer
+from nestforge.phases.scopes import parallel_top_level_maps
 
 N = dace.symbol("N")
 f64 = dace.float64
@@ -31,7 +31,7 @@ def oc(median_us: float, ok: bool = True) -> Outcome:
 
 
 def nest_count(sdfg: dace.SDFG) -> int:
-    return len(outer(sdfg))
+    return len(parallel_top_level_maps(sdfg))
 
 
 def test_best_outcome_ignores_failed_and_picks_fastest():

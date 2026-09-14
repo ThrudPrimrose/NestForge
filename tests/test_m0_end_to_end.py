@@ -26,7 +26,7 @@ def reference_outputs(n):
 
 def test_lower_inserts_external_call():
     sdfg = vadd.to_sdfg(simplify=True)
-    lowered = lower_nests_to_external_call(sdfg, strategy="outer")
+    lowered = lower_nests_to_external_call(sdfg)
     assert len(lowered) == 1
     ext, boundary = lowered[0]
     assert isinstance(ext, ExternalCall)
@@ -37,7 +37,7 @@ def test_lower_inserts_external_call():
 
 def test_dace_reference_runs_correctly():
     sdfg = vadd.to_sdfg(simplify=True)
-    lower_nests_to_external_call(sdfg, strategy="outer")  # default impl = DaceReference
+    lower_nests_to_external_call(sdfg)  # default impl = DaceReference
     sdfg.expand_library_nodes()
     sdfg.validate()
     n = 1 << 12

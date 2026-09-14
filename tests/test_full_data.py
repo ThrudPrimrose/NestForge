@@ -18,7 +18,7 @@ def stencil(A: dace.float64[N], B: dace.float64[N]):
 
 def test_external_call_gets_full_array_subsets():
     sdfg = stencil.to_sdfg(simplify=True)
-    ext, boundary = lower_nests_to_external_call(sdfg, strategy="outer")[0]
+    ext, boundary = lower_nests_to_external_call(sdfg)[0]
 
     # Boundary arrays keep their full parent shape, not the accessed [1:N-1] slice.
     assert str(boundary.standalone_sdfg.arrays["B"].shape[0]) == "N"
@@ -33,7 +33,7 @@ def test_external_call_gets_full_array_subsets():
 
 def test_full_array_stencil_runs_bit_exact():
     sdfg = stencil.to_sdfg(simplify=True)
-    lower_nests_to_external_call(sdfg, strategy="outer")
+    lower_nests_to_external_call(sdfg)
     sdfg.expand_library_nodes()
     sdfg.validate()
     n = 64

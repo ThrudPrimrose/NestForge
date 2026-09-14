@@ -19,7 +19,7 @@ import dace
 
 from nestforge.ir.extract import extract_nest_to_sdfg
 from nestforge.build.harness import signature_order
-from nestforge.phases.scopes import get_strategy
+from nestforge.phases.scopes import parallel_top_level_maps
 from nestforge.corpus.translate import emit_sources, prepare
 
 N = dace.symbol("N")
@@ -35,7 +35,7 @@ def writes_a_reads_b(a: dace.float64[N], b: dace.float64[N]):
 
 def prepared_nest(tmp_path):
     sdfg = writes_a_reads_b.to_sdfg(simplify=True)
-    parent, node = get_strategy("outer")(sdfg)[0]
+    parent, node = parallel_top_level_maps(sdfg)[0]
     boundary = extract_nest_to_sdfg(parent, node, name="wab")
     prep = prepare(boundary, "wab", tmp_path, sizes={"N": 32})
     return prep, boundary
